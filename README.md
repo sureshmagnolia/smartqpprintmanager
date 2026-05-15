@@ -1,9 +1,9 @@
-# Smart Print Manager v2.5
+# Smart Print Manager v2.5.1
 
 A standalone Java-based print manager that automatically routes PDF files to specific printers based on their page count.
 
 ## Features
-- **Smart Room-Wise Router (v2.5):** Route files to printers based on room-wise seating summaries. Supports parallel printing to 10+ printers.
+- **Smart Room-Wise Router (v2.5.1):** Route files to printers based on room-wise seating summaries. Supports parallel printing to 10+ printers.
 - **Automatic Routing:** Define rules to send 1-page files to one printer, 2-page files to another, etc.
 - **Duplex Support:** Enable duplex printing for specific page ranges.
 - **Bulk Printing:** Upload multiple PDFs at once and print them all with one click.
@@ -30,10 +30,10 @@ A standalone Java-based print manager that automatically routes PDF files to spe
    ```bash
    mvn clean package
    ```
-2. The standalone JAR will be created in the `target/` directory as `java-print-manager-2.1.jar`.
+2. The standalone JAR will be created in the `target/` directory as `java-print-manager-2.5.1.jar`.
 3. Run it using:
    ```bash
-   java -jar target/java-print-manager-2.1.jar
+   java -jar target/java-print-manager-2.5.1.jar
    ```
 
 ## Roadmap & Enhancements
