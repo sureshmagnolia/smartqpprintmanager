@@ -62,7 +62,9 @@ public class App extends Application {
         roomTab.setClosable(false);
         Tab settingsTab = new Tab("Settings", createSettingsView());
         settingsTab.setClosable(false);
-        tabPane.getTabs().addAll(mainTab, roomTab, settingsTab);
+        Tab aboutTab = new Tab("About", createAboutView());
+        aboutTab.setClosable(false);
+        tabPane.getTabs().addAll(mainTab, roomTab, settingsTab, aboutTab);
 
         VBox root = new VBox(tabPane, createStatusBarView());
         VBox.setVgrow(tabPane, Priority.ALWAYS);
@@ -694,7 +696,8 @@ public class App extends Application {
         card.setStyle("-fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);");
         card.setPrefWidth(350);
 
-        Label title = new Label("Room: " + group.getRoomSerial());
+        int totalQty = group.getItems().stream().mapToInt(RoomItem::getCount).sum();
+        Label title = new Label("Room: " + group.getRoomSerial() + " (Total Qty: " + totalQty + ")");
         title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #333;");
         title.setMaxWidth(Double.MAX_VALUE);
         title.setAlignment(javafx.geometry.Pos.CENTER);
@@ -731,6 +734,29 @@ public class App extends Application {
 
         card.getChildren().addAll(title, table, printerCombo, sendBtn, roomStatus);
         return card;
+    }
+
+    private VBox createAboutView() {
+        VBox layout = new VBox(20);
+        layout.setPadding(new Insets(50));
+        layout.setAlignment(javafx.geometry.Pos.CENTER);
+
+        Label title = new Label("Smart Print Manager v2.5.1");
+        title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
+
+        Label createdBy = new Label("Created by Magnolia for Examination Management");
+        createdBy.setStyle("-fx-font-size: 18px; -fx-font-weight: normal; -fx-text-fill: #555;");
+
+        Label desc = new Label("A specialized tool for high-volume automated question paper printing and room-wise routing.");
+        desc.setWrapText(true);
+        desc.setMaxWidth(600);
+        desc.setStyle("-fx-font-size: 14px; -fx-text-fill: #777;");
+
+        Separator sep = new Separator();
+        sep.setMaxWidth(400);
+
+        layout.getChildren().addAll(title, createdBy, sep, desc);
+        return layout;
     }
 
     private void loadRoomWiseJson(Stage stage) {
