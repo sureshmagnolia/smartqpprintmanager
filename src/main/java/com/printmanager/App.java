@@ -9,13 +9,16 @@ import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
 import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -29,8 +32,11 @@ public class App extends Application {
     private final ConfigManager configManager = new ConfigManager();
     private final PDFViewer pdfViewer = new PDFViewer();
 
-    private final java.util.concurrent.ExecutorService analysisExecutor = java.util.concurrent.Executors.newFixedThreadPool(4);
-    private final java.util.concurrent.ExecutorService printQueueExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4);
+    private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
+    // Throttled pool to handle parallel printing to multiple printers safely.
+    // Fixed at 10 to ensure we don't overwhelm the system spooler or memory.
+    private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(10);
 
     private Config config;
     private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList();
@@ -38,6 +44,7 @@ public class App extends Application {
     private final javafx.collections.transformation.SortedList<FileItem> sortedQueue = new javafx.collections.transformation.SortedList<>(filteredQueue);
     private final ObservableList<PrintRule> rulesList = FXCollections.observableArrayList();
     private final ObservableList<SmartSplitRule> smartSplitRulesList = FXCollections.observableArrayList();
+    private final ObservableList<RoomGroup> roomGroupsList = FXCollections.observableArrayList();
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
@@ -51,15 +58,24 @@ public class App extends Application {
         TabPane tabPane = new TabPane();
         Tab mainTab = new Tab("Print Queue", createMainView(primaryStage));
         mainTab.setClosable(false);
+        Tab roomTab = new Tab("Smart Room Wise Router", createRoomRouterView(primaryStage));
+        roomTab.setClosable(false);
         Tab settingsTab = new Tab("Settings", createSettingsView());
         settingsTab.setClosable(false);
-        tabPane.getTabs().addAll(mainTab, settingsTab);
+        tabPane.getTabs().addAll(mainTab, roomTab, settingsTab);
 
         VBox root = new VBox(tabPane, createStatusBarView());
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 1200, 850);
-        primaryStage.setTitle("Smart Print Manager v2.4");
+        primaryStage.setTitle("Smart Print Manager v2.5");
+        
+        try {
+            primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
+        } catch (Exception e) {
+            logger.warn("Could not load application icon", e);
+        }
+
         primaryStage.setScene(scene);
         primaryStage.setMaximized(true);
         primaryStage.show();
@@ -635,6 +651,197 @@ public class App extends Application {
         config.setRules(List.copyOf(rulesList));
         config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
         configManager.saveConfig(config);
+    }
+
+    private VBox createRoomRouterView(Stage stage) {
+        Button uploadBtn = new Button("Upload Room Wise JSON");
+        uploadBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+        uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
+
+        ScrollPane scrollPane = new ScrollPane();
+        FlowPane flowPane = new FlowPane();
+        flowPane.setPadding(new Insets(20));
+        flowPane.setHgap(20);
+        flowPane.setVgap(20);
+        flowPane.prefWidthProperty().bind(scrollPane.widthProperty().subtract(20));
+
+        javafx.collections.ListChangeListener<RoomGroup> listener = c -> {
+            while (c.next()) {
+                if (c.wasAdded()) {
+                    for (RoomGroup group : c.getAddedSubList()) {
+                        flowPane.getChildren().add(createRoomCard(group));
+                    }
+                }
+                if (c.wasRemoved()) {
+                    flowPane.getChildren().clear();
+                    roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+                }
+            }
+        };
+        roomGroupsList.addListener(listener);
+
+        scrollPane.setContent(flowPane);
+        scrollPane.setFitToWidth(true);
+
+        VBox layout = new VBox(20, uploadBtn, scrollPane);
+        layout.setPadding(new Insets(20));
+        VBox.setVgrow(scrollPane, Priority.ALWAYS);
+        return layout;
+    }
+
+    private VBox createRoomCard(RoomGroup group) {
+        VBox card = new VBox(10);
+        card.setStyle("-fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);");
+        card.setPrefWidth(350);
+
+        Label title = new Label("Room: " + group.getRoomSerial());
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        title.setMaxWidth(Double.MAX_VALUE);
+        title.setAlignment(javafx.geometry.Pos.CENTER);
+
+        TableView<RoomItem> table = new TableView<>(group.getItems());
+        table.setPrefHeight(150);
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
+        qpCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().getQpCode()));
+        
+        TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Qty");
+        countCol.setCellValueFactory(d -> new javafx.beans.property.SimpleObjectProperty<>(d.getValue().getCount()));
+        countCol.setPrefWidth(50);
+
+        TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status");
+        statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
+
+        table.getColumns().addAll(qpCol, countCol, statusCol);
+
+        ComboBox<String> printerCombo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
+        printerCombo.setPromptText("Select Printer");
+        printerCombo.setMaxWidth(Double.MAX_VALUE);
+        printerCombo.valueProperty().bindBidirectional(group.selectedPrinterProperty());
+
+        Button sendBtn = new Button("Send Print");
+        sendBtn.setMaxWidth(Double.MAX_VALUE);
+        sendBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+        sendBtn.setOnAction(e -> printRoom(group));
+
+        Label roomStatus = new Label();
+        roomStatus.textProperty().bind(group.statusProperty());
+        roomStatus.setStyle("-fx-font-style: italic;");
+
+        card.getChildren().addAll(title, table, printerCombo, sendBtn, roomStatus);
+        return card;
+    }
+
+    private void loadRoomWiseJson(Stage stage) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Select Room Wise Seating Summary JSON");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
+        File file = fc.showOpenDialog(stage);
+        if (file == null) return;
+
+        analysisExecutor.submit(() -> {
+            try {
+                updateStatus("Reading Room JSON: " + file.getName());
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode root = mapper.readTree(file);
+                
+                Map<String, RoomGroup> groups = new LinkedHashMap<>();
+                int matchedCount = 0;
+
+                if (root.isArray()) {
+                    for (JsonNode node : root) {
+                        String roomSerial = node.path("roomSerial").asText("Unknown");
+                        String qpCode = node.path("qpCode").asText("");
+                        String pdfFileName = node.path("pdfFileName").asText("");
+                        int count = node.path("count").asInt(0);
+
+                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                        
+                        // Match with all files in fileQueue (could be multiple split parts)
+                        for (FileItem fileItem : fileQueue) {
+                            String fileName = fileItem.getFileName();
+                            String extractedQP = extractQPFromFileName(fileName);
+                            
+                            // Match if extracted QP matches OR if QP code is a clear substring in the filename
+                            if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                                roomItem.getMatchedFiles().add(fileItem);
+                                matchedCount++;
+                            }
+                        }
+
+                        groups.computeIfAbsent(roomSerial, RoomGroup::new).getItems().add(roomItem);
+                    }
+                }
+
+                final int finalMatched = matchedCount;
+                final int finalGroupSize = groups.size();
+                Platform.runLater(() -> {
+                    roomGroupsList.setAll(groups.values());
+                    updateStatus("Loaded " + finalGroupSize + " rooms. Matched " + finalMatched + " files.");
+                });
+
+            } catch (Exception e) {
+                logger.error("Room JSON Error", e);
+                updateStatus("Error loading room JSON.");
+            }
+        });
+    }
+
+    private void printRoom(RoomGroup group) {
+        if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) {
+            updateStatus("Error: Select a printer for " + group.getRoomSerial());
+            return;
+        }
+
+        group.setStatus("Sending...");
+        roomPrintExecutor.submit(() -> {
+            try {
+                boolean allSuccess = true;
+                for (RoomItem roomItem : group.getItems()) {
+                    if (roomItem.getMatchedFiles().isEmpty()) {
+                        roomItem.setStatus("File Not Found");
+                        allSuccess = false;
+                        continue;
+                    }
+
+                    roomItem.setStatus("Printing...");
+                    boolean itemSuccess = true;
+
+                    for (FileItem fileItem : roomItem.getMatchedFiles()) {
+                        // Create a transient FileItem for this specific print job to avoid modifying the UI queue
+                        FileItem jobItem = new FileItem(
+                            fileItem.getFile(), 
+                            fileItem.getPageCount(), 
+                            fileItem.getContent(),
+                            group.getSelectedPrinter(),
+                            fileItem.isDuplex(),
+                            fileItem.isBooklet(),
+                            fileItem.getBindingType(),
+                            roomItem.getCount(),
+                            fileItem.getPaperSize(),
+                            fileItem.getOverlayText()
+                        );
+                        jobItem.setFileName(fileItem.getFileName());
+                        jobItem.setStyle(fileItem.getStyle());
+
+                        // Synchronous wait for each part to be sent (to keep order and avoid overlapping in some drivers)
+                        // but printPDF is async in terms of the job itself. 
+                        // However, printService.printPDF(...) currently blocks until job.print(...) returns.
+                        
+                        final RoomItem finalRoomItem = roomItem;
+                        printService.printPDF(jobItem, s -> Platform.runLater(() -> finalRoomItem.setStatus(s)));
+                        Thread.sleep(500); // Small delay between parts
+                    }
+                }
+                
+                final boolean success = allSuccess;
+                Platform.runLater(() -> group.setStatus(success ? "Finished" : "Completed with errors"));
+            } catch (Exception e) {
+                logger.error("Room print error", e);
+                Platform.runLater(() -> group.setStatus("Error"));
+            }
+        });
     }
 
     public static void main(String[] args) { launch(args); }

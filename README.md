@@ -1,8 +1,9 @@
-# Smart Print Manager v2.1
+# Smart Print Manager v2.5
 
 A standalone Java-based print manager that automatically routes PDF files to specific printers based on their page count.
 
 ## Features
+- **Smart Room-Wise Router (v2.5):** Route files to printers based on room-wise seating summaries. Supports parallel printing to 10+ printers.
 - **Automatic Routing:** Define rules to send 1-page files to one printer, 2-page files to another, etc.
 - **Duplex Support:** Enable duplex printing for specific page ranges.
 - **Bulk Printing:** Upload multiple PDFs at once and print them all with one click.

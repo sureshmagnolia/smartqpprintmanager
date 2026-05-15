@@ -18,6 +18,7 @@ This document outlines planned and proposed features to enhance the Smart Print 
 - [ ] **Cost Estimation:** Add a reporting module to estimate toner and paper usage based on print history.
 
 ## ✅ Completed
+- [x] **Smart Room-Wise Router (v2.5):** Added a new tab to handle room-wise routing and parallel printing based on seating summary JSONs.
 - [x] **JSON Copy Count Update (v2.4):** Added a feature to upload a JSON file to automatically update the copy counts of PDFs in the queue based on QP codes extracted from filenames.
 - [x] **Sequential Print Queue (v2.1):** Replaced multi-threaded printing with a single-threaded sequential queue to prevent crashes during large file operations.
 - [x] **Portable Packaging (v2.0):** Added `jpackage` support to bundle a JRE for zero-dependency distribution.
