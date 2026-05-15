@@ -1100,10 +1100,20 @@ public class App extends Application {
 
     private VBox createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.0.2");
+        Label title = new Label("Smart QP Print Manager v3.0.3");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
+
+        VBox configInfo = new VBox(5);
+        configInfo.setAlignment(javafx.geometry.Pos.CENTER);
+        Label configLabel = new Label("Configuration Path:");
+        configLabel.setStyle("-fx-font-weight: bold;");
+        TextField pathField = new TextField(configManager.getConfigPath());
+        pathField.setEditable(false);
+        pathField.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-alignment: center;");
+        pathField.setMaxWidth(800);
+        configInfo.getChildren().addAll(configLabel, pathField);
 
         TabPane helpPane = new TabPane(); helpPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE); helpPane.setPrefHeight(400);
 

@@ -5,6 +5,8 @@ import com.printmanager.model.Config;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,40 +17,42 @@ public class ConfigManager {
     private static final String CONFIG_FILE_NAME = "config.json";
     private final ObjectMapper mapper = new ObjectMapper();
 
+    public String getConfigPath() {
+        return getResolvedConfigFile().getAbsolutePath();
+    }
+
     private File getResolvedConfigFile() {
-        // 1. Check local directory (Portable Mode)
-        // If a config exists locally and is writable, OR if the directory is writable, stay local.
-        File localFile = new File(CONFIG_FILE_NAME);
-        File localDir = new File(".");
+        String userDir = System.getProperty("user.dir");
+        String os = System.getProperty("os.name").toLowerCase();
         
-        if (localFile.exists()) {
-            if (localFile.canWrite()) {
-                logger.info("Using local config (Portable Mode): {}", localFile.getAbsolutePath());
+        // 1. Determine if we should force AppData (Installed Mode)
+        // If we are in Program Files, we almost certainly want AppData.
+        boolean inProgramFiles = userDir.toLowerCase().contains("program files");
+        
+        File localFile = new File(userDir, CONFIG_FILE_NAME);
+        
+        if (!inProgramFiles) {
+            // Check if local directory is truly writable by trying to create/delete a dummy file
+            // canWrite() can sometimes be misleading on Windows due to VirtualStore
+            if (isDirWritable(userDir)) {
+                logger.info("Portable Mode detected (writable directory): {}", userDir);
                 return localFile;
-            } else {
-                logger.info("Local config exists but is not writable. Switching to AppData.");
             }
-        } else if (localDir.canWrite()) {
-            logger.info("Local directory is writable. Using local config: {}", localFile.getAbsolutePath());
-            return localFile;
         }
 
         // 2. Use AppData / User Home (Installed Mode)
-        String userHome = System.getProperty("user.home");
-        String os = System.getProperty("os.name").toLowerCase();
         File appDataDir;
-        
         if (os.contains("win")) {
             String appData = System.getenv("APPDATA");
             if (appData != null) {
                 appDataDir = new File(appData, APP_NAME);
             } else {
-                appDataDir = new File(userHome, "AppData/Roaming/" + APP_NAME);
+                appDataDir = new File(System.getProperty("user.home"), "AppData/Roaming/" + APP_NAME);
             }
         } else if (os.contains("mac")) {
-            appDataDir = new File(userHome, "Library/Application Support/" + APP_NAME);
+            appDataDir = new File(System.getProperty("user.home"), "Library/Application Support/" + APP_NAME);
         } else {
-            appDataDir = new File(userHome, "." + APP_NAME.toLowerCase());
+            appDataDir = new File(System.getProperty("user.home"), "." + APP_NAME.toLowerCase());
         }
 
         if (!appDataDir.exists()) {
@@ -58,7 +62,7 @@ public class ConfigManager {
         
         File appDataFile = new File(appDataDir, CONFIG_FILE_NAME);
         
-        // If AppData config doesn't exist, try to seed it from the read-only local config (if it exists)
+        // 3. Seed AppData from Local if AppData is new and Local exists
         if (!appDataFile.exists() && localFile.exists()) {
             try {
                 Files.copy(localFile.toPath(), appDataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -68,38 +72,49 @@ public class ConfigManager {
             }
         }
         
-        logger.info("Using AppData config: {}", appDataFile.getAbsolutePath());
         return appDataFile;
+    }
+
+    private boolean isDirWritable(String dirPath) {
+        try {
+            Path path = Paths.get(dirPath, ".write_test_" + System.currentTimeMillis());
+            Files.createFile(path);
+            Files.delete(path);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public Config loadConfig() {
         File file = getResolvedConfigFile();
         if (!file.exists()) {
-            logger.info("Config file {} not found, returning empty config.", file.getAbsolutePath());
+            logger.info("Config file {} not found, returning default config.", file.getAbsolutePath());
             return new Config();
         }
         try {
             logger.info("Loading config from: {}", file.getAbsolutePath());
             Config cfg = mapper.readValue(file, Config.class);
-            logger.info("Config loaded successfully. Rules: {}, FileQueue: {}, RoomGroups: {}", 
-                cfg.getRules().size(), cfg.getFileQueue().size(), cfg.getRoomGroups().size());
             return cfg;
         } catch (IOException e) {
             logger.error("Error loading config from {}: {}", file.getAbsolutePath(), e.getMessage());
-            e.printStackTrace();
             return new Config();
         }
     }
 
     public void saveConfig(Config config) {
+        File file = getResolvedConfigFile();
         try {
-            File file = getResolvedConfigFile();
-            logger.info("Saving config to: {}. FileQueue: {}, RoomGroups: {}", 
-                file.getAbsolutePath(), config.getFileQueue().size(), config.getRoomGroups().size());
+            logger.info("Saving config to: {}", file.getAbsolutePath());
+            // Ensure parent directory exists again just in case
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
             mapper.writerWithDefaultPrettyPrinter().writeValue(file, config);
-            logger.info("Configuration saved successfully.");
+            logger.info("Configuration saved successfully to {}", file.getAbsolutePath());
         } catch (IOException e) {
-            logger.error("Error saving config to {}: {}", getResolvedConfigFile().getAbsolutePath(), e.getMessage());
+            logger.error("Error saving config to {}: {}", file.getAbsolutePath(), e.getMessage());
             e.printStackTrace();
         }
     }
