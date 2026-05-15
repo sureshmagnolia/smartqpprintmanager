@@ -1,71 +1,39 @@
+/* Smart QP Print Manager - Modern Theme */
+
 .root {
-    -fx-font-family: "Segoe UI", Helvetica, Arial, sans-serif;
-    -fx-font-size: 13px;
     -fx-base: #f4f4f4;
-    -fx-accent: #2196F3; /* Material Blue */
+    -fx-accent: #2196F3;
     -fx-default-button: #2196F3;
+    -fx-focus-color: #bbdefb;
+    -fx-faint-focus-color: transparent;
 }
 
 .tab-pane .tab-header-area .tab-header-background {
-    -fx-background-color: #3f51b5; /* Indigo */
+    -fx-background-color: #212121;
 }
 
 .tab {
-    -fx-background-color: transparent;
-    -fx-padding: 10 20 10 20;
+    -fx-background-color: #212121;
+    -fx-padding: 10 20;
 }
 
 .tab:selected {
-    -fx-background-color: white;
-    -fx-background-radius: 5 5 0 0;
+    -fx-background-color: #2196F3;
 }
 
 .tab .tab-label {
-    -fx-text-fill: white;
-}
-
-.tab:selected .tab-label {
-    -fx-text-fill: #3f51b5;
+    -fx-text-fill: #9e9e9e;
     -fx-font-weight: bold;
 }
 
-.table-view {
-    -fx-background-color: transparent;
-    -fx-border-color: #ddd;
-    -fx-border-width: 1;
-}
-
-.table-view .column-header {
-    -fx-background-color: #eee;
-    -fx-padding: 5;
-    -fx-border-color: #ddd;
-    -fx-border-width: 0 1 1 0;
-}
-
-.table-row-cell:odd {
-    -fx-background-color: #fafafa;
-}
-
-.table-row-cell:hover {
-    -fx-background-color: #e3f2fd;
+.tab:selected .tab-label {
+    -fx-text-fill: white;
 }
 
 .button {
-    -fx-padding: 6 15 6 15;
     -fx-background-radius: 4;
-}
-
-.button:hover {
+    -fx-padding: 8 15;
     -fx-cursor: hand;
-}
-
-.text-field, .combo-box, .spinner {
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
-}
-
-.label {
-    -fx-text-fill: #333;
 }
 
 #print-btn {
@@ -81,29 +49,57 @@
 #add-btn {
     -fx-background-color: #2196F3;
     -fx-text-fill: white;
-    -fx-font-weight: bold;
-}
-
-#add-btn:hover {
-    -fx-background-color: #1e88e5;
-}
-
-#load-json-btn {
-    -fx-background-color: #FF9800;
-    -fx-text-fill: white;
-    -fx-font-weight: bold;
-}
-
-#load-json-btn:hover {
-    -fx-background-color: #f57c00;
 }
 
 #clear-btn {
     -fx-background-color: #f44336;
     -fx-text-fill: white;
-    -fx-font-weight: bold;
 }
 
-#clear-btn:hover {
-    -fx-background-color: #e53935;
+.table-view {
+    -fx-background-color: transparent;
+    -fx-selection-bar: #e3f2fd;
 }
+
+.table-view .column-header {
+    -fx-background-color: #eeeeee;
+    -fx-border-color: #dddddd;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 10;
+}
+
+.table-row-cell:odd {
+    -fx-background-color: #fafafa;
+}
+
+.status-bar {
+    -fx-background-color: #eeeeee;
+    -fx-padding: 5 10;
+    -fx-border-color: #cccccc;
+    -fx-border-width: 1 0 0 0;
+}
+
+/* Simulation Mode Alert Header */
+#simulation-alert {
+    -fx-background-color: #f44336;
+    -fx-padding: 5 20;
+    -fx-alignment: CENTER;
+}
+#simulation-alert .label {
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+}
+
+/* Glassy Dashboard Theme */
+.glass-panel {
+    -fx-background-color: rgba(255, 255, 255, 0.7);
+    -fx-background-radius: 10;
+    -fx-border-color: rgba(200, 200, 200, 0.5);
+    -fx-border-radius: 10;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);
+}
+
+.log-entry-info { -fx-text-fill: #333333; }
+.log-entry-error { -fx-text-fill: #f44336; -fx-font-weight: bold; }
+.log-entry-success { -fx-text-fill: #4CAF50; }

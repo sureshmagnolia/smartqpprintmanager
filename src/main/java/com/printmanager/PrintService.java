@@ -17,7 +17,9 @@ import java.awt.print.PrinterException;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +34,75 @@ public class PrintService {
             printerNames.add(service.getName());
         }
         return printerNames;
+    }
+
+    public Map<String, Map<String, String>> getPrintersDetailedStatus() {
+        Map<String, Map<String, String>> detailedMap = new HashMap<>();
+        try {
+            // Fetch Hardware Status
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", 
+                "Get-WmiObject Win32_Printer | Select-Object Name, PrinterStatus, WorkOffline | ConvertTo-Json");
+            Process p = pb.start();
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode printers = mapper.readTree(p.getInputStream());
+            
+            // Helper function to initialize entries
+            Consumer<com.fasterxml.jackson.databind.JsonNode> initNode = node -> {
+                String name = node.path("Name").asText();
+                Map<String, String> data = new HashMap<>();
+                data.put("status", parseStatus(node.path("PrinterStatus").asInt(0), node.path("WorkOffline").asBoolean()));
+                data.put("jobs", "0");
+                data.put("current", "Idle");
+                detailedMap.put(name, data);
+            };
+
+            if (printers.isArray()) for (com.fasterxml.jackson.databind.JsonNode n : printers) initNode.accept(n);
+            else if (printers.isObject()) initNode.accept(printers);
+
+            // Fetch Active Job Details
+            ProcessBuilder pbJobs = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", 
+                "Get-WmiObject Win32_PrintJob | Select-Object Name, Document, JobStatus | ConvertTo-Json");
+            Process pJobs = pbJobs.start();
+            com.fasterxml.jackson.databind.JsonNode jobs = mapper.readTree(pJobs.getInputStream());
+
+            Consumer<com.fasterxml.jackson.databind.JsonNode> processJob = node -> {
+                String fullName = node.path("Name").asText(); // e.g. "HP Smart Printing, 123"
+                if (fullName.contains(",")) {
+                    String printerName = fullName.substring(0, fullName.lastIndexOf(",")).trim();
+                    if (detailedMap.containsKey(printerName)) {
+                        Map<String, String> data = detailedMap.get(printerName);
+                        int count = Integer.parseInt(data.get("jobs")) + 1;
+                        data.put("jobs", String.valueOf(count));
+                        data.put("current", node.path("Document").asText("Unknown"));
+                    }
+                }
+            };
+
+            if (jobs.isArray()) for (com.fasterxml.jackson.databind.JsonNode j : jobs) processJob.accept(j);
+            else if (jobs.isObject()) processJob.accept(jobs);
+
+        } catch (Exception e) { /* Silently fail */ }
+        return detailedMap;
+    }
+
+    private String parseStatus(int statusInt, boolean offline) {
+        if (offline) return "Offline";
+        switch (statusInt) {
+            case 3: return "Ready";
+            case 4: return "Printing";
+            case 5: return "Warmup";
+            case 1: return "Other";
+            case 2: return "Unknown";
+            case 7: return "Offline";
+            default: return "Ready";
+        }
+    }
+
+    public Map<String, String> getPrintersStatus() {
+        Map<String, String> statusMap = new HashMap<>();
+        Map<String, Map<String, String>> detailed = getPrintersDetailedStatus();
+        detailed.forEach((k, v) -> statusMap.put(k, v.get("status")));
+        return statusMap;
     }
 
     public File applyOverlayInternal(File source, String text) throws IOException {
@@ -59,6 +130,10 @@ public class PrintService {
         return target;
     }
 
+    private boolean simulationMode = false;
+    public boolean isSimulationMode() { return simulationMode; }
+    public void setSimulationMode(boolean simulationMode) { this.simulationMode = simulationMode; }
+
     public void printPDF(FileItem item, Consumer<String> statusCallback) throws IOException, PrinterException {
         String printerName = item.getTargetPrinter();
         boolean duplex = item.isDuplex();
@@ -70,6 +145,18 @@ public class PrintService {
 
         logger.info("Direct-to-Hardware print: {} -> {} (copies: {}, duplex: {}, booklet: {}, paper: {}, overlay: {})",
                     item.getFileName(), printerName, copies, duplex, booklet, paperSize, overlayText);
+
+        if (simulationMode) {
+            logger.info("SIMULATION: Printing {} to {}", item.getFileName(), printerName);
+            new Thread(() -> {
+                try {
+                    statusCallback.accept("Simulating...");
+                    Thread.sleep(2000);
+                    statusCallback.accept("Finished ✔");
+                } catch (InterruptedException e) {}
+            }).start();
+            return;
+        }
 
         PDFService pdfService = new PDFService();
         File processedFile = item.getFile();

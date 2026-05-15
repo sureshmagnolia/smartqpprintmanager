@@ -3,6 +3,8 @@ package com.printmanager;
 import com.printmanager.model.*;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleObjectProperty;
+import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -31,11 +33,10 @@ public class App extends Application {
     private final PrintService printService = new PrintService();
     private final ConfigManager configManager = new ConfigManager();
     private final PDFViewer pdfViewer = new PDFViewer();
+    private final ActivityLogger activityLogger = ActivityLogger.getInstance();
 
     private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4);
     private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
-    // Throttled pool to handle parallel printing to multiple printers safely.
-    // Fixed at 10 to ensure we don't overwhelm the system spooler or memory.
     private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(10);
 
     private Config config;
@@ -48,6 +49,8 @@ public class App extends Application {
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
+    private final Map<String, String> printerStatusCache = new HashMap<>();
+    private final HBox simAlertHeader = new HBox();
 
     @Override
     public void start(Stage primaryStage) {
@@ -60,17 +63,30 @@ public class App extends Application {
         mainTab.setClosable(false);
         Tab roomTab = new Tab("Smart Room Wise Router", createRoomRouterView(primaryStage));
         roomTab.setClosable(false);
+        Tab printerTab = new Tab("Printer Dashboard", createPrinterDashboardView());
+        printerTab.setClosable(false);
+        Tab logsTab = new Tab("Activity Logs", createLogsView());
+        logsTab.setClosable(false);
         Tab settingsTab = new Tab("Settings", createSettingsView());
         settingsTab.setClosable(false);
         Tab aboutTab = new Tab("About", createAboutView());
         aboutTab.setClosable(false);
-        tabPane.getTabs().addAll(mainTab, roomTab, settingsTab, aboutTab);
+        tabPane.getTabs().addAll(mainTab, roomTab, printerTab, logsTab, settingsTab, aboutTab);
 
-        VBox root = new VBox(tabPane, createStatusBarView());
+        simAlertHeader.setId("simulation-alert");
+        simAlertHeader.getChildren().add(new Label("⚠ SIMULATION MODE ACTIVE: Actual printing is disabled. Change this in Settings."));
+        simAlertHeader.setManaged(false);
+        simAlertHeader.setVisible(false);
+
+        VBox root = new VBox(simAlertHeader, tabPane, createStatusBarView());
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 1200, 850);
-        primaryStage.setTitle("Smart QP Print Manager v2.5.2");
+        try {
+            scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
+        } catch (Exception e) { logger.warn("Could not load CSS"); }
+        
+        primaryStage.setTitle("Smart QP Print Manager v3.0.0");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -81,19 +97,51 @@ public class App extends Application {
         primaryStage.setScene(scene);
         primaryStage.setMaximized(true);
         primaryStage.show();
+        activityLogger.info("Application started");
+
+        startPrinterStatusMonitor();
+        updateSimulationUI();
+    }
+
+    private void updateSimulationUI() {
+        boolean active = printService.isSimulationMode();
+        simAlertHeader.setManaged(active);
+        simAlertHeader.setVisible(active);
+    }
+
+    private void startPrinterStatusMonitor() {
+        Thread monitorThread = new Thread(() -> {
+            while (true) {
+                try {
+                    Map<String, String> currentStatus = printService.getPrintersStatus();
+                    Platform.runLater(() -> {
+                        printerStatusCache.clear();
+                        printerStatusCache.putAll(currentStatus);
+                    });
+                    Thread.sleep(10000); 
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    logger.error("Printer monitor error", e);
+                }
+            }
+        });
+        monitorThread.setDaemon(true);
+        monitorThread.start();
     }
 
     @Override
     public void stop() {
         analysisExecutor.shutdownNow();
         printQueueExecutor.shutdownNow();
+        activityLogger.info("Application stopped");
     }
 
     private HBox createStatusBarView() {
         statusBar.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(statusBar, Priority.ALWAYS);
         statusBar.setPadding(new Insets(5, 10, 5, 10));
-        statusBar.setStyle("-fx-background-color: #eee; -fx-border-color: #ccc; -fx-border-width: 1 0 0 0;");
+        statusBar.getStyleClass().add("status-bar");
         return new HBox(statusBar);
     }
 
@@ -101,7 +149,77 @@ public class App extends Application {
         Platform.runLater(() -> statusBar.setText(message));
     }
 
+    private VBox createLogsView() {
+        TableView<ActivityLogger.LogEntry> table = new TableView<>(activityLogger.getLogs());
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<ActivityLogger.LogEntry, String> timeCol = new TableColumn<>("Timestamp");
+        timeCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getTimestamp()));
+        timeCol.setPrefWidth(150); timeCol.setMaxWidth(160);
+
+        TableColumn<ActivityLogger.LogEntry, String> levelCol = new TableColumn<>("Level");
+        levelCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getLevel()));
+        levelCol.setPrefWidth(80); levelCol.setMaxWidth(90);
+
+        TableColumn<ActivityLogger.LogEntry, String> msgCol = new TableColumn<>("Message");
+        msgCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getMessage()));
+
+        table.getColumns().addAll(timeCol, levelCol, msgCol);
+
+        table.setRowFactory(tv -> new TableRow<ActivityLogger.LogEntry>() {
+            @Override protected void updateItem(ActivityLogger.LogEntry item, boolean empty) {
+                super.updateItem(item, empty);
+                if (item == null || empty) setStyle("");
+                else {
+                    if ("ERROR".equals(item.getLevel())) getStyleClass().add("log-entry-error");
+                    else if ("SUCCESS".equals(item.getLevel())) getStyleClass().add("log-entry-success");
+                    else getStyleClass().add("log-entry-info");
+                }
+            }
+        });
+
+        VBox layout = new VBox(10, new Label("System Activity Logs:"), table);
+        layout.setPadding(new Insets(10));
+        VBox.setVgrow(table, Priority.ALWAYS);
+        return layout;
+    }
+
     private VBox createMainView(Stage stage) {
+        HBox statsDash = new HBox(30);
+        statsDash.setPadding(new Insets(15));
+        statsDash.getStyleClass().add("glass-panel");
+        
+        Label totalJobs = new Label("Total Jobs: 0");
+        totalJobs.setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+        Label activePrinters = new Label("Active Printers: 0");
+        activePrinters.setStyle("-fx-font-weight: bold; -fx-text-fill: #4CAF50;");
+        Label totalPages = new Label("Total Pages: 0");
+        totalPages.setStyle("-fx-font-weight: bold; -fx-text-fill: #FF9800;");
+
+        Label simWarning = new Label("Simulation Mode is ON");
+        simWarning.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
+        simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
+        simWarning.managedProperty().bind(simAlertHeader.managedProperty());
+
+        fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
+            totalJobs.setText("Total Jobs: " + fileQueue.size());
+            totalPages.setText("Total Pages: " + fileQueue.stream().mapToInt(FileItem::getPageCount).sum());
+        });
+
+        Thread statsThread = new Thread(() -> {
+            while(true) {
+                try {
+                    long active = printerStatusCache.values().stream().filter(s -> "Ready".equalsIgnoreCase(s) || "Printing".equalsIgnoreCase(s)).count();
+                    Platform.runLater(() -> activePrinters.setText("Active Printers: " + active));
+                    Thread.sleep(5000);
+                } catch (Exception e) { break; }
+            }
+        });
+        statsThread.setDaemon(true);
+        statsThread.start();
+
+        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, simWarning);
+
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
         searchField.textProperty().addListener((obs, old, newValue) -> {
@@ -117,7 +235,7 @@ public class App extends Application {
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
         TableColumn<FileItem, Integer> snCol = new TableColumn<>("S.No");
-        snCol.setCellFactory(col -> new TableCell<>() {
+        snCol.setCellFactory(col -> new TableCell<FileItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty) setText(null);
@@ -133,7 +251,7 @@ public class App extends Application {
         TableColumn<FileItem, Integer> pagesCol = new TableColumn<>("Pages");
         pagesCol.setCellValueFactory(d -> d.getValue().pageCountProperty().asObject());
         pagesCol.setPrefWidth(60); pagesCol.setMaxWidth(70);
-        pagesCol.setCellFactory(tc -> new TableCell<>() {
+        pagesCol.setCellFactory(tc -> new TableCell<FileItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) setText(null);
@@ -144,7 +262,7 @@ public class App extends Application {
         TableColumn<FileItem, Integer> copiesCol = new TableColumn<>("Copies");
         copiesCol.setCellValueFactory(d -> d.getValue().copiesProperty().asObject());
         copiesCol.setPrefWidth(80); copiesCol.setMaxWidth(90);
-        copiesCol.setCellFactory(tc -> new TableCell<>() {
+        copiesCol.setCellFactory(tc -> new TableCell<FileItem, Integer>() {
             private final Spinner<Integer> spinner = new Spinner<>(1, 999, 1);
             { spinner.setPrefWidth(70); spinner.valueProperty().addListener((o, ov, nv) -> {
                 if (getTableRow().getItem() != null) getTableRow().getItem().setCopies(nv);
@@ -159,7 +277,7 @@ public class App extends Application {
         TableColumn<FileItem, String> styleCol = new TableColumn<>("Style");
         styleCol.setCellValueFactory(d -> d.getValue().styleProperty());
         styleCol.setPrefWidth(100); styleCol.setMaxWidth(110);
-        styleCol.setCellFactory(tc -> new TableCell<>() {
+        styleCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet"));
             { combo.setPrefWidth(90); combo.setOnAction(e -> {
                 if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setStyle(combo.getValue());
@@ -174,7 +292,7 @@ public class App extends Application {
         TableColumn<FileItem, String> printerCol = new TableColumn<>("Printer");
         printerCol.setCellValueFactory(d -> d.getValue().targetPrinterProperty());
         printerCol.setMinWidth(150);
-        printerCol.setCellFactory(tc -> new TableCell<>() {
+        printerCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
             { combo.setPrefWidth(140); combo.setOnAction(e -> {
                 if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setTargetPrinter(combo.getValue());
@@ -189,7 +307,7 @@ public class App extends Application {
         TableColumn<FileItem, String> paperCol = new TableColumn<>("Paper");
         paperCol.setCellValueFactory(d -> d.getValue().paperSizeProperty());
         paperCol.setPrefWidth(80); paperCol.setMaxWidth(90);
-        paperCol.setCellFactory(tc -> new TableCell<>() {
+        paperCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("A4", "A3"));
             { combo.setPrefWidth(70); combo.setOnAction(e -> {
                 if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setPaperSize(combo.getValue());
@@ -203,8 +321,8 @@ public class App extends Application {
 
         TableColumn<FileItem, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
-        statusCol.setPrefWidth(100);
-        statusCol.setCellFactory(tc -> new TableCell<>() {
+        statusCol.setPrefWidth(80); statusCol.setMaxWidth(90);
+        statusCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setStyle(""); }
@@ -220,7 +338,7 @@ public class App extends Application {
 
         TableColumn<FileItem, Void> actionCol = new TableColumn<>("Action");
         actionCol.setMinWidth(250); actionCol.setMaxWidth(280);
-        actionCol.setCellFactory(tc -> new TableCell<>() {
+        actionCol.setCellFactory(tc -> new TableCell<FileItem, Void>() {
             private final Button pBtn = new Button("Print");
             private final Button sBtn = new Button("Save");
             private final Button vBtn = new Button("\uD83D\uDC41");
@@ -243,7 +361,7 @@ public class App extends Application {
         table.getColumns().addAll(snCol, nameCol, pagesCol, copiesCol, styleCol, printerCol, paperCol, statusCol, actionCol);
 
         table.setRowFactory(tv -> {
-            TableRow<FileItem> row = new TableRow<>() {
+            TableRow<FileItem> row = new TableRow<FileItem>() {
                 @Override protected void updateItem(FileItem item, boolean empty) {
                     super.updateItem(item, empty);
                     if (item == null || empty) setStyle("");
@@ -290,9 +408,115 @@ public class App extends Application {
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
-        VBox layout = new VBox(10, searchField, table, btns);
+        VBox layout = new VBox(10, statsDash, searchField, table, btns);
         VBox.setVgrow(table, Priority.ALWAYS);
         layout.setPadding(new Insets(10));
+        return layout;
+    }
+
+    public static class PrinterDisplay {
+        private final String name;
+        private final SimpleStringProperty status;
+        private final SimpleStringProperty activeJobs;
+        private final SimpleStringProperty currentTask;
+
+        public PrinterDisplay(String name, String status) {
+            this.name = name;
+            this.status = new SimpleStringProperty(status);
+            this.activeJobs = new SimpleStringProperty("0");
+            this.currentTask = new SimpleStringProperty("Idle");
+        }
+
+        public String getName() { return name; }
+        public String getStatus() { return status.get(); }
+        public SimpleStringProperty statusProperty() { return status; }
+        public void setStatus(String status) { this.status.set(status); }
+
+        public String getActiveJobs() { return activeJobs.get(); }
+        public SimpleStringProperty activeJobsProperty() { return activeJobs; }
+        public void setActiveJobs(String activeJobs) { this.activeJobs.set(activeJobs); }
+
+        public String getCurrentTask() { return currentTask.get(); }
+        public SimpleStringProperty currentTaskProperty() { return currentTask; }
+        public void setCurrentTask(String currentTask) { this.currentTask.set(currentTask); }
+    }
+
+    private VBox createPrinterDashboardView() {
+        ObservableList<PrinterDisplay> printerDisplays = FXCollections.observableArrayList();
+        TableView<PrinterDisplay> table = new TableView<>(printerDisplays);
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.getStyleClass().add("glass-panel");
+
+        TableColumn<PrinterDisplay, String> nameCol = new TableColumn<>("Printer Name");
+        nameCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getName()));
+
+        TableColumn<PrinterDisplay, String> statusCol = new TableColumn<>("Hardware Status");
+        statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
+        statusCol.setCellFactory(tc -> new TableCell<PrinterDisplay, String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); }
+                else {
+                    setText(item); setAlignment(javafx.geometry.Pos.CENTER);
+                    if ("Ready".equalsIgnoreCase(item)) setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
+                    else if ("Offline".equalsIgnoreCase(item)) setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+                    else if ("Printing".equalsIgnoreCase(item)) setStyle("-fx-text-fill: blue; -fx-font-weight: bold;");
+                    else setStyle("-fx-text-fill: orange;");
+                }
+            }
+        });
+
+        TableColumn<PrinterDisplay, String> jobsCol = new TableColumn<>("Active Jobs");
+        jobsCol.setCellValueFactory(d -> d.getValue().activeJobsProperty());
+        jobsCol.setPrefWidth(100); jobsCol.setMaxWidth(120);
+        jobsCol.setCellFactory(tc -> new TableCell<PrinterDisplay, String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setText(null); else { setText(item); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<PrinterDisplay, String> taskCol = new TableColumn<>("Current Task");
+        taskCol.setCellValueFactory(d -> d.getValue().currentTaskProperty());
+        taskCol.setCellFactory(tc -> new TableCell<PrinterDisplay, String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setText(null); else { setText(item); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        table.getColumns().addAll(nameCol, statusCol, jobsCol, taskCol);
+
+        printService.getAvailablePrinters().stream()
+            .filter(n -> !"None".equals(n))
+            .forEach(n -> printerDisplays.add(new PrinterDisplay(n, "Checking...")));
+
+        Thread dashboardUpdater = new Thread(() -> {
+            while (true) {
+                try {
+                    Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
+                    Platform.runLater(() -> {
+                        for (PrinterDisplay pd : printerDisplays) {
+                            if (detailed.containsKey(pd.getName())) {
+                                Map<String, String> data = detailed.get(pd.getName());
+                                pd.setStatus(data.get("status"));
+                                pd.setActiveJobs(data.get("jobs"));
+                                pd.setCurrentTask(data.get("current"));
+                            }
+                        }
+                    });
+                    Thread.sleep(5000); 
+                } catch (InterruptedException e) { break; }
+                catch (Exception e) { logger.error("Dashboard error", e); }
+            }
+        });
+        dashboardUpdater.setDaemon(true);
+        dashboardUpdater.start();
+
+        VBox layout = new VBox(20, new Label("Live Printer Activities:") {{ setStyle("-fx-font-size: 18px; -fx-font-weight: bold;"); }}, table);
+        layout.setPadding(new Insets(30));
+        layout.setAlignment(javafx.geometry.Pos.CENTER);
+        VBox.setVgrow(table, Priority.ALWAYS);
         return layout;
     }
 
@@ -414,11 +638,18 @@ public class App extends Application {
 
     private void printFile(FileItem item) {
         if ("None".equals(item.getTargetPrinter())) { updateStatus("Error: No Printer"); return; }
+        activityLogger.info("Starting print job: " + item.getFileName() + " on " + item.getTargetPrinter());
         printQueueExecutor.submit(() -> {
             try {
                 item.setStatus("Printing...");
-                printService.printPDF(item, s -> Platform.runLater(() -> item.setStatus(s)));
-            } catch (Exception e) { Platform.runLater(() -> item.setStatus("Error")); }
+                printService.printPDF(item, s -> {
+                    Platform.runLater(() -> item.setStatus(s));
+                    if (s.contains("Finished")) activityLogger.success("Printed: " + item.getFileName() + " on " + item.getTargetPrinter());
+                });
+            } catch (Exception e) { 
+                Platform.runLater(() -> item.setStatus("Error"));
+                activityLogger.error("Failed to print: " + item.getFileName() + " (" + e.getMessage() + ")");
+            }
         });
     }
 
@@ -438,7 +669,14 @@ public class App extends Application {
     }
 
     private VBox createSettingsView() {
-        // --- 1. Standard Rules Section ---
+        CheckBox simMode = new CheckBox("Enable Print Simulation Mode (Test Run)");
+        simMode.setSelected(printService.isSimulationMode());
+        simMode.setOnAction(e -> {
+            printService.setSimulationMode(simMode.isSelected());
+            activityLogger.info("Simulation Mode: " + (simMode.isSelected() ? "Enabled" : "Disabled"));
+            updateSimulationUI();
+        });
+
         ListView<PrintRule> ruleListV = new ListView<>(rulesList); ruleListV.setPrefHeight(180);
         
         TextField minP = new TextField(); minP.setPromptText("Min Pages"); minP.setPrefWidth(80);
@@ -504,9 +742,7 @@ public class App extends Application {
         ruleInputs.setPadding(new Insets(5, 0, 5, 0));
         HBox ruleBtns = new HBox(10, addRuleBtn, updateRuleBtn, remRuleBtn);
 
-        // --- 2. Smart Split Rules Section ---
         ListView<SmartSplitRule> smartListV = new ListView<>(smartSplitRulesList); smartListV.setPrefHeight(180);
-        
         CheckBox ssEn = new CheckBox("Enabled");
         TextField ssKw = new TextField(); ssKw.setPromptText("Keyword");
         TextField ssPreB = new TextField(); ssPreB.setPromptText("Prefix Before"); ssPreB.setPrefWidth(120);
@@ -514,8 +750,7 @@ public class App extends Application {
         
         VBox smartControls = new VBox(10,
             new HBox(10, new Label("Active:"), ssEn, new Label("Target Keyword:"), ssKw),
-            new HBox(10, new Label("Name Prefix (Before):"), ssPreB, new Label("Name Prefix (After):"), ssPreA),
-            new Label("Note: This will split files whenever the keyword is found and apply custom naming/routing.")
+            new HBox(10, new Label("Name Prefix (Before):"), ssPreB, new Label("Name Prefix (After):"), ssPreA)
         );
 
         smartListV.setOnMouseClicked(e -> {
@@ -559,10 +794,11 @@ public class App extends Application {
         });
 
         VBox layout = new VBox(15, 
+            new Label("System Flags:"), simMode,
+            new Separator(),
             new Label("1. Page Count Routing Rules:"), ruleListV, ruleInputs, ruleBtns,
             new Separator(),
-            new Label("2. Smart Split Configuration (Keyword Based Splitting):"), smartListV,
-            smartControls,
+            new Label("2. Smart Split Configuration:"), smartListV, smartControls,
             new HBox(10, addSmartBtn, updateSmartBtn, remSmartBtn)
         );
         layout.setPadding(new Insets(20));
@@ -575,77 +811,47 @@ public class App extends Application {
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
-
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Reading JSON: " + file.getName());
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
                 int countUpdated = 0;
-                int qpFound = 0;
-
                 if (root.isArray()) {
                     for (JsonNode node : root) {
                         String qpCode = node.path("qpCode").asText("");
                         int count = node.path("count").asInt(1);
-
                         if (!qpCode.isEmpty()) {
-                            boolean matched = false;
                             for (FileItem item : fileQueue) {
                                 String fileName = item.getFileName();
                                 String extractedQP = extractQPFromFileName(fileName);
-                                
-                                // Precise matching: extracted QP code or exact substring with boundaries
                                 if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
                                     final int finalCount = count;
                                     Platform.runLater(() -> item.setCopies(finalCount));
                                     countUpdated++;
-                                    matched = true;
                                 }
                             }
-                            if (matched) qpFound++;
                         }
                     }
                 }
                 final int finalUpdated = countUpdated;
-                final int finalQp = qpFound;
-                Platform.runLater(() -> {
-                    updateStatus("Finished: Updated " + finalUpdated + " files (" + finalQp + " QP codes).");
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                    alert.setTitle("JSON Update Complete");
-                    alert.setHeaderText(null);
-                    alert.setContentText("Successfully updated copy counts for " + finalUpdated + " files based on " + finalQp + " QP codes found in the JSON.");
-                    alert.showAndWait();
-                });
-            } catch (Exception e) {
-                logger.error("JSON Read Error", e);
-                updateStatus("Error reading JSON file.");
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("Error");
-                    alert.setHeaderText("Failed to read JSON");
-                    alert.setContentText(e.getMessage());
-                    alert.showAndWait();
-                });
-            }
+                Platform.runLater(() -> updateStatus("Finished: Updated " + finalUpdated + " files."));
+            } catch (Exception e) { logger.error("JSON Error", e); }
         });
     }
 
     private String extractQPFromFileName(String fileName) {
         if (fileName == null) return null;
-        // Robust pattern to find QP code after the time string (e.g., _10-00 AM_, _01_30 PM_, _10.00 AM_ etc.)
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("_\\d{2}[-_:\\.]\\d{2}\\s+[AP]M_([A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher m = p.matcher(fileName);
-        if (m.find()) {
-            return m.group(1);
-        }
+        if (m.find()) return m.group(1);
         return null;
     }
 
     private void updateRowStyle(TableRow<FileItem> row, String status) {
         if (status == null) row.setStyle("");
-        else if (status.contains("Finished")) row.setStyle("-fx-background-color: #c8e6c9;"); // Light Green
-        else if (status.contains("Error")) row.setStyle("-fx-background-color: #ffcdd2;");    // Light Red
+        else if (status.contains("Finished")) row.setStyle("-fx-background-color: #c8e6c9;"); 
+        else if (status.contains("Error")) row.setStyle("-fx-background-color: #ffcdd2;");    
         else row.setStyle("");
     }
 
@@ -660,32 +866,33 @@ public class App extends Application {
         uploadBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
         uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
 
+        TextField roomSearch = new TextField();
+        roomSearch.setPromptText("Filter rooms or QP codes...");
+        roomSearch.setPrefWidth(300);
+
         ScrollPane scrollPane = new ScrollPane();
         FlowPane flowPane = new FlowPane();
-        flowPane.setPadding(new Insets(20));
-        flowPane.setHgap(20);
-        flowPane.setVgap(20);
+        flowPane.setPadding(new Insets(20)); flowPane.setHgap(20); flowPane.setVgap(20);
         flowPane.prefWidthProperty().bind(scrollPane.widthProperty().subtract(20));
 
-        javafx.collections.ListChangeListener<RoomGroup> listener = c -> {
-            while (c.next()) {
-                if (c.wasAdded()) {
-                    for (RoomGroup group : c.getAddedSubList()) {
-                        flowPane.getChildren().add(createRoomCard(group));
-                    }
-                }
-                if (c.wasRemoved()) {
-                    flowPane.getChildren().clear();
-                    roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
-                }
-            }
-        };
-        roomGroupsList.addListener(listener);
+        roomSearch.textProperty().addListener((obs, old, val) -> {
+            flowPane.getChildren().clear();
+            String filter = val.toLowerCase();
+            roomGroupsList.stream()
+                .filter(g -> g.getRoomSerial().toLowerCase().contains(filter) || 
+                             g.getItems().stream().anyMatch(i -> i.getQpCode().toLowerCase().contains(filter)))
+                .forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+        });
+
+        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
+            flowPane.getChildren().clear();
+            roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+        });
 
         scrollPane.setContent(flowPane);
         scrollPane.setFitToWidth(true);
 
-        VBox layout = new VBox(20, uploadBtn, scrollPane);
+        VBox layout = new VBox(20, new HBox(20, uploadBtn, roomSearch), scrollPane);
         layout.setPadding(new Insets(20));
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         return layout;
@@ -707,17 +914,17 @@ public class App extends Application {
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
         TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
-        qpCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().getDisplayName()));
+        qpCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getDisplayName()));
         
         TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Qty");
-        countCol.setCellValueFactory(d -> new javafx.beans.property.SimpleObjectProperty<>(d.getValue().getCount()));
+        countCol.setCellValueFactory(d -> new SimpleObjectProperty<>(d.getValue().getCount()));
         countCol.setPrefWidth(50);
 
         TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
 
         TableColumn<RoomItem, Void> actionCol = new TableColumn<>("Action");
-        actionCol.setCellFactory(tc -> new TableCell<>() {
+        actionCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button btn = new Button("Edit & Send");
             {
                 btn.setStyle("-fx-font-size: 10px; -fx-padding: 2 5; -fx-background-color: #ff9800; -fx-text-fill: white;");
@@ -733,9 +940,7 @@ public class App extends Application {
                                 int newQty = Integer.parseInt(v);
                                 item.setCount(newQty);
                                 printSingleRoomItem(item, group.getSelectedPrinter());
-                            } catch (NumberFormatException ex) {
-                                updateStatus("Invalid quantity entered.");
-                            }
+                            } catch (Exception ex) { }
                         });
                     }
                 });
@@ -751,9 +956,7 @@ public class App extends Application {
         table.setRowFactory(tv -> {
             TableRow<RoomItem> row = new TableRow<>();
             row.setOnMouseClicked(event -> {
-                if (event.getClickCount() == 2 && !row.isEmpty()) {
-                    previewRoomItem(row.getItem());
-                }
+                if (event.getClickCount() == 2 && !row.isEmpty()) previewRoomItem(row.getItem());
             });
             return row;
         });
@@ -772,187 +975,116 @@ public class App extends Application {
         roomStatus.textProperty().bind(group.statusProperty());
         roomStatus.setStyle("-fx-font-style: italic;");
 
-        card.getChildren().addAll(title, table, printerCombo, sendBtn, roomStatus);
+        Label printerIndicator = new Label();
+        printerIndicator.setStyle("-fx-font-size: 10px; -fx-text-fill: #777;");
+        group.selectedPrinterProperty().addListener((o, ov, nv) -> {
+            if (nv != null && printerStatusCache.containsKey(nv)) {
+                String s = printerStatusCache.get(nv);
+                printerIndicator.setText("Status: " + s);
+                printerIndicator.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ("Ready".equalsIgnoreCase(s) ? "green" : "red") + ";");
+            } else printerIndicator.setText("");
+        });
+
+        card.getChildren().addAll(title, table, printerCombo, printerIndicator, sendBtn, roomStatus);
         return card;
     }
 
     private VBox createAboutView() {
-        VBox layout = new VBox(20);
-        layout.setPadding(new Insets(50));
-        layout.setAlignment(javafx.geometry.Pos.CENTER);
-
-        Label title = new Label("Smart QP Print Manager v2.5.2");
+        VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
+        Label title = new Label("Smart QP Print Manager v3.0.0");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
-
         Label createdBy = new Label("Created by Magnolia for Examination Management");
-        createdBy.setStyle("-fx-font-size: 18px; -fx-font-weight: normal; -fx-text-fill: #555;");
+        createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
 
-        Label desc = new Label("A specialized tool for high-volume automated question paper printing and room-wise routing.");
-        desc.setWrapText(true);
-        desc.setMaxWidth(600);
-        desc.setStyle("-fx-font-size: 14px; -fx-text-fill: #777;");
+        TabPane helpPane = new TabPane(); helpPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE); helpPane.setPrefHeight(400);
 
-        Separator sep = new Separator();
-        sep.setMaxWidth(400);
+        String overview = "OVERVIEW:\nA specialized utility for high-volume automated question paper printing.\n\n" +
+            "1. PRINT QUEUE: Add PDFs for general batch printing.\n2. ROOM ROUTER: Automatically group and print papers per room.\n" +
+            "3. PRINTER DASHBOARD: Monitor real-time status.\n4. ACTIVITY LOGS: Audit every action.";
 
-        layout.getChildren().addAll(title, createdBy, sep, desc);
+        String roomLogic = "ROOM WISE ROUTING:\n- Requires JSON with 'roomSerial', 'qpCode', and 'count'.\n- Matches qpCode against Print Queue.\n- Split parts (Main/MCQ) appear independently.";
+
+        helpPane.getTabs().add(new Tab("Overview", new ScrollPane(new Label(overview) {{ setPadding(new Insets(10)); setWrapText(true); }})));
+        helpPane.getTabs().add(new Tab("Room Router", new ScrollPane(new Label(roomLogic) {{ setPadding(new Insets(10)); setWrapText(true); }})));
+
+        layout.getChildren().addAll(title, createdBy, new Separator(), helpPane);
         return layout;
     }
 
     private void previewRoomItem(RoomItem item) {
-        if (item.getMatchedFile() == null) {
-            updateStatus("No matched file to preview.");
-            return;
-        }
+        if (item.getMatchedFile() == null) { updateStatus("No matched file to preview."); return; }
         previewFile(item.getMatchedFile(), true);
     }
 
     private void printSingleRoomItem(RoomItem roomItem, String selectedPrinter) {
-        if ("None".equals(selectedPrinter) || selectedPrinter == null) {
-            updateStatus("Error: Select a printer for this room first.");
-            return;
-        }
-
+        if ("None".equals(selectedPrinter) || selectedPrinter == null) { updateStatus("Error: Select a printer."); return; }
         roomItem.setStatus("Sending...");
         roomPrintExecutor.submit(() -> {
             try {
-                if (roomItem.getMatchedFile() == null) {
-                    Platform.runLater(() -> roomItem.setStatus("File Not Found"));
-                    return;
-                }
-
+                if (roomItem.getMatchedFile() == null) { Platform.runLater(() -> roomItem.setStatus("File Not Found")); return; }
                 FileItem fileItem = roomItem.getMatchedFile();
-                FileItem jobItem = new FileItem(
-                    fileItem.getFile(), 
-                    fileItem.getPageCount(), 
-                    fileItem.getContent(),
-                    selectedPrinter,
-                    fileItem.isDuplex(),
-                    fileItem.isBooklet(),
-                    fileItem.getBindingType(),
-                    roomItem.getCount(),
-                    fileItem.getPaperSize(),
-                    fileItem.getOverlayText()
-                );
-                jobItem.setFileName(fileItem.getFileName());
-                jobItem.setStyle(fileItem.getStyle());
-
+                FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), selectedPrinter, fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
+                jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
                 printService.printPDF(jobItem, s -> Platform.runLater(() -> roomItem.setStatus(s)));
-            } catch (Exception e) {
-                logger.error("Single item print error", e);
-                Platform.runLater(() -> roomItem.setStatus("Error"));
-            }
+            } catch (Exception e) { Platform.runLater(() -> roomItem.setStatus("Error")); }
         });
     }
 
     private void loadRoomWiseJson(Stage stage) {
         FileChooser fc = new FileChooser();
-        fc.setTitle("Select Room Wise Seating Summary JSON");
+        fc.setTitle("Select Room JSON");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
-
         analysisExecutor.submit(() -> {
             try {
-                updateStatus("Reading Room JSON: " + file.getName());
+                updateStatus("Loading Room JSON...");
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
-                
                 Map<String, RoomGroup> groups = new LinkedHashMap<>();
-                int matchedCount = 0;
-
                 if (root.isArray()) {
                     for (JsonNode node : root) {
                         String roomSerial = node.path("roomSerial").asText("Unknown");
                         String qpCode = node.path("qpCode").asText("");
-                        String pdfFileName = node.path("pdfFileName").asText("");
                         int count = node.path("count").asInt(0);
-
                         RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
-                        boolean anyMatched = false;
-
-                        // Match with all files in fileQueue (could be multiple split parts)
+                        boolean matched = false;
                         for (FileItem fileItem : fileQueue) {
                             String fileName = fileItem.getFileName();
                             String extractedQP = extractQPFromFileName(fileName);
-                            
-                            // Match if extracted QP matches OR if QP code is a clear substring in the filename
                             if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, "", count);
                                 roomItem.setMatchedFile(fileItem);
-                                group.getItems().add(roomItem);
-                                matchedCount++;
-                                anyMatched = true;
+                                group.getItems().add(roomItem); matched = true;
                             }
                         }
-
-                        if (!anyMatched) {
-                            RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
-                            group.getItems().add(roomItem);
-                        }
+                        if (!matched) group.getItems().add(new RoomItem(roomSerial, qpCode, "", count));
                     }
                 }
-
-                final int finalMatched = matchedCount;
-                final int finalGroupSize = groups.size();
                 Platform.runLater(() -> {
                     roomGroupsList.setAll(groups.values());
-                    updateStatus("Loaded " + finalGroupSize + " rooms. Matched " + finalMatched + " files.");
+                    updateStatus("Loaded " + groups.size() + " rooms.");
                 });
-
-            } catch (Exception e) {
-                logger.error("Room JSON Error", e);
-                updateStatus("Error loading room JSON.");
-            }
+            } catch (Exception e) { updateStatus("Error loading JSON."); }
         });
     }
 
     private void printRoom(RoomGroup group) {
-        if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) {
-            updateStatus("Error: Select a printer for " + group.getRoomSerial());
-            return;
-        }
-
+        if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) { updateStatus("Error: Select a printer."); return; }
         group.setStatus("Sending...");
         roomPrintExecutor.submit(() -> {
             try {
-                boolean allSuccess = true;
                 for (RoomItem roomItem : group.getItems()) {
-                    if (roomItem.getMatchedFile() == null) {
-                        roomItem.setStatus("File Not Found");
-                        allSuccess = false;
-                        continue;
-                    }
-
+                    if (roomItem.getMatchedFile() == null) { roomItem.setStatus("File Not Found"); continue; }
                     roomItem.setStatus("Printing...");
                     FileItem fileItem = roomItem.getMatchedFile();
-                    
-                    FileItem jobItem = new FileItem(
-                        fileItem.getFile(), 
-                        fileItem.getPageCount(), 
-                        fileItem.getContent(),
-                        group.getSelectedPrinter(),
-                        fileItem.isDuplex(),
-                        fileItem.isBooklet(),
-                        fileItem.getBindingType(),
-                        roomItem.getCount(),
-                        fileItem.getPaperSize(),
-                        fileItem.getOverlayText()
-                    );
-                    jobItem.setFileName(fileItem.getFileName());
-                    jobItem.setStyle(fileItem.getStyle());
-
-                    final RoomItem finalRoomItem = roomItem;
-                    printService.printPDF(jobItem, s -> Platform.runLater(() -> finalRoomItem.setStatus(s)));
-                    Thread.sleep(300); // Small delay between jobs
+                    FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), group.getSelectedPrinter(), fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
+                    jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
+                    printService.printPDF(jobItem, s -> Platform.runLater(() -> roomItem.setStatus(s)));
+                    Thread.sleep(300);
                 }
-                
-                final boolean success = allSuccess;
-                Platform.runLater(() -> group.setStatus(success ? "Finished" : "Completed with errors"));
-            } catch (Exception e) {
-                logger.error("Room print error", e);
-                Platform.runLater(() -> group.setStatus("Error"));
-            }
+                Platform.runLater(() -> group.setStatus("Finished"));
+            } catch (Exception e) { Platform.runLater(() -> group.setStatus("Error")); }
         });
     }
 
