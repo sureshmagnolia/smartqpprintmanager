@@ -1,0 +1,641 @@
+package com.printmanager;
+
+import com.printmanager.model.*;
+import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class App extends Application {
+    private static final Logger logger = LoggerFactory.getLogger(App.class);
+
+    private final PDFService pdfService = new PDFService();
+    private final PrintService printService = new PrintService();
+    private final ConfigManager configManager = new ConfigManager();
+    private final PDFViewer pdfViewer = new PDFViewer();
+
+    private final java.util.concurrent.ExecutorService analysisExecutor = java.util.concurrent.Executors.newFixedThreadPool(4);
+    private final java.util.concurrent.ExecutorService printQueueExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    private Config config;
+    private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList();
+    private final FilteredList<FileItem> filteredQueue = new FilteredList<>(fileQueue, p -> true);
+    private final javafx.collections.transformation.SortedList<FileItem> sortedQueue = new javafx.collections.transformation.SortedList<>(filteredQueue);
+    private final ObservableList<PrintRule> rulesList = FXCollections.observableArrayList();
+    private final ObservableList<SmartSplitRule> smartSplitRulesList = FXCollections.observableArrayList();
+
+    private final Label statusBar = new Label("Ready");
+    private volatile boolean isPrintingAll = false;
+
+    @Override
+    public void start(Stage primaryStage) {
+        config = configManager.loadConfig();
+        rulesList.addAll(config.getRules());
+        smartSplitRulesList.addAll(config.getSmartSplitRules());
+
+        TabPane tabPane = new TabPane();
+        Tab mainTab = new Tab("Print Queue", createMainView(primaryStage));
+        mainTab.setClosable(false);
+        Tab settingsTab = new Tab("Settings", createSettingsView());
+        settingsTab.setClosable(false);
+        tabPane.getTabs().addAll(mainTab, settingsTab);
+
+        VBox root = new VBox(tabPane, createStatusBarView());
+        VBox.setVgrow(tabPane, Priority.ALWAYS);
+
+        Scene scene = new Scene(root, 1200, 850);
+        primaryStage.setTitle("Smart Print Manager v2.4");
+        primaryStage.setScene(scene);
+        primaryStage.setMaximized(true);
+        primaryStage.show();
+    }
+
+    @Override
+    public void stop() {
+        analysisExecutor.shutdownNow();
+        printQueueExecutor.shutdownNow();
+    }
+
+    private HBox createStatusBarView() {
+        statusBar.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(statusBar, Priority.ALWAYS);
+        statusBar.setPadding(new Insets(5, 10, 5, 10));
+        statusBar.setStyle("-fx-background-color: #eee; -fx-border-color: #ccc; -fx-border-width: 1 0 0 0;");
+        return new HBox(statusBar);
+    }
+
+    private void updateStatus(String message) {
+        Platform.runLater(() -> statusBar.setText(message));
+    }
+
+    private VBox createMainView(Stage stage) {
+        TextField searchField = new TextField();
+        searchField.setPromptText("Search files...");
+        searchField.textProperty().addListener((obs, old, newValue) -> {
+            filteredQueue.setPredicate(item -> {
+                if (newValue == null || newValue.isEmpty()) return true;
+                String low = newValue.toLowerCase();
+                return item.getFileName().toLowerCase().contains(low);
+            });
+        });
+
+        TableView<FileItem> table = new TableView<>(sortedQueue);
+        sortedQueue.comparatorProperty().bind(table.comparatorProperty());
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<FileItem, Integer> snCol = new TableColumn<>("S.No");
+        snCol.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setText(null);
+                else setText(String.valueOf(getIndex() + 1));
+            }
+        });
+        snCol.setPrefWidth(50); snCol.setMaxWidth(60); snCol.setSortable(false);
+
+        TableColumn<FileItem, String> nameCol = new TableColumn<>("File Name");
+        nameCol.setCellValueFactory(d -> d.getValue().fileNameProperty());
+        nameCol.setMinWidth(300);
+
+        TableColumn<FileItem, Integer> pagesCol = new TableColumn<>("Pages");
+        pagesCol.setCellValueFactory(d -> d.getValue().pageCountProperty().asObject());
+        pagesCol.setPrefWidth(60); pagesCol.setMaxWidth(70);
+        pagesCol.setCellFactory(tc -> new TableCell<>() {
+            @Override protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) setText(null);
+                else { setText(item.toString()); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<FileItem, Integer> copiesCol = new TableColumn<>("Copies");
+        copiesCol.setCellValueFactory(d -> d.getValue().copiesProperty().asObject());
+        copiesCol.setPrefWidth(80); copiesCol.setMaxWidth(90);
+        copiesCol.setCellFactory(tc -> new TableCell<>() {
+            private final Spinner<Integer> spinner = new Spinner<>(1, 999, 1);
+            { spinner.setPrefWidth(70); spinner.valueProperty().addListener((o, ov, nv) -> {
+                if (getTableRow().getItem() != null) getTableRow().getItem().setCopies(nv);
+            }); }
+            @Override protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null);
+                else { spinner.getValueFactory().setValue(item); setGraphic(spinner); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<FileItem, String> styleCol = new TableColumn<>("Style");
+        styleCol.setCellValueFactory(d -> d.getValue().styleProperty());
+        styleCol.setPrefWidth(100); styleCol.setMaxWidth(110);
+        styleCol.setCellFactory(tc -> new TableCell<>() {
+            private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet"));
+            { combo.setPrefWidth(90); combo.setOnAction(e -> {
+                if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setStyle(combo.getValue());
+            }); }
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null);
+                else { combo.setValue(item); setGraphic(combo); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<FileItem, String> printerCol = new TableColumn<>("Printer");
+        printerCol.setCellValueFactory(d -> d.getValue().targetPrinterProperty());
+        printerCol.setMinWidth(150);
+        printerCol.setCellFactory(tc -> new TableCell<>() {
+            private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
+            { combo.setPrefWidth(140); combo.setOnAction(e -> {
+                if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setTargetPrinter(combo.getValue());
+            }); }
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null);
+                else { combo.setValue(item); setGraphic(combo); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<FileItem, String> paperCol = new TableColumn<>("Paper");
+        paperCol.setCellValueFactory(d -> d.getValue().paperSizeProperty());
+        paperCol.setPrefWidth(80); paperCol.setMaxWidth(90);
+        paperCol.setCellFactory(tc -> new TableCell<>() {
+            private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("A4", "A3"));
+            { combo.setPrefWidth(70); combo.setOnAction(e -> {
+                if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setPaperSize(combo.getValue());
+            }); }
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null);
+                else { combo.setValue(item); setGraphic(combo); setAlignment(javafx.geometry.Pos.CENTER); }
+            }
+        });
+
+        TableColumn<FileItem, String> statusCol = new TableColumn<>("Status");
+        statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
+        statusCol.setPrefWidth(100);
+        statusCol.setCellFactory(tc -> new TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); }
+                else {
+                    setText(item); setAlignment(javafx.geometry.Pos.CENTER);
+                    if (item.contains("Sent")) setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
+                    else if (item.contains("Finished")) setStyle("-fx-text-fill: blue; -fx-font-weight: bold;");
+                    else if (item.contains("Error")) setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+                    else setStyle("");
+                }
+            }
+        });
+
+        TableColumn<FileItem, Void> actionCol = new TableColumn<>("Action");
+        actionCol.setMinWidth(250); actionCol.setMaxWidth(280);
+        actionCol.setCellFactory(tc -> new TableCell<>() {
+            private final Button pBtn = new Button("Print");
+            private final Button sBtn = new Button("Save");
+            private final Button vBtn = new Button("\uD83D\uDC41");
+            private final Button rBtn = new Button("X");
+            private final HBox container = new HBox(8, pBtn, sBtn, vBtn, rBtn);
+            {
+                container.setAlignment(javafx.geometry.Pos.CENTER);
+                pBtn.setOnAction(e -> { if (getTableRow().getItem() != null) printFile(getTableRow().getItem()); });
+                sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
+                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem()); });
+                rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
+                rBtn.setStyle("-fx-text-fill: red;");
+            }
+            @Override protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null); else setGraphic(container);
+            }
+        });
+
+        table.getColumns().addAll(snCol, nameCol, pagesCol, copiesCol, styleCol, printerCol, paperCol, statusCol, actionCol);
+
+        table.setRowFactory(tv -> {
+            TableRow<FileItem> row = new TableRow<>() {
+                @Override protected void updateItem(FileItem item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (item == null || empty) setStyle("");
+                    else updateRowStyle(this, item.getStatus());
+                }
+            };
+            row.itemProperty().addListener((obs, old, item) -> {
+                if (item != null) item.statusProperty().addListener((o, ov, nv) -> updateRowStyle(row, nv));
+            });
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && !row.isEmpty()) {
+                    pdfViewer.show(row.getItem().getFile(), false, (subFile, style, overlay) -> addFileToQueue(subFile, style, overlay));
+                }
+            });
+            return row;
+        });
+
+        Button addBtn = new Button("Add PDFs");
+        addBtn.setId("add-btn");
+        addBtn.setTooltip(new Tooltip("Add PDF files to the print queue"));
+        addBtn.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF Files", "*.pdf"));
+            List<File> files = fc.showOpenMultipleDialog(stage);
+            if (files != null) files.forEach(this::processFile);
+        });
+
+        Button printBtn = new Button("Print All");
+        printBtn.setId("print-btn");
+        printBtn.setTooltip(new Tooltip("Print all files in the queue that have a printer assigned"));
+        printBtn.setOnAction(e -> printAll());
+
+        Button clearBtn = new Button("Clear All");
+        clearBtn.setId("clear-btn");
+        clearBtn.setTooltip(new Tooltip("Remove all files from the queue"));
+        clearBtn.setOnAction(e -> fileQueue.clear());
+
+        Button loadJsonBtn = new Button("Upload JSON");
+        loadJsonBtn.setId("load-json-btn");
+        loadJsonBtn.setTooltip(new Tooltip("Upload a JSON file to automatically update copy counts based on QP codes"));
+        loadJsonBtn.setOnAction(e -> loadJsonAndUpdateCopies(stage));
+
+        HBox btns = new HBox(15, addBtn, loadJsonBtn, printBtn, clearBtn);
+        btns.setPadding(new Insets(10));
+        btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        VBox layout = new VBox(10, searchField, table, btns);
+        VBox.setVgrow(table, Priority.ALWAYS);
+        layout.setPadding(new Insets(10));
+        return layout;
+    }
+
+    private void processFile(File file) {
+        analysisExecutor.submit(() -> {
+            try {
+                updateStatus("Analyzing: " + file.getName());
+                SmartSplitRule matched = null;
+                int pageIdx = -1;
+                for (SmartSplitRule r : smartSplitRulesList) {
+                    if (r.isEnabled()) {
+                        pageIdx = pdfService.findKeywordPage(file, r.getKeyword());
+                        if (pageIdx != -1) { matched = r; break; }
+                    }
+                }
+
+                if (matched != null) {
+                    if (pageIdx > 1) {
+                        File b = pdfService.splitPages(file, 1, pageIdx - 1);
+                        routeSmartPart(b, file.getName(), matched, false);
+                    }
+                    int total = pdfService.getPageCount(file);
+                    File a = pdfService.splitPages(file, pageIdx, total);
+                    routeSmartPart(a, file.getName(), matched, true);
+                } else {
+                    addFileToQueue(file, null, null);
+                }
+            } catch (Exception e) { logger.error("Process error", e); }
+        });
+    }
+
+    private void routeSmartPart(File file, String originalName, SmartSplitRule rule, boolean isAfter) throws Exception {
+        int pages = pdfService.getPageCount(file);
+        String style = "Simplex"; String overlay = ""; File f = file;
+        String prefix = isAfter ? rule.getAfterPrefix() : rule.getBeforePrefix();
+
+        if (isAfter) {
+            if (pages == 1) style = rule.getAfterStyle1();
+            else if (pages == 2) style = rule.getAfterStyle2();
+            else if (pages <= 4) style = rule.getAfterStyle3To4();
+            else if (pages == 5 && rule.isSpecial5PageMode()) { 
+                f = pdfService.splitPages(file, 2, 5); 
+                pages = 4; 
+                style = "Booklet"; 
+                overlay = "MCQ"; 
+            } else style = rule.getAfterStyle6Plus();
+        } else {
+            if (pages == 1) style = rule.getBeforeStyle1();
+            else if (pages == 2) style = rule.getBeforeStyle2();
+            else style = rule.getBeforeStyle3Plus();
+        }
+
+        final String fs = style; final String fo = overlay; final File ff = f; final int fp = pages;
+        Platform.runLater(() -> {
+            FileItem item = new FileItem(ff, fp, "", "None", false, false, "Left", 1, "A4", fo);
+            item.setFileName(prefix + originalName);
+            item.setStyle(fs);
+            fileQueue.add(item);
+        });
+    }
+
+    private void addFileToQueue(File file, String manualStyle, String manualOverlay) {
+        analysisExecutor.submit(() -> {
+            try {
+                int p = pdfService.getPageCount(file);
+                String c = pdfService.getText(file);
+                PrintRule rule = findMatchingRule(p, c);
+                String pr = (rule != null) ? rule.getPrinterName() : "None";
+                int cp = (rule != null) ? rule.getCopies() : 1;
+                String ps = (rule != null) ? rule.getPaperSize() : "A4";
+
+                Platform.runLater(() -> {
+                    FileItem item = new FileItem(file, p, c, pr, false, false, "Left", cp, ps, manualOverlay != null ? manualOverlay : "");
+                    if (manualStyle != null) item.setStyle(manualStyle);
+                    fileQueue.add(item);
+                });
+            } catch (Exception e) { logger.error("Add error", e); }
+        });
+    }
+
+    private PrintRule findMatchingRule(int pages, String content) {
+        for (PrintRule r : rulesList) if (r.matches(pages, content)) return r;
+        return null;
+    }
+
+    private void previewFile(FileItem item) {
+        analysisExecutor.submit(() -> {
+            try {
+                File f = item.getFile();
+                if (item.isBooklet()) f = pdfService.createBookletPDF(f, item.getBindingType(), item.getPaperSize());
+                File finalF = f;
+                Platform.runLater(() -> pdfViewer.show(finalF, false, (sf, s, o) -> addFileToQueue(sf, s, o)));
+            } catch (Exception e) { logger.error("Preview error", e); }
+        });
+    }
+
+    private void saveFileAs(FileItem item) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Save PDF"); fc.setInitialFileName(item.getFileName());
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF", "*.pdf"));
+        File t = fc.showSaveDialog(null);
+        if (t != null) {
+            analysisExecutor.submit(() -> {
+                try {
+                    File pf = item.getFile(); List<File> temps = new ArrayList<>();
+                    if (item.getOverlayText() != null && !item.getOverlayText().isEmpty()) {
+                        pf = printService.applyOverlayInternal(pf, item.getOverlayText()); temps.add(pf);
+                    }
+                    if (item.isBooklet()) {
+                        pf = pdfService.createBookletPDF(pf, item.getBindingType(), item.getPaperSize()); temps.add(pf);
+                    }
+                    java.nio.file.Files.copy(pf.toPath(), t.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    temps.forEach(f -> { if (f.exists()) f.delete(); });
+                    updateStatus("Saved: " + t.getName());
+                } catch (Exception e) { logger.error("Save error", e); }
+            });
+        }
+    }
+
+    private void printFile(FileItem item) {
+        if ("None".equals(item.getTargetPrinter())) { updateStatus("Error: No Printer"); return; }
+        printQueueExecutor.submit(() -> {
+            try {
+                item.setStatus("Printing...");
+                printService.printPDF(item, s -> Platform.runLater(() -> item.setStatus(s)));
+            } catch (Exception e) { Platform.runLater(() -> item.setStatus("Error")); }
+        });
+    }
+
+    private void printAll() {
+        if (isPrintingAll) return;
+        isPrintingAll = true;
+        printQueueExecutor.submit(() -> {
+            try {
+                for (FileItem item : List.copyOf(fileQueue)) {
+                    if ("None".equals(item.getTargetPrinter())) continue;
+                    printService.printPDF(item, s -> Platform.runLater(() -> item.setStatus(s)));
+                    Thread.sleep(1000);
+                }
+            } catch (Exception e) { logger.error("Batch error", e); }
+            finally { isPrintingAll = false; }
+        });
+    }
+
+    private VBox createSettingsView() {
+        // --- 1. Standard Rules Section ---
+        ListView<PrintRule> ruleListV = new ListView<>(rulesList); ruleListV.setPrefHeight(180);
+        
+        TextField minP = new TextField(); minP.setPromptText("Min Pages"); minP.setPrefWidth(80);
+        TextField maxP = new TextField(); maxP.setPromptText("Max Pages"); maxP.setPrefWidth(80);
+        ComboBox<String> prn = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters())); prn.setPromptText("Printer");
+        CheckBox dx = new CheckBox("Duplex");
+        CheckBox bk = new CheckBox("Booklet");
+        ComboBox<String> bd = new ComboBox<>(FXCollections.observableArrayList("Left", "Right")); bd.setValue("Left");
+        ComboBox<String> ps = new ComboBox<>(FXCollections.observableArrayList("A4", "A3")); ps.setValue("A4");
+        Spinner<Integer> cp = new Spinner<>(1, 999, 1); cp.setPrefWidth(70);
+
+        ruleListV.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2) {
+                PrintRule r = ruleListV.getSelectionModel().getSelectedItem();
+                if (r != null) {
+                    minP.setText(String.valueOf(r.getMinPages()));
+                    maxP.setText(String.valueOf(r.getMaxPages()));
+                    prn.setValue(r.getPrinterName());
+                    dx.setSelected(r.isDuplex());
+                    bk.setSelected(r.isBooklet());
+                    bd.setValue(r.getBindingType());
+                    ps.setValue(r.getPaperSize());
+                    cp.getValueFactory().setValue(r.getCopies());
+                }
+            }
+        });
+
+        Button addRuleBtn = new Button("Add New Rule");
+        addRuleBtn.setOnAction(e -> {
+            try {
+                PrintRule r = new PrintRule(
+                    minP.getText().isEmpty() ? 0 : Integer.parseInt(minP.getText()),
+                    maxP.getText().isEmpty() ? 9999 : Integer.parseInt(maxP.getText()),
+                    prn.getValue(), dx.isSelected(), bk.isSelected(), bd.getValue(), "", cp.getValue(), ps.getValue()
+                );
+                rulesList.add(r); saveConfigs();
+            } catch (Exception ex) { logger.error("Input error", ex); }
+        });
+        
+        Button updateRuleBtn = new Button("Update Rule");
+        updateRuleBtn.setOnAction(e -> {
+            PrintRule sel = ruleListV.getSelectionModel().getSelectedItem();
+            if (sel != null) {
+                try {
+                    sel.setMinPages(minP.getText().isEmpty() ? 0 : Integer.parseInt(minP.getText()));
+                    sel.setMaxPages(maxP.getText().isEmpty() ? 9999 : Integer.parseInt(maxP.getText()));
+                    sel.setPrinterName(prn.getValue());
+                    sel.setDuplex(dx.isSelected());
+                    sel.setBooklet(bk.isSelected());
+                    sel.setBindingType(bd.getValue());
+                    sel.setPaperSize(ps.getValue());
+                    sel.setCopies(cp.getValue());
+                    ruleListV.refresh();
+                    saveConfigs();
+                } catch (Exception ex) { logger.error("Update error", ex); }
+            }
+        });
+
+        Button remRuleBtn = new Button("Remove Rule");
+        remRuleBtn.setOnAction(e -> { rulesList.remove(ruleListV.getSelectionModel().getSelectedItem()); saveConfigs(); });
+
+        HBox ruleInputs = new HBox(5, minP, maxP, prn, dx, bk, bd, ps, cp);
+        ruleInputs.setPadding(new Insets(5, 0, 5, 0));
+        HBox ruleBtns = new HBox(10, addRuleBtn, updateRuleBtn, remRuleBtn);
+
+        // --- 2. Smart Split Rules Section ---
+        ListView<SmartSplitRule> smartListV = new ListView<>(smartSplitRulesList); smartListV.setPrefHeight(180);
+        
+        CheckBox ssEn = new CheckBox("Enabled");
+        TextField ssKw = new TextField(); ssKw.setPromptText("Keyword");
+        TextField ssPreB = new TextField(); ssPreB.setPromptText("Prefix Before"); ssPreB.setPrefWidth(120);
+        TextField ssPreA = new TextField(); ssPreA.setPromptText("Prefix After"); ssPreA.setPrefWidth(120);
+        
+        VBox smartControls = new VBox(10,
+            new HBox(10, new Label("Active:"), ssEn, new Label("Target Keyword:"), ssKw),
+            new HBox(10, new Label("Name Prefix (Before):"), ssPreB, new Label("Name Prefix (After):"), ssPreA),
+            new Label("Note: This will split files whenever the keyword is found and apply custom naming/routing.")
+        );
+
+        smartListV.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2) {
+                SmartSplitRule nv = smartListV.getSelectionModel().getSelectedItem();
+                if (nv != null) {
+                    ssEn.setSelected(nv.isEnabled());
+                    ssKw.setText(nv.getKeyword());
+                    ssPreB.setText(nv.getBeforePrefix());
+                    ssPreA.setText(nv.getAfterPrefix());
+                }
+            }
+        });
+
+        Button updateSmartBtn = new Button("Update Smart Rule");
+        updateSmartBtn.setOnAction(e -> {
+            SmartSplitRule sel = smartListV.getSelectionModel().getSelectedItem();
+            if (sel != null) {
+                sel.setEnabled(ssEn.isSelected());
+                sel.setKeyword(ssKw.getText());
+                sel.setBeforePrefix(ssPreB.getText());
+                sel.setAfterPrefix(ssPreA.getText());
+                smartListV.refresh();
+                saveConfigs();
+            }
+        });
+        Button addSmartBtn = new Button("Add New Smart Rule");
+        addSmartBtn.setOnAction(e -> {
+            SmartSplitRule nr = new SmartSplitRule();
+            nr.setKeyword(ssKw.getText().isEmpty() ? "New Keyword" : ssKw.getText());
+            nr.setEnabled(ssEn.isSelected());
+            nr.setBeforePrefix(ssPreB.getText());
+            nr.setAfterPrefix(ssPreA.getText());
+            smartSplitRulesList.add(nr);
+            saveConfigs();
+        });
+        Button remSmartBtn = new Button("Remove Smart Rule");
+        remSmartBtn.setOnAction(e -> {
+            smartSplitRulesList.remove(smartListV.getSelectionModel().getSelectedItem());
+            saveConfigs();
+        });
+
+        VBox layout = new VBox(15, 
+            new Label("1. Page Count Routing Rules:"), ruleListV, ruleInputs, ruleBtns,
+            new Separator(),
+            new Label("2. Smart Split Configuration (Keyword Based Splitting):"), smartListV,
+            smartControls,
+            new HBox(10, addSmartBtn, updateSmartBtn, remSmartBtn)
+        );
+        layout.setPadding(new Insets(20));
+        return layout;
+    }
+
+    private void loadJsonAndUpdateCopies(Stage stage) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Select QP Print Job JSON");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
+        File file = fc.showOpenDialog(stage);
+        if (file == null) return;
+
+        analysisExecutor.submit(() -> {
+            try {
+                updateStatus("Reading JSON: " + file.getName());
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode root = mapper.readTree(file);
+                int countUpdated = 0;
+                int qpFound = 0;
+
+                if (root.isArray()) {
+                    for (JsonNode node : root) {
+                        String qpCode = node.path("qpCode").asText("");
+                        int count = node.path("count").asInt(1);
+
+                        if (!qpCode.isEmpty()) {
+                            boolean matched = false;
+                            for (FileItem item : fileQueue) {
+                                String fileName = item.getFileName();
+                                String extractedQP = extractQPFromFileName(fileName);
+                                
+                                // Precise matching: extracted QP code or exact substring with boundaries
+                                if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                                    final int finalCount = count;
+                                    Platform.runLater(() -> item.setCopies(finalCount));
+                                    countUpdated++;
+                                    matched = true;
+                                }
+                            }
+                            if (matched) qpFound++;
+                        }
+                    }
+                }
+                final int finalUpdated = countUpdated;
+                final int finalQp = qpFound;
+                Platform.runLater(() -> {
+                    updateStatus("Finished: Updated " + finalUpdated + " files (" + finalQp + " QP codes).");
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("JSON Update Complete");
+                    alert.setHeaderText(null);
+                    alert.setContentText("Successfully updated copy counts for " + finalUpdated + " files based on " + finalQp + " QP codes found in the JSON.");
+                    alert.showAndWait();
+                });
+            } catch (Exception e) {
+                logger.error("JSON Read Error", e);
+                updateStatus("Error reading JSON file.");
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("Error");
+                    alert.setHeaderText("Failed to read JSON");
+                    alert.setContentText(e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        });
+    }
+
+    private String extractQPFromFileName(String fileName) {
+        if (fileName == null) return null;
+        // Robust pattern to find QP code after the time string (e.g., _10-00 AM_, _01_30 PM_, _10.00 AM_ etc.)
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("_\\d{2}[-_:\\.]\\d{2}\\s+[AP]M_([A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m = p.matcher(fileName);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
+    }
+
+    private void updateRowStyle(TableRow<FileItem> row, String status) {
+        if (status == null) row.setStyle("");
+        else if (status.contains("Finished")) row.setStyle("-fx-background-color: #c8e6c9;"); // Light Green
+        else if (status.contains("Error")) row.setStyle("-fx-background-color: #ffcdd2;");    // Light Red
+        else row.setStyle("");
+    }
+
+    private void saveConfigs() {
+        config.setRules(List.copyOf(rulesList));
+        config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
+        configManager.saveConfig(config);
+    }
+
+    public static void main(String[] args) { launch(args); }
+}

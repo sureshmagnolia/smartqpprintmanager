@@ -1,0 +1,13 @@
+target/
+dist/
+dist-v2.4/
+output/
+*.log
+*.zip
+dependency-reduced-pom.xml
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+bin/
