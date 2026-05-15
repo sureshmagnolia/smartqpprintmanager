@@ -1,1 +1,1 @@
-java -jar target\java-print-manager-2.0.jar
+java -jar java-print-manager-2.5.1.jar

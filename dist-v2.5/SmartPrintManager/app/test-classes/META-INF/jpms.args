@@ -1,4 +1,0 @@
---patch-module
-com.printmanager=_
---add-reads
-com.printmanager=ALL-UNNAMED

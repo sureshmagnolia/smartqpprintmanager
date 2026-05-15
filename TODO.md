@@ -1,6 +1,6 @@
-# Smart Print Manager - Roadmap & Enhancements
+# Smart QP Print Manager - Roadmap & Enhancements
 
-This document outlines planned and proposed features to enhance the Smart Print Manager, specifically for high-volume academic environments (e.g., printing question papers).
+This document outlines planned and proposed features to enhance the Smart QP Print Manager, specifically for high-volume academic environments (e.g., printing question papers).
 
 ## 🚀 High Priority (Accuracy & Organization)
 - [ ] **Smart Subject Detection:** Implement Regex-based metadata extraction to automatically identify "Subject Code", "Course Name", and "Semester" from the first page of PDFs.

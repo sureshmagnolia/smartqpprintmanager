@@ -71,7 +71,12 @@ public class PDFViewer {
         Button closeBtn = new Button("Close");
         closeBtn.setOnAction(e -> stage.close());
 
-        HBox toolBar = new HBox(10, new Region(), rangeBox, addBtn, closeBtn);
+        HBox toolBar = new HBox(10, new Region(), closeBtn);
+        if (onResult != null) {
+            toolBar.getChildren().add(1, rangeBox);
+            toolBar.getChildren().add(2, addBtn);
+        }
+        
         HBox.setHgrow(toolBar.getChildren().get(0), Priority.ALWAYS);
         toolBar.setPadding(new Insets(10));
         toolBar.setAlignment(Pos.CENTER_LEFT);
@@ -80,7 +85,7 @@ public class PDFViewer {
         VBox layout = new VBox(toolBar, scrollPane);
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
-        refreshPreview(file, contentBox, endField);
+        refreshPreview(file, contentBox, endField, scrollPane);
 
         Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
         Scene scene = new Scene(layout, bounds.getWidth() * 0.85, bounds.getHeight() * 0.85);
@@ -88,7 +93,7 @@ public class PDFViewer {
         stage.show();
     }
 
-    private void refreshPreview(File file, VBox contentBox, TextField endField) {
+    private void refreshPreview(File file, VBox contentBox, TextField endField, ScrollPane scrollPane) {
         contentBox.getChildren().clear();
         new Thread(() -> {
             try {
@@ -100,6 +105,7 @@ public class PDFViewer {
                     javafx.application.Platform.runLater(() -> {
                         ImageView iv = new ImageView(fxImage);
                         iv.setPreserveRatio(true);
+                        iv.fitWidthProperty().bind(scrollPane.widthProperty().subtract(40));
                         contentBox.getChildren().add(iv);
                     });
                 }

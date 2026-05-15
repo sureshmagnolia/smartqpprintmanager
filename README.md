@@ -1,4 +1,4 @@
-# Smart Print Manager v2.5.1
+# Smart QP Print Manager v2.5.2
 
 A standalone Java-based print manager that automatically routes PDF files to specific printers based on their page count.
 

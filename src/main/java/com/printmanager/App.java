@@ -70,7 +70,7 @@ public class App extends Application {
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 1200, 850);
-        primaryStage.setTitle("Smart Print Manager v2.5");
+        primaryStage.setTitle("Smart QP Print Manager v2.5.2");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -230,7 +230,7 @@ public class App extends Application {
                 container.setAlignment(javafx.geometry.Pos.CENTER);
                 pBtn.setOnAction(e -> { if (getTableRow().getItem() != null) printFile(getTableRow().getItem()); });
                 sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
-                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem()); });
+                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), false); });
                 rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
                 rBtn.setStyle("-fx-text-fill: red;");
             }
@@ -378,13 +378,13 @@ public class App extends Application {
         return null;
     }
 
-    private void previewFile(FileItem item) {
+    private void previewFile(FileItem item, boolean isReadOnly) {
         analysisExecutor.submit(() -> {
             try {
                 File f = item.getFile();
                 if (item.isBooklet()) f = pdfService.createBookletPDF(f, item.getBindingType(), item.getPaperSize());
                 File finalF = f;
-                Platform.runLater(() -> pdfViewer.show(finalF, false, (sf, s, o) -> addFileToQueue(sf, s, o)));
+                Platform.runLater(() -> pdfViewer.show(finalF, false, isReadOnly ? null : (sf, s, o) -> addFileToQueue(sf, s, o)));
             } catch (Exception e) { logger.error("Preview error", e); }
         });
     }
@@ -707,7 +707,7 @@ public class App extends Application {
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
         TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
-        qpCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().getQpCode()));
+        qpCol.setCellValueFactory(d -> new javafx.beans.property.SimpleStringProperty(d.getValue().getDisplayName()));
         
         TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Qty");
         countCol.setCellValueFactory(d -> new javafx.beans.property.SimpleObjectProperty<>(d.getValue().getCount()));
@@ -716,7 +716,47 @@ public class App extends Application {
         TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status");
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
 
-        table.getColumns().addAll(qpCol, countCol, statusCol);
+        TableColumn<RoomItem, Void> actionCol = new TableColumn<>("Action");
+        actionCol.setCellFactory(tc -> new TableCell<>() {
+            private final Button btn = new Button("Edit & Send");
+            {
+                btn.setStyle("-fx-font-size: 10px; -fx-padding: 2 5; -fx-background-color: #ff9800; -fx-text-fill: white;");
+                btn.setOnAction(e -> {
+                    RoomItem item = getTableRow().getItem();
+                    if (item != null) {
+                        TextInputDialog dialog = new TextInputDialog(String.valueOf(item.getCount()));
+                        dialog.setTitle("Edit Quantity");
+                        dialog.setHeaderText("Update quantity for QP: " + item.getQpCode());
+                        dialog.setContentText("Enter new quantity:");
+                        dialog.showAndWait().ifPresent(v -> {
+                            try {
+                                int newQty = Integer.parseInt(v);
+                                item.setCount(newQty);
+                                printSingleRoomItem(item, group.getSelectedPrinter());
+                            } catch (NumberFormatException ex) {
+                                updateStatus("Invalid quantity entered.");
+                            }
+                        });
+                    }
+                });
+            }
+            @Override protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) setGraphic(null); else setGraphic(btn);
+            }
+        });
+
+        table.getColumns().addAll(qpCol, countCol, statusCol, actionCol);
+
+        table.setRowFactory(tv -> {
+            TableRow<RoomItem> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && !row.isEmpty()) {
+                    previewRoomItem(row.getItem());
+                }
+            });
+            return row;
+        });
 
         ComboBox<String> printerCombo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
         printerCombo.setPromptText("Select Printer");
@@ -741,7 +781,7 @@ public class App extends Application {
         layout.setPadding(new Insets(50));
         layout.setAlignment(javafx.geometry.Pos.CENTER);
 
-        Label title = new Label("Smart Print Manager v2.5.1");
+        Label title = new Label("Smart QP Print Manager v2.5.2");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
 
         Label createdBy = new Label("Created by Magnolia for Examination Management");
@@ -757,6 +797,52 @@ public class App extends Application {
 
         layout.getChildren().addAll(title, createdBy, sep, desc);
         return layout;
+    }
+
+    private void previewRoomItem(RoomItem item) {
+        if (item.getMatchedFile() == null) {
+            updateStatus("No matched file to preview.");
+            return;
+        }
+        previewFile(item.getMatchedFile(), true);
+    }
+
+    private void printSingleRoomItem(RoomItem roomItem, String selectedPrinter) {
+        if ("None".equals(selectedPrinter) || selectedPrinter == null) {
+            updateStatus("Error: Select a printer for this room first.");
+            return;
+        }
+
+        roomItem.setStatus("Sending...");
+        roomPrintExecutor.submit(() -> {
+            try {
+                if (roomItem.getMatchedFile() == null) {
+                    Platform.runLater(() -> roomItem.setStatus("File Not Found"));
+                    return;
+                }
+
+                FileItem fileItem = roomItem.getMatchedFile();
+                FileItem jobItem = new FileItem(
+                    fileItem.getFile(), 
+                    fileItem.getPageCount(), 
+                    fileItem.getContent(),
+                    selectedPrinter,
+                    fileItem.isDuplex(),
+                    fileItem.isBooklet(),
+                    fileItem.getBindingType(),
+                    roomItem.getCount(),
+                    fileItem.getPaperSize(),
+                    fileItem.getOverlayText()
+                );
+                jobItem.setFileName(fileItem.getFileName());
+                jobItem.setStyle(fileItem.getStyle());
+
+                printService.printPDF(jobItem, s -> Platform.runLater(() -> roomItem.setStatus(s)));
+            } catch (Exception e) {
+                logger.error("Single item print error", e);
+                Platform.runLater(() -> roomItem.setStatus("Error"));
+            }
+        });
     }
 
     private void loadRoomWiseJson(Stage stage) {
@@ -782,8 +868,9 @@ public class App extends Application {
                         String pdfFileName = node.path("pdfFileName").asText("");
                         int count = node.path("count").asInt(0);
 
-                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
-                        
+                        RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
+                        boolean anyMatched = false;
+
                         // Match with all files in fileQueue (could be multiple split parts)
                         for (FileItem fileItem : fileQueue) {
                             String fileName = fileItem.getFileName();
@@ -791,12 +878,18 @@ public class App extends Application {
                             
                             // Match if extracted QP matches OR if QP code is a clear substring in the filename
                             if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                                roomItem.getMatchedFiles().add(fileItem);
+                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                                roomItem.setMatchedFile(fileItem);
+                                group.getItems().add(roomItem);
                                 matchedCount++;
+                                anyMatched = true;
                             }
                         }
 
-                        groups.computeIfAbsent(roomSerial, RoomGroup::new).getItems().add(roomItem);
+                        if (!anyMatched) {
+                            RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                            group.getItems().add(roomItem);
+                        }
                     }
                 }
 
@@ -825,40 +918,33 @@ public class App extends Application {
             try {
                 boolean allSuccess = true;
                 for (RoomItem roomItem : group.getItems()) {
-                    if (roomItem.getMatchedFiles().isEmpty()) {
+                    if (roomItem.getMatchedFile() == null) {
                         roomItem.setStatus("File Not Found");
                         allSuccess = false;
                         continue;
                     }
 
                     roomItem.setStatus("Printing...");
-                    boolean itemSuccess = true;
+                    FileItem fileItem = roomItem.getMatchedFile();
+                    
+                    FileItem jobItem = new FileItem(
+                        fileItem.getFile(), 
+                        fileItem.getPageCount(), 
+                        fileItem.getContent(),
+                        group.getSelectedPrinter(),
+                        fileItem.isDuplex(),
+                        fileItem.isBooklet(),
+                        fileItem.getBindingType(),
+                        roomItem.getCount(),
+                        fileItem.getPaperSize(),
+                        fileItem.getOverlayText()
+                    );
+                    jobItem.setFileName(fileItem.getFileName());
+                    jobItem.setStyle(fileItem.getStyle());
 
-                    for (FileItem fileItem : roomItem.getMatchedFiles()) {
-                        // Create a transient FileItem for this specific print job to avoid modifying the UI queue
-                        FileItem jobItem = new FileItem(
-                            fileItem.getFile(), 
-                            fileItem.getPageCount(), 
-                            fileItem.getContent(),
-                            group.getSelectedPrinter(),
-                            fileItem.isDuplex(),
-                            fileItem.isBooklet(),
-                            fileItem.getBindingType(),
-                            roomItem.getCount(),
-                            fileItem.getPaperSize(),
-                            fileItem.getOverlayText()
-                        );
-                        jobItem.setFileName(fileItem.getFileName());
-                        jobItem.setStyle(fileItem.getStyle());
-
-                        // Synchronous wait for each part to be sent (to keep order and avoid overlapping in some drivers)
-                        // but printPDF is async in terms of the job itself. 
-                        // However, printService.printPDF(...) currently blocks until job.print(...) returns.
-                        
-                        final RoomItem finalRoomItem = roomItem;
-                        printService.printPDF(jobItem, s -> Platform.runLater(() -> finalRoomItem.setStatus(s)));
-                        Thread.sleep(500); // Small delay between parts
-                    }
+                    final RoomItem finalRoomItem = roomItem;
+                    printService.printPDF(jobItem, s -> Platform.runLater(() -> finalRoomItem.setStatus(s)));
+                    Thread.sleep(300); // Small delay between jobs
                 }
                 
                 final boolean success = allSuccess;
