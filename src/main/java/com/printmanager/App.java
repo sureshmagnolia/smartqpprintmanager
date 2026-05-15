@@ -920,8 +920,18 @@ public class App extends Application {
 
     private VBox createRoomCard(RoomGroup group) {
         VBox card = new VBox(10);
-        card.setStyle("-fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);");
+        String defaultStyle = "-fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);";
+        String finishedStyle = "-fx-background-color: #f1f8e9; -fx-border-color: #8bc34a; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(139,195,74,0.3), 10, 0, 0, 5);";
+        card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
         card.setPrefWidth(350);
+
+        group.statusProperty().addListener((obs, old, val) -> {
+            if (val != null && val.contains("Finished")) {
+                card.setStyle(finishedStyle);
+            } else {
+                card.setStyle(defaultStyle);
+            }
+        });
 
         int totalQty = group.getItems().stream().mapToInt(RoomItem::getCount).sum();
         Label title = new Label("Room: " + group.getRoomSerial() + " (Total Qty: " + totalQty + ")");
