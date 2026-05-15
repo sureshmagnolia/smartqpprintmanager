@@ -4,8 +4,19 @@
   <groupId>com.printmanager</groupId>
   <artifactId>java-print-manager</artifactId>
   <name>Smart QP Print Manager</name>
-  <version>3.0.1</version>
+  <version>3.0.2</version>
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>.</directory>
+        <includes>
+          <include>config.json</include>
+        </includes>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>

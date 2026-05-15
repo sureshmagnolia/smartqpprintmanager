@@ -18,6 +18,7 @@ This document outlines planned and proposed features to enhance the Smart QP Pri
 - [ ] **Cost Estimation:** Add a reporting module to estimate toner and paper usage based on print history.
 
 ## ✅ Completed
+- [x] **Restricted Environment Persistence (v3.0.3):** Fixed an issue where session data was lost when installed in read-only directories (e.g., C:\Program Files) by using the user's AppData folder. Updated default printer logic.
 - [x] **Smart Room-Wise Router (v2.5.1):** Added a new tab to handle room-wise routing and parallel printing based on seating summary JSONs. Branded with custom icon and improved installer upgrade logic.
 - [x] **JSON Copy Count Update (v2.4):** Added a feature to upload a JSON file to automatically update the copy counts of PDFs in the queue based on QP codes extracted from filenames.
 - [x] **Sequential Print Queue (v2.1):** Replaced multi-threaded printing with a single-threaded sequential queue to prevent crashes during large file operations.

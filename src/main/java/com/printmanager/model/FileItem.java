@@ -1,43 +1,65 @@
 package com.printmanager.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import javafx.beans.property.*;
 import java.io.File;
 
 public class FileItem {
-    private final File file;
-    private final StringProperty fileName;
-    private final IntegerProperty pageCount;
-    private final StringProperty targetPrinter;
-    private final StringProperty status;
-    private final BooleanProperty duplex;
-    private final BooleanProperty booklet;
-    private final StringProperty bindingType;
-    private final StringProperty style; // "Simplex", "Duplex", "Booklet"
-    private final IntegerProperty copies;
-    private final StringProperty paperSize; // "A4", "A3"
-    private final StringProperty overlayText;
+    private File file;
+    private StringProperty fileName = new SimpleStringProperty();
+    private IntegerProperty pageCount = new SimpleIntegerProperty();
+    private StringProperty targetPrinter = new SimpleStringProperty();
+    private StringProperty status = new SimpleStringProperty();
+    private BooleanProperty duplex = new SimpleBooleanProperty();
+    private BooleanProperty booklet = new SimpleBooleanProperty();
+    private StringProperty bindingType = new SimpleStringProperty();
+    private StringProperty style = new SimpleStringProperty(); // "Simplex", "Duplex", "Booklet"
+    private IntegerProperty copies = new SimpleIntegerProperty();
+    private StringProperty paperSize = new SimpleStringProperty(); // "A4", "A3"
+    private StringProperty overlayText = new SimpleStringProperty();
 
-    private final String content;
+    private String content;
 
-    public FileItem(File file, int pageCount, String content, String targetPrinter, boolean duplex, boolean booklet, String bindingType, int copies, String paperSize, String overlayText) {
+    public FileItem() {
+        setupListeners();
+    }
+
+    @JsonCreator
+    public FileItem(
+            @JsonProperty("file") File file,
+            @JsonProperty("pageCount") int pageCount,
+            @JsonProperty("content") String content,
+            @JsonProperty("targetPrinter") String targetPrinter,
+            @JsonProperty("duplex") boolean duplex,
+            @JsonProperty("booklet") boolean booklet,
+            @JsonProperty("bindingType") String bindingType,
+            @JsonProperty("copies") int copies,
+            @JsonProperty("paperSize") String paperSize,
+            @JsonProperty("overlayText") String overlayText) {
         this.file = file;
-        this.fileName = new SimpleStringProperty(file.getName());
-        this.pageCount = new SimpleIntegerProperty(pageCount);
+        this.fileName.set(file != null ? file.getName() : "");
+        this.pageCount.set(pageCount);
         this.content = content;
-        this.targetPrinter = new SimpleStringProperty(targetPrinter);
-        this.status = new SimpleStringProperty("Ready");
-        this.duplex = new SimpleBooleanProperty(duplex);
-        this.booklet = new SimpleBooleanProperty(booklet);
-        this.bindingType = new SimpleStringProperty(bindingType);
-        this.copies = new SimpleIntegerProperty(copies);
-        this.paperSize = new SimpleStringProperty(paperSize != null ? paperSize : "A4");
-        this.overlayText = new SimpleStringProperty(overlayText != null ? overlayText : "");
+        this.targetPrinter.set(targetPrinter);
+        this.status.set("Ready");
+        this.duplex.set(duplex);
+        this.booklet.set(booklet);
+        this.bindingType.set(bindingType);
+        this.copies.set(copies);
+        this.paperSize.set(paperSize != null ? paperSize : "A4");
+        this.overlayText.set(overlayText != null ? overlayText : "");
 
         String initialStyle = "Simplex";
         if (booklet) initialStyle = "Booklet";
         else if (duplex) initialStyle = "Duplex";
-        this.style = new SimpleStringProperty(initialStyle);
+        this.style.set(initialStyle);
 
+        setupListeners();
+    }
+
+    private void setupListeners() {
         // Sync style with flags
         this.style.addListener((obs, oldV, newV) -> {
             if ("Booklet".equals(newV)) {
@@ -54,35 +76,74 @@ public class FileItem {
     }
 
     public File getFile() { return file; }
+    public void setFile(File file) { this.file = file; if (file != null) this.fileName.set(file.getName()); }
+
+    @JsonProperty("fileName")
     public String getFileName() { return fileName.get(); }
-    public StringProperty fileNameProperty() { return fileName; }
     public void setFileName(String name) { this.fileName.set(name); }
+    @JsonIgnore
+    public StringProperty fileNameProperty() { return fileName; }
+
+    @JsonProperty("pageCount")
     public int getPageCount() { return pageCount.get(); }
+    public void setPageCount(int pageCount) { this.pageCount.set(pageCount); }
+    @JsonIgnore
     public IntegerProperty pageCountProperty() { return pageCount; }
+
     public String getContent() { return content; }
+    public void setContent(String content) { this.content = content; }
+
+    @JsonProperty("targetPrinter")
     public String getTargetPrinter() { return targetPrinter.get(); }
-    public StringProperty targetPrinterProperty() { return targetPrinter; }
     public void setTargetPrinter(String printer) { this.targetPrinter.set(printer); }
+    @JsonIgnore
+    public StringProperty targetPrinterProperty() { return targetPrinter; }
+
+    @JsonProperty("status")
     public String getStatus() { return status.get(); }
-    public StringProperty statusProperty() { return status; }
     public void setStatus(String status) { this.status.set(status); }
+    @JsonIgnore
+    public StringProperty statusProperty() { return status; }
+
+    @JsonProperty("duplex")
     public boolean isDuplex() { return duplex.get(); }
+    public void setDuplex(boolean duplex) { this.duplex.set(duplex); }
+    @JsonIgnore
     public BooleanProperty duplexProperty() { return duplex; }
+
+    @JsonProperty("booklet")
     public boolean isBooklet() { return booklet.get(); }
+    public void setBooklet(boolean booklet) { this.booklet.set(booklet); }
+    @JsonIgnore
     public BooleanProperty bookletProperty() { return booklet; }
+
+    @JsonProperty("bindingType")
     public String getBindingType() { return bindingType.get(); }
-    public StringProperty bindingTypeProperty() { return bindingType; }
     public void setBindingType(String bindingType) { this.bindingType.set(bindingType); }
+    @JsonIgnore
+    public StringProperty bindingTypeProperty() { return bindingType; }
+
+    @JsonProperty("style")
     public String getStyle() { return style.get(); }
-    public StringProperty styleProperty() { return style; }
     public void setStyle(String style) { this.style.set(style); }
+    @JsonIgnore
+    public StringProperty styleProperty() { return style; }
+
+    @JsonProperty("copies")
     public int getCopies() { return copies.get(); }
-    public IntegerProperty copiesProperty() { return copies; }
     public void setCopies(int copies) { this.copies.set(copies); }
+    @JsonIgnore
+    public IntegerProperty copiesProperty() { return copies; }
+
+    @JsonProperty("paperSize")
     public String getPaperSize() { return paperSize.get(); }
-    public StringProperty paperSizeProperty() { return paperSize; }
     public void setPaperSize(String paperSize) { this.paperSize.set(paperSize); }
+    @JsonIgnore
+    public StringProperty paperSizeProperty() { return paperSize; }
+
+    @JsonProperty("overlayText")
     public String getOverlayText() { return overlayText.get(); }
-    public StringProperty overlayTextProperty() { return overlayText; }
     public void setOverlayText(String text) { this.overlayText.set(text); }
-    }
+    @JsonIgnore
+    public StringProperty overlayTextProperty() { return overlayText; }
+}

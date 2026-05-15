@@ -42,12 +42,16 @@ public class App extends Application {
     private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(10);
 
     private Config config;
-    private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList();
+    private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList(item -> new javafx.beans.Observable[] {
+        item.copiesProperty(), item.targetPrinterProperty(), item.statusProperty(), item.styleProperty(), item.paperSizeProperty()
+    });
     private final FilteredList<FileItem> filteredQueue = new FilteredList<>(fileQueue, p -> true);
     private final javafx.collections.transformation.SortedList<FileItem> sortedQueue = new javafx.collections.transformation.SortedList<>(filteredQueue);
     private final ObservableList<PrintRule> rulesList = FXCollections.observableArrayList();
     private final ObservableList<SmartSplitRule> smartSplitRulesList = FXCollections.observableArrayList();
-    private final ObservableList<RoomGroup> roomGroupsList = FXCollections.observableArrayList();
+    private final ObservableList<RoomGroup> roomGroupsList = FXCollections.observableArrayList(group -> new javafx.beans.Observable[] {
+        group.statusProperty(), group.selectedPrinterProperty()
+    });
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
@@ -58,8 +62,27 @@ public class App extends Application {
     @Override
     public void start(Stage primaryStage) {
         config = configManager.loadConfig();
+        logger.info("Application start: Loaded {} rules, {} split rules, {} queue items, {} room groups",
+            config.getRules().size(), config.getSmartSplitRules().size(), config.getFileQueue().size(), config.getRoomGroups().size());
+
         rulesList.addAll(config.getRules());
         smartSplitRulesList.addAll(config.getSmartSplitRules());
+        fileQueue.addAll(config.getFileQueue());
+        roomGroupsList.addAll(config.getRoomGroups());
+
+        // Re-link RoomItem.matchedFile to actual instances in fileQueue for identity consistency
+        for (RoomGroup g : roomGroupsList) {
+            for (RoomItem i : g.getItems()) {
+                if (i.getMatchedFile() != null) {
+                    for (FileItem qItem : fileQueue) {
+                        if (qItem.getFileName().equals(i.getMatchedFile().getFileName()) && qItem.getPageCount() == i.getMatchedFile().getPageCount()) {
+                            i.setMatchedFile(qItem);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         TabPane tabPane = new TabPane();
         Tab mainTab = new Tab("Print Queue", createMainView(primaryStage));
@@ -89,7 +112,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.0.1");
+        primaryStage.setTitle("Smart QP Print Manager v3.0.3");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -100,6 +123,24 @@ public class App extends Application {
         primaryStage.setScene(scene);
         primaryStage.setMaximized(true);
         primaryStage.show();
+
+        // Setup auto-save listeners AFTER UI is ready and initial load is complete
+        Platform.runLater(() -> {
+            // Re-initialize Room Router view content to force UI refresh with loaded data
+            roomTab.setContent(createRoomRouterView(primaryStage));
+
+            fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> saveConfigs());
+            roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
+                saveConfigs();
+                while (c.next()) {
+                    if (c.wasAdded()) {
+                        c.getAddedSubList().forEach(this::setupRoomGroupListeners);
+                    }
+                }
+            });
+            roomGroupsList.forEach(this::setupRoomGroupListeners);
+        });
+
         activityLogger.info("Application started");
 
         startPrinterStatusMonitor();
@@ -587,12 +628,24 @@ public class App extends Application {
                 int p = pdfService.getPageCount(file);
                 String c = pdfService.getText(file);
                 PrintRule rule = findMatchingRule(p, c);
+                
                 String pr = (rule != null) ? rule.getPrinterName() : "None";
+                
+                // Smart Printer Fallback: If rule printer is None/Missing, use System Default
+                List<String> available = printService.getAvailablePrinters();
+                if ("None".equals(pr) || "Default Printer".equalsIgnoreCase(pr) || !available.contains(pr)) {
+                    pr = printService.getDefaultPrinterName();
+                }
+
+                final String finalPrinter = pr;
                 int cp = (rule != null) ? rule.getCopies() : 1;
                 String ps = (rule != null) ? rule.getPaperSize() : "A4";
+                boolean dx = (rule != null) && rule.isDuplex();
+                boolean bk = (rule != null) && rule.isBooklet();
+                String bt = (rule != null) ? rule.getBindingType() : "Left";
 
                 Platform.runLater(() -> {
-                    FileItem item = new FileItem(file, p, c, pr, false, false, "Left", cp, ps, manualOverlay != null ? manualOverlay : "");
+                    FileItem item = new FileItem(file, p, c, finalPrinter, dx, bk, bt, cp, ps, manualOverlay != null ? manualOverlay : "");
                     if (manualStyle != null) item.setStyle(manualStyle);
                     fileQueue.add(item);
                 });
@@ -871,16 +924,39 @@ public class App extends Application {
     }
 
     private void saveConfigs() {
+        if (roomGroupsList.isEmpty() && fileQueue.isEmpty() && !rulesList.isEmpty()) {
+            logger.warn("Prevented saveConfigs because both queue and room groups are empty (safety check).");
+            // return; // Commented out for now to see if this is the cause
+        }
+        logger.info("Triggering saveConfigs. Queue size: {}, Room groups: {}", fileQueue.size(), roomGroupsList.size());
         config.setRules(List.copyOf(rulesList));
         config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
+        config.setFileQueue(new ArrayList<>(fileQueue));
+        config.setRoomGroups(new ArrayList<>(roomGroupsList));
         configManager.saveConfig(config);
     }
 
     private VBox createRoomRouterView(Stage stage) {
         Button uploadBtn = new Button("Upload Room Wise JSON");
         uploadBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
-        uploadBtn.setPrefWidth(300);
+        uploadBtn.setPrefWidth(250);
         uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
+
+        Button clearBlocksBtn = new Button("Clear All Blocks");
+        clearBlocksBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
+        clearBlocksBtn.setPrefWidth(200);
+        clearBlocksBtn.setOnAction(e -> {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Clear All Blocks");
+            alert.setHeaderText("Are you sure you want to clear all room blocks?");
+            alert.setContentText("This action cannot be undone.");
+            alert.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.OK) {
+                    roomGroupsList.clear();
+                    saveConfigs();
+                }
+            });
+        });
 
         TextField roomSearch = new TextField();
         roomSearch.setPromptText("Filter rooms or QP codes...");
@@ -906,10 +982,13 @@ public class App extends Application {
             roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
         });
 
+        // Initialize the view with any already loaded room groups
+        roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+
         scrollPane.setContent(flowPane);
         scrollPane.setFitToWidth(true);
 
-        HBox header = new HBox(20, uploadBtn, roomSearch, printCoverPageCbox);
+        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearch, printCoverPageCbox);
         header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         VBox layout = new VBox(20, header, scrollPane);
@@ -1021,7 +1100,7 @@ public class App extends Application {
 
     private VBox createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.0.1");
+        Label title = new Label("Smart QP Print Manager v3.0.2");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -1121,10 +1200,28 @@ public class App extends Application {
         });
     }
 
+    private void setupRoomGroupListeners(RoomGroup g) {
+        g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
+            saveConfigs();
+            while (c.next()) {
+                if (c.wasAdded()) {
+                    c.getAddedSubList().forEach(this::attachRoomItemListeners);
+                }
+            }
+        });
+        g.getItems().forEach(this::attachRoomItemListeners);
+    }
+
+    private void attachRoomItemListeners(RoomItem i) {
+        i.statusProperty().addListener((o, ov, nv) -> saveConfigs());
+        i.countProperty().addListener((o, ov, nv) -> saveConfigs());
+    }
+
     private void printRoom(RoomGroup group) {
         if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) { updateStatus("Error: Select a printer."); return; }
         boolean printCover = printCoverPageCbox.isSelected();
         group.setStatus("Sending...");
+        saveConfigs(); // Force save on status change
         roomPrintExecutor.submit(() -> {
             try {
                 // 1. Optional Cover Page Generation
@@ -1153,8 +1250,16 @@ public class App extends Application {
                     printService.printPDF(jobItem, s -> Platform.runLater(() -> roomItem.setStatus(s)));
                     Thread.sleep(300);
                 }
-                Platform.runLater(() -> group.setStatus("Finished"));
-            } catch (Exception e) { Platform.runLater(() -> group.setStatus("Error")); }
+                Platform.runLater(() -> {
+                    group.setStatus("Finished");
+                    saveConfigs();
+                });
+            } catch (Exception e) { 
+                Platform.runLater(() -> {
+                    group.setStatus("Error");
+                    saveConfigs();
+                }); 
+            }
         });
     }
 

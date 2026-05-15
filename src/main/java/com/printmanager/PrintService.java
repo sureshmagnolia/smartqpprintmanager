@@ -36,6 +36,11 @@ public class PrintService {
         return printerNames;
     }
 
+    public String getDefaultPrinterName() {
+        javax.print.PrintService defaultService = PrintServiceLookup.lookupDefaultPrintService();
+        return (defaultService != null) ? defaultService.getName() : "None";
+    }
+
     public Map<String, Map<String, String>> getPrintersDetailedStatus() {
         Map<String, Map<String, String>> detailedMap = new HashMap<>();
         try {
