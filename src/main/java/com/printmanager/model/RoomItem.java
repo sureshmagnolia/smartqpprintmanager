@@ -8,6 +8,7 @@ public class RoomItem {
     private final String roomSerial;
     private final String qpCode;
     private final String pdfFileName;
+    private String courseName;
     private final IntegerProperty count;
     private FileItem matchedFile;
     private final StringProperty status = new SimpleStringProperty("Pending");
@@ -22,6 +23,9 @@ public class RoomItem {
     public String getRoomSerial() { return roomSerial; }
     public String getQpCode() { return qpCode; }
     public String getPdfFileName() { return pdfFileName; }
+    
+    public String getCourseName() { return courseName; }
+    public void setCourseName(String courseName) { this.courseName = courseName; }
     
     public int getCount() { return count.get(); }
     public IntegerProperty countProperty() { return count; }

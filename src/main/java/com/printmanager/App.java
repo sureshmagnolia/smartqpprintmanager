@@ -23,6 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,6 +53,7 @@ public class App extends Application {
     private volatile boolean isPrintingAll = false;
     private final Map<String, String> printerStatusCache = new HashMap<>();
     private final HBox simAlertHeader = new HBox();
+    private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
 
     @Override
     public void start(Stage primaryStage) {
@@ -811,6 +814,8 @@ public class App extends Application {
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
+        
+        activityLogger.info("Fetching data from JSON: " + file.getName());
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Reading JSON: " + file.getName());
@@ -822,6 +827,7 @@ public class App extends Application {
                         String qpCode = node.path("qpCode").asText("");
                         int count = node.path("count").asInt(1);
                         if (!qpCode.isEmpty()) {
+                            boolean matched = false;
                             for (FileItem item : fileQueue) {
                                 String fileName = item.getFileName();
                                 String extractedQP = extractQPFromFileName(fileName);
@@ -829,14 +835,23 @@ public class App extends Application {
                                     final int finalCount = count;
                                     Platform.runLater(() -> item.setCopies(finalCount));
                                     countUpdated++;
+                                    matched = true;
+                                    activityLogger.info("Updated " + fileName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
                                 }
                             }
+                            if (!matched) activityLogger.error("No file found in queue for QP Code: " + qpCode);
                         }
                     }
                 }
                 final int finalUpdated = countUpdated;
-                Platform.runLater(() -> updateStatus("Finished: Updated " + finalUpdated + " files."));
-            } catch (Exception e) { logger.error("JSON Error", e); }
+                Platform.runLater(() -> {
+                    updateStatus("Finished: Updated " + finalUpdated + " files.");
+                    activityLogger.success("JSON data fetch complete. Total files updated: " + finalUpdated);
+                });
+            } catch (Exception e) { 
+                logger.error("JSON Error", e);
+                activityLogger.error("Failed to read JSON: " + e.getMessage());
+            }
         });
     }
 
@@ -864,11 +879,13 @@ public class App extends Application {
     private VBox createRoomRouterView(Stage stage) {
         Button uploadBtn = new Button("Upload Room Wise JSON");
         uploadBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+        uploadBtn.setPrefWidth(300);
         uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
 
         TextField roomSearch = new TextField();
         roomSearch.setPromptText("Filter rooms or QP codes...");
         roomSearch.setPrefWidth(300);
+        roomSearch.setStyle("-fx-font-size: 14px; -fx-padding: 10;");
 
         ScrollPane scrollPane = new ScrollPane();
         FlowPane flowPane = new FlowPane();
@@ -892,7 +909,10 @@ public class App extends Application {
         scrollPane.setContent(flowPane);
         scrollPane.setFitToWidth(true);
 
-        VBox layout = new VBox(20, new HBox(20, uploadBtn, roomSearch), scrollPane);
+        HBox header = new HBox(20, uploadBtn, roomSearch, printCoverPageCbox);
+        header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        VBox layout = new VBox(20, header, scrollPane);
         layout.setPadding(new Insets(20));
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         return layout;
@@ -1036,44 +1056,84 @@ public class App extends Application {
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
+
+        activityLogger.info("Loading Room Seating JSON: " + file.getName());
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Loading Room JSON...");
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
                 Map<String, RoomGroup> groups = new LinkedHashMap<>();
+                int matchedItems = 0;
+
                 if (root.isArray()) {
                     for (JsonNode node : root) {
                         String roomSerial = node.path("roomSerial").asText("Unknown");
                         String qpCode = node.path("qpCode").asText("");
+                        String pdfFileName = node.path("pdfFileName").asText("");
+                        String courseName = node.path("courseName").asText(pdfFileName);
                         int count = node.path("count").asInt(0);
+                        
                         RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
                         boolean matched = false;
                         for (FileItem fileItem : fileQueue) {
                             String fileName = fileItem.getFileName();
                             String extractedQP = extractQPFromFileName(fileName);
                             if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, "", count);
+                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                                roomItem.setCourseName(courseName);
                                 roomItem.setMatchedFile(fileItem);
-                                group.getItems().add(roomItem); matched = true;
+                                group.getItems().add(roomItem);
+                                matched = true;
+                                matchedItems++;
+                                activityLogger.info("Room " + roomSerial + ": Matched QP " + qpCode + " (" + fileName + ")");
                             }
                         }
-                        if (!matched) group.getItems().add(new RoomItem(roomSerial, qpCode, "", count));
+                        if (!matched) {
+                            RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                            roomItem.setCourseName(courseName);
+                            group.getItems().add(roomItem);
+                            activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);
+                        }
                     }
                 }
+                final int finalMatched = matchedItems;
+                final int finalGroupSize = groups.size();
                 Platform.runLater(() -> {
                     roomGroupsList.setAll(groups.values());
-                    updateStatus("Loaded " + groups.size() + " rooms.");
+                    updateStatus("Loaded " + finalGroupSize + " rooms.");
+                    activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
                 });
-            } catch (Exception e) { updateStatus("Error loading JSON."); }
+            } catch (Exception e) { 
+                updateStatus("Error loading JSON."); 
+                activityLogger.error("Failed to load Room JSON: " + e.getMessage());
+            }
         });
     }
 
     private void printRoom(RoomGroup group) {
         if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) { updateStatus("Error: Select a printer."); return; }
+        boolean printCover = printCoverPageCbox.isSelected();
         group.setStatus("Sending...");
         roomPrintExecutor.submit(() -> {
             try {
+                // 1. Optional Cover Page Generation
+                logger.info("printCover is {}", printCover);
+                if (printCover) {
+                    try {
+                        File coverFile = generateRoomCoverPage(group);
+                        FileItem coverItem = new FileItem(coverFile, 1, "", group.getSelectedPrinter(), false, false, "Left", 1, "A4", "");
+                        coverItem.setFileName("Cover_Room_" + group.getRoomSerial());
+                        activityLogger.info("Generating Cover Page for Room: " + group.getRoomSerial());
+                        printService.printPDF(coverItem, s -> {});
+                        Thread.sleep(1000);
+                    } catch (Exception ce) { 
+                        logger.error("Failed to generate cover page", ce);
+                        activityLogger.error("Failed to generate cover page: " + ce.getMessage()); 
+                    }
+                }
+
+                // 2. Print actual QP items
                 for (RoomItem roomItem : group.getItems()) {
                     if (roomItem.getMatchedFile() == null) { roomItem.setStatus("File Not Found"); continue; }
                     roomItem.setStatus("Printing...");
@@ -1086,6 +1146,116 @@ public class App extends Application {
                 Platform.runLater(() -> group.setStatus("Finished"));
             } catch (Exception e) { Platform.runLater(() -> group.setStatus("Error")); }
         });
+    }
+
+    private File generateRoomCoverPage(RoomGroup group) throws Exception {
+        File temp = File.createTempFile("room_cover_", ".pdf");
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = new org.apache.pdfbox.pdmodel.PDDocument()) {
+            org.apache.pdfbox.pdmodel.PDPage page = new org.apache.pdfbox.pdmodel.PDPage(org.apache.pdfbox.pdmodel.common.PDRectangle.A4);
+            doc.addPage(page);
+            
+            float margin = 50;
+            float width = page.getMediaBox().getWidth() - 2 * margin;
+            float yStart = page.getMediaBox().getHeight() - margin;
+            float tableWidth = width;
+            float rowHeight = 25f;
+            float cellMargin = 5f;
+
+            try (org.apache.pdfbox.pdmodel.PDPageContentStream cs = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)) {
+                // Title
+                cs.beginText();
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD), 36);
+                cs.newLineAtOffset(margin, yStart - 40);
+                String safeRoomSerial = group.getRoomSerial() != null ? group.getRoomSerial().replaceAll("[^\\x00-\\x7F]", "") : "";
+                cs.showText("ROOM: " + safeRoomSerial);
+                cs.endText();
+
+                cs.beginText();
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 14);
+                cs.newLineAtOffset(margin, yStart - 70);
+                cs.showText("Smart QP Print Manager - Routing Summary");
+                cs.endText();
+
+                float yPosition = yStart - 100;
+                float[] colWidths = {40, 100, 250, 80}; // S.No, QP Code, Course Name, Qty
+                String[] headers = {"S.No", "QP Code", "Course Name / File", "Qty"};
+
+                // Draw Table Header
+                drawTableRow(cs, margin, yPosition, colWidths, headers, true);
+                yPosition -= rowHeight;
+
+                // Draw Table Rows
+                int sNo = 1;
+                for (RoomItem item : group.getItems()) {
+                    String[] rowData = {
+                        String.valueOf(sNo++),
+                        item.getDisplayName(),
+                        item.getCourseName() != null ? item.getCourseName() : item.getPdfFileName(),
+                        String.valueOf(item.getCount())
+                    };
+                    drawTableRow(cs, margin, yPosition, colWidths, rowData, false);
+                    yPosition -= rowHeight;
+                    if (yPosition < margin + 50) break; // Overflow check
+                }
+
+                // Footer
+                cs.beginText();
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_OBLIQUE), 10);
+                cs.newLineAtOffset(margin, margin);
+                cs.showText("Printed on: " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+                cs.endText();
+            }
+            doc.save(temp);
+        }
+        return temp;
+    }
+
+    private void drawTableRow(org.apache.pdfbox.pdmodel.PDPageContentStream cs, float x, float y, float[] widths, String[] data, boolean isHeader) throws Exception {
+        float height = 25f;
+        float fontSize = isHeader ? 12 : 11;
+        org.apache.pdfbox.pdmodel.font.PDFont font = isHeader ? 
+            new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD) :
+            new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA);
+
+        float curX = x;
+        for (int i = 0; i < widths.length; i++) {
+            // Draw border
+            cs.setLineWidth(1f);
+            cs.setStrokingColor(0f, 0f, 0f);
+            cs.addRect(curX, y - height, widths[i], height);
+            cs.stroke();
+
+            // Draw background for header
+            if (isHeader) {
+                cs.setNonStrokingColor(0.9f, 0.9f, 0.9f);
+                cs.addRect(curX + 0.5f, y - height + 0.5f, widths[i] - 1f, height - 1f);
+                cs.fill();
+            }
+
+            // Draw text centered
+            cs.setNonStrokingColor(0f, 0f, 0f);
+            cs.beginText();
+            cs.setFont(font, fontSize);
+            
+            String text = data[i] != null ? data[i] : "";
+            // Sanitize text for standard Type1 PDF fonts (ASCII only) to prevent IllegalArgumentException
+            text = text.replaceAll("[^\\x00-\\x7F]", "");
+            
+            // Simple text truncation for width
+            float textWidth = font.getStringWidth(text) / 1000 * fontSize;
+            while (textWidth > widths[i] - 10 && text.length() > 3) {
+                text = text.substring(0, text.length() - 4) + "...";
+                textWidth = font.getStringWidth(text) / 1000 * fontSize;
+            }
+
+            float textX = curX + (widths[i] - textWidth) / 2;
+            float textY = y - height + (height - fontSize) / 2 + 2;
+            cs.newLineAtOffset(textX, textY);
+            cs.showText(text);
+            cs.endText();
+
+            curX += widths[i];
+        }
     }
 
     public static void main(String[] args) { launch(args); }
