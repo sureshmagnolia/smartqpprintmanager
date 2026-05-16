@@ -41,13 +41,31 @@ public class PrinterHealthMonitor {
 
     private void pollStatus() {
         try {
-            // Robust PowerShell command: Fetch all and filter in memory to avoid WMI escaping nightmares with special characters like ()
-            String command = String.format(
-                "Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq '%s' } | Select-Object DetectedErrorState, PrinterStatus, WorkOffline | ConvertTo-Json",
+            // Robust PowerShell script for PS 5.1:
+            // 1. Extract IP from port name
+            // 2. Perform .NET Ping for reachability
+            // 3. Query CIM for printer status and error states
+            String script = String.format(
+                "$w = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq '%1$s' }; " +
+                "if (-not $w) { return }; " +
+                "$isOffline = $w.WorkOffline; " +
+                "if (-not $isOffline -and ($w.PortName -like 'IP_*' -or $w.PortName -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$')) { " +
+                "  $ip = $w.PortName -replace 'IP_', ''; " +
+                "  try { " +
+                "    $ping = New-Object System.Net.NetworkInformation.Ping; " +
+                "    $reply = $ping.Send($ip, 1000); " +
+                "    if ($reply.Status -ne 'Success') { $isOffline = $true } " +
+                "  } catch { $isOffline = $true } " +
+                "}; " +
+                "[PSCustomObject]@{ " +
+                "  Offline = $isOffline; " +
+                "  PrinterStatus = $w.PrinterStatus; " +
+                "  ErrorState = $w.DetectedErrorState " +
+                "} | ConvertTo-Json",
                 printerName.replace("'", "''")
             );
 
-            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", command);
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script);
             Process p = pb.start();
             
             ObjectMapper mapper = new ObjectMapper();
@@ -55,9 +73,9 @@ public class PrinterHealthMonitor {
 
             String status = "Unknown";
             if (!root.isMissingNode() && !root.isNull()) {
+                boolean isOffline = root.path("Offline").asBoolean(false);
                 int printerStatus = root.path("PrinterStatus").asInt(0);
-                int errorState = root.path("DetectedErrorState").asInt(0);
-                boolean isOffline = root.path("WorkOffline").asBoolean(false);
+                int errorState = root.path("ErrorState").asInt(0);
 
                 status = translateStatus(printerStatus, errorState, isOffline);
             } else {

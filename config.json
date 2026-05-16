@@ -53,13 +53,16 @@
     "afterStyle2" : "Duplex",
     "afterStyle3To4" : "Booklet",
     "special5PageMode" : true,
+    "afterOverlayText" : "MCQ",
+    "skipThresholds" : "5,9",
+    "skipKeywordPage" : true,
     "afterStyle6Plus" : "Booklet"
   } ],
   "fileQueue" : [ {
     "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_7850753667036981526.pdf",
     "pageCount" : 2,
     "content" : "",
-    "targetPrinter" : "None",
+    "targetPrinter" : "OneNote (Desktop) - Protected",
     "duplex" : true,
     "booklet" : false,
     "bindingType" : "Left",
@@ -73,7 +76,7 @@
     "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_135605338038938855.pdf",
     "pageCount" : 4,
     "content" : "",
-    "targetPrinter" : "None",
+    "targetPrinter" : "Adobe PDF",
     "duplex" : false,
     "booklet" : true,
     "bindingType" : "Left",
@@ -87,7 +90,7 @@
     "file" : "C:\\Users\\sures\\Downloads\\12.05\\Done\\REG_12.05.26_10_00 AM_143800_Foundations of Social Behaviour--(Core 6)--(PSY4CJ204).pdf",
     "pageCount" : 1,
     "content" : "FOURTH SEMESTER (CUFYUGP) DEGREE  EXAMINATION, APRIL 2026\r\nPSYCHOLOGY\r\nPSY 4CJ 204 Foundations of Social Behaviour\r\n2024 Admission onwards\r\nMaximum Time : 2 Hours Maximum Marks : 70\r\n             SECTION – A\r\nAll Questions can be answered. Each Question carries 3 marks (Ceiling : 24 Marks)\r\n1. Define systematic Observation? \r\n2. What is deception? \r\n3. What is attitude behaviour link? \r\n4. What is altruistic personality? \r\n5. Define empathy? \r\n6. Define schemas? \r\n7. What are the micro expressions? \r\n8. Define leadership? \r\n9. Define obedience?\r\n10. What is attitude? \r\n  SECTION – B\r\nAll Questions can be answered. Each Question carries 6 marks (Ceiling : 36 Marks)\r\n11. Briefly describe the non- verbal communication? \r\n12. Explain triangular model of love? \r\n13. Define social psychology and list it's main goals? \r\n14. What are the factors contributing conformity? \r\n15. Differentiate between social facilitation and social loading? \r\n16. Briefly discuss the steps to be followed while responding to emergency? \r\n17. Briefly elaborate the types and functions of groups? \r\n18. Discuss empathy altruism model? \r\n               SECTION – C\r\nAnswer any ONE .Each Question carries 10 marks (1x10=10 Marks)\r\n19. Explain the origin and development of social psychology? \r\n20. Describe the major theories of attribution in social psychology with examples? \r\nQP Code: D143800 Total Pages: 1 Name:\r\nRegister No:\r\n737619\r\n737619\r\n1396\r\n396\r\n1396\r\n",
-    "targetPrinter" : "HP Smart Printing",
+    "targetPrinter" : "HP Smart Tank 670 (Direct)",
     "duplex" : false,
     "booklet" : false,
     "bindingType" : "Left",
@@ -380,13 +383,13 @@
   } ],
   "roomGroups" : [ {
     "roomSerial" : "1",
-    "selectedPrinter" : "None",
+    "selectedPrinter" : "HP Smart Tank 670 (Direct)",
     "status" : "Ready",
     "items" : [ {
       "roomSerial" : "1",
       "qpCode" : "143631",
       "pdfFileName" : "Regular_12.05.2026_10-00 AM_143631_Applied Costing and Control (Core 6)-(COM4CJ204) [2024 SYLLABUS].pdf",
-      "count" : 20,
+      "count" : 1,
       "courseName" : "Applied Costing and Control (Core 6)-(COM4CJ204) [2024 SYLLABUS]",
       "matchedFile" : {
         "file" : "C:\\Users\\sures\\Downloads\\12.05\\Done\\REG_12.05.26_10_00 AM_143631_Applied Costing and Control--(Core 6)--(COM4CJ204).pdf",
@@ -403,7 +406,7 @@
         "status" : "Ready",
         "style" : "Duplex"
       },
-      "status" : "Pending"
+      "status" : "Finished ✔"
     }, {
       "roomSerial" : "1",
       "qpCode" : "143693",
@@ -429,7 +432,7 @@
     } ]
   }, {
     "roomSerial" : "2",
-    "selectedPrinter" : "None",
+    "selectedPrinter" : "HP Smart Tank 670 (Direct)",
     "status" : "Ready",
     "items" : [ {
       "roomSerial" : "2",
@@ -522,7 +525,7 @@
     } ]
   }, {
     "roomSerial" : "3",
-    "selectedPrinter" : "None",
+    "selectedPrinter" : "OneNote (Desktop)",
     "status" : "Ready",
     "items" : [ {
       "roomSerial" : "3",
@@ -1031,7 +1034,7 @@
         "file" : "C:\\Users\\sures\\Downloads\\12.05\\Done\\REG_12.05.26_10_00 AM_143800_Foundations of Social Behaviour--(Core 6)--(PSY4CJ204).pdf",
         "pageCount" : 1,
         "content" : "FOURTH SEMESTER (CUFYUGP) DEGREE  EXAMINATION, APRIL 2026\r\nPSYCHOLOGY\r\nPSY 4CJ 204 Foundations of Social Behaviour\r\n2024 Admission onwards\r\nMaximum Time : 2 Hours Maximum Marks : 70\r\n             SECTION – A\r\nAll Questions can be answered. Each Question carries 3 marks (Ceiling : 24 Marks)\r\n1. Define systematic Observation? \r\n2. What is deception? \r\n3. What is attitude behaviour link? \r\n4. What is altruistic personality? \r\n5. Define empathy? \r\n6. Define schemas? \r\n7. What are the micro expressions? \r\n8. Define leadership? \r\n9. Define obedience?\r\n10. What is attitude? \r\n  SECTION – B\r\nAll Questions can be answered. Each Question carries 6 marks (Ceiling : 36 Marks)\r\n11. Briefly describe the non- verbal communication? \r\n12. Explain triangular model of love? \r\n13. Define social psychology and list it's main goals? \r\n14. What are the factors contributing conformity? \r\n15. Differentiate between social facilitation and social loading? \r\n16. Briefly discuss the steps to be followed while responding to emergency? \r\n17. Briefly elaborate the types and functions of groups? \r\n18. Discuss empathy altruism model? \r\n               SECTION – C\r\nAnswer any ONE .Each Question carries 10 marks (1x10=10 Marks)\r\n19. Explain the origin and development of social psychology? \r\n20. Describe the major theories of attribution in social psychology with examples? \r\nQP Code: D143800 Total Pages: 1 Name:\r\nRegister No:\r\n737619\r\n737619\r\n1396\r\n396\r\n1396\r\n",
-        "targetPrinter" : "HP Smart Printing",
+        "targetPrinter" : "HP Smart Tank 670 (Direct)",
         "duplex" : false,
         "booklet" : false,
         "bindingType" : "Left",
@@ -1080,7 +1083,7 @@
         "file" : "C:\\Users\\sures\\Downloads\\12.05\\Done\\REG_12.05.26_10_00 AM_143800_Foundations of Social Behaviour--(Core 6)--(PSY4CJ204).pdf",
         "pageCount" : 1,
         "content" : "FOURTH SEMESTER (CUFYUGP) DEGREE  EXAMINATION, APRIL 2026\r\nPSYCHOLOGY\r\nPSY 4CJ 204 Foundations of Social Behaviour\r\n2024 Admission onwards\r\nMaximum Time : 2 Hours Maximum Marks : 70\r\n             SECTION – A\r\nAll Questions can be answered. Each Question carries 3 marks (Ceiling : 24 Marks)\r\n1. Define systematic Observation? \r\n2. What is deception? \r\n3. What is attitude behaviour link? \r\n4. What is altruistic personality? \r\n5. Define empathy? \r\n6. Define schemas? \r\n7. What are the micro expressions? \r\n8. Define leadership? \r\n9. Define obedience?\r\n10. What is attitude? \r\n  SECTION – B\r\nAll Questions can be answered. Each Question carries 6 marks (Ceiling : 36 Marks)\r\n11. Briefly describe the non- verbal communication? \r\n12. Explain triangular model of love? \r\n13. Define social psychology and list it's main goals? \r\n14. What are the factors contributing conformity? \r\n15. Differentiate between social facilitation and social loading? \r\n16. Briefly discuss the steps to be followed while responding to emergency? \r\n17. Briefly elaborate the types and functions of groups? \r\n18. Discuss empathy altruism model? \r\n               SECTION – C\r\nAnswer any ONE .Each Question carries 10 marks (1x10=10 Marks)\r\n19. Explain the origin and development of social psychology? \r\n20. Describe the major theories of attribution in social psychology with examples? \r\nQP Code: D143800 Total Pages: 1 Name:\r\nRegister No:\r\n737619\r\n737619\r\n1396\r\n396\r\n1396\r\n",
-        "targetPrinter" : "HP Smart Printing",
+        "targetPrinter" : "HP Smart Tank 670 (Direct)",
         "duplex" : false,
         "booklet" : false,
         "bindingType" : "Left",
@@ -1866,7 +1869,7 @@
         "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_7850753667036981526.pdf",
         "pageCount" : 2,
         "content" : "",
-        "targetPrinter" : "None",
+        "targetPrinter" : "OneNote (Desktop) - Protected",
         "duplex" : true,
         "booklet" : false,
         "bindingType" : "Left",
@@ -1888,7 +1891,7 @@
         "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_135605338038938855.pdf",
         "pageCount" : 4,
         "content" : "",
-        "targetPrinter" : "None",
+        "targetPrinter" : "Adobe PDF",
         "duplex" : false,
         "booklet" : true,
         "bindingType" : "Left",
@@ -1910,7 +1913,7 @@
         "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_7850753667036981526.pdf",
         "pageCount" : 2,
         "content" : "",
-        "targetPrinter" : "None",
+        "targetPrinter" : "OneNote (Desktop) - Protected",
         "duplex" : true,
         "booklet" : false,
         "bindingType" : "Left",
@@ -1932,7 +1935,7 @@
         "file" : "C:\\Users\\sures\\AppData\\Local\\Temp\\split_135605338038938855.pdf",
         "pageCount" : 4,
         "content" : "",
-        "targetPrinter" : "None",
+        "targetPrinter" : "Adobe PDF",
         "duplex" : false,
         "booklet" : true,
         "bindingType" : "Left",

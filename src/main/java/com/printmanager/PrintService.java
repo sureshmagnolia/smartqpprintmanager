@@ -44,18 +44,43 @@ public class PrintService {
     public Map<String, Map<String, String>> getPrintersDetailedStatus() {
         Map<String, Map<String, String>> detailedMap = new HashMap<>();
         try {
-            // Fetch Hardware Status
-            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", 
-                "Get-WmiObject Win32_Printer | Select-Object Name, PrinterStatus, WorkOffline | ConvertTo-Json");
+            // Using Get-CimInstance with .NET Ping for robust reachability check on PS 5.1
+            String script = 
+                "Get-CimInstance -ClassName Win32_Printer | Select-Object Name, PrinterStatus, WorkOffline, PortName | ForEach-Object { " +
+                "  $isOffline = $_.WorkOffline; " +
+                "  if (-not $isOffline -and ($_.PortName -like 'IP_*' -or $_.PortName -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$')) { " +
+                "    $ip = $_.PortName -replace 'IP_', ''; " +
+                "    try { " +
+                "      $ping = New-Object System.Net.NetworkInformation.Ping; " +
+                "      $reply = $ping.Send($ip, 1000); " +
+                "      if ($reply.Status -ne 'Success') { $isOffline = $true } " +
+                "    } catch { $isOffline = $true } " +
+                "  }; " +
+                "  [PSCustomObject]@{ " +
+                "    Name = $_.Name; " +
+                "    Status = $_.PrinterStatus; " +
+                "    Offline = $isOffline " +
+                "  } " +
+                "} | ConvertTo-Json";
+
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script);
             Process p = pb.start();
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             com.fasterxml.jackson.databind.JsonNode printers = mapper.readTree(p.getInputStream());
             
-            // Helper function to initialize entries
             Consumer<com.fasterxml.jackson.databind.JsonNode> initNode = node -> {
                 String name = node.path("Name").asText();
+                if (name.isEmpty()) return;
                 Map<String, String> data = new HashMap<>();
-                data.put("status", parseStatus(node.path("PrinterStatus").asInt(0), node.path("WorkOffline").asBoolean()));
+                int statusInt = node.path("Status").asInt(0);
+                boolean isOffline = node.path("Offline").asBoolean(false);
+                
+                // Detailed Status check
+                String statusStr = isOffline ? "Offline" : (statusInt == 3 ? "Ready" : "Other");
+                if (statusInt == 4) statusStr = "Printing";
+                if (statusInt == 7) statusStr = "Offline";
+                
+                data.put("status", statusStr);
                 data.put("jobs", "0");
                 data.put("current", "Idle");
                 detailedMap.put(name, data);
@@ -66,12 +91,12 @@ public class PrintService {
 
             // Fetch Active Job Details
             ProcessBuilder pbJobs = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", 
-                "Get-WmiObject Win32_PrintJob | Select-Object Name, Document, JobStatus | ConvertTo-Json");
+                "Get-CimInstance -ClassName Win32_PrintJob | Select-Object Name, Document | ConvertTo-Json");
             Process pJobs = pbJobs.start();
             com.fasterxml.jackson.databind.JsonNode jobs = mapper.readTree(pJobs.getInputStream());
 
             Consumer<com.fasterxml.jackson.databind.JsonNode> processJob = node -> {
-                String fullName = node.path("Name").asText(); // e.g. "HP Smart Printing, 123"
+                String fullName = node.path("Name").asText();
                 if (fullName.contains(",")) {
                     String printerName = fullName.substring(0, fullName.lastIndexOf(",")).trim();
                     if (detailedMap.containsKey(printerName)) {
@@ -79,6 +104,7 @@ public class PrintService {
                         int count = Integer.parseInt(data.get("jobs")) + 1;
                         data.put("jobs", String.valueOf(count));
                         data.put("current", node.path("Document").asText("Unknown"));
+                        if (!"Offline".equals(data.get("status"))) data.put("status", "Printing");
                     }
                 }
             };
@@ -86,7 +112,7 @@ public class PrintService {
             if (jobs.isArray()) for (com.fasterxml.jackson.databind.JsonNode j : jobs) processJob.accept(j);
             else if (jobs.isObject()) processJob.accept(jobs);
 
-        } catch (Exception e) { /* Silently fail */ }
+        } catch (Exception e) { logger.error("Detailed status error", e); }
         return detailedMap;
     }
 

@@ -60,7 +60,7 @@ public class App extends Application {
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
-    private final Map<String, String> printerStatusCache = new HashMap<>();
+    private final javafx.collections.ObservableMap<String, String> printerStatusCache = FXCollections.observableHashMap();
     private final HBox simAlertHeader = new HBox();
     private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
 
@@ -159,6 +159,14 @@ public class App extends Application {
     }
 
     private void startPrinterStatusMonitor() {
+        // Immediate initial poll
+        analysisExecutor.submit(() -> {
+            try {
+                Map<String, String> initial = printService.getPrintersStatus();
+                Platform.runLater(() -> printerStatusCache.putAll(initial));
+            } catch (Exception e) { logger.error("Initial poll error", e); }
+        });
+
         Thread monitorThread = new Thread(() -> {
             while (true) {
                 try {
@@ -365,16 +373,74 @@ public class App extends Application {
 
         TableColumn<FileItem, String> printerCol = new TableColumn<>("Printer");
         printerCol.setCellValueFactory(d -> d.getValue().targetPrinterProperty());
-        printerCol.setMinWidth(150);
+        printerCol.setMinWidth(180);
         printerCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
-            { combo.setPrefWidth(140); combo.setOnAction(e -> {
-                if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setTargetPrinter(combo.getValue());
-            }); }
+            private final Label statusIndicator = new Label();
+            private final VBox container = new VBox(2, combo, statusIndicator);
+            
+            {
+                combo.setPrefWidth(160);
+                statusIndicator.setStyle("-fx-font-size: 10px; -fx-font-weight: bold;");
+                
+                combo.setCellFactory(lv -> new ListCell<String>() {
+                    @Override protected void updateItem(String item, boolean empty) {
+                        super.updateItem(item, empty);
+                        if (empty || item == null) setText(null);
+                        else {
+                            String status = printerStatusCache.getOrDefault(item, "Ready");
+                            if ("Offline".equalsIgnoreCase(status)) {
+                                setText(item + " (OFFLINE)");
+                                setStyle("-fx-text-fill: #aaa;");
+                                setDisable(true);
+                            } else {
+                                setText(item);
+                                setStyle("-fx-text-fill: black;");
+                                setDisable(false);
+                            }
+                        }
+                    }
+                });
+                // Button cell for closed state
+                combo.setButtonCell(combo.getCellFactory().call(null));
+                
+                combo.setOnAction(e -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        getTableRow().getItem().setTargetPrinter(combo.getValue());
+                    }
+                });
+
+                // Centralized listener to update row indicator and combo state
+                printerStatusCache.addListener((javafx.collections.MapChangeListener<String, String>) change -> updateDisplay());
+            }
+
+            private void updateDisplay() {
+                String val = combo.getValue();
+                if (val != null && !"None".equals(val)) {
+                    String s = printerStatusCache.getOrDefault(val, "Ready");
+                    Platform.runLater(() -> {
+                        if ("Offline".equalsIgnoreCase(s)) {
+                            statusIndicator.setText("⚠ OFFLINE");
+                            statusIndicator.setStyle("-fx-text-fill: #f44336;");
+                        } else {
+                            statusIndicator.setText("✔ Ready");
+                            statusIndicator.setStyle("-fx-text-fill: #4CAF50;");
+                        }
+                    });
+                } else {
+                    Platform.runLater(() -> statusIndicator.setText(""));
+                }
+            }
+
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty) setGraphic(null);
-                else { combo.setValue(item); setGraphic(combo); setAlignment(javafx.geometry.Pos.CENTER); }
+                else { 
+                    combo.setValue(item); 
+                    updateDisplay();
+                    setGraphic(container); 
+                    setAlignment(javafx.geometry.Pos.CENTER); 
+                }
             }
         });
 
@@ -773,6 +839,22 @@ public class App extends Application {
 
     private void printFile(FileItem item) {
         if ("None".equals(item.getTargetPrinter())) { updateStatus("Error: No Printer"); return; }
+        
+        // Prevent printing to Offline printers
+        String liveStatus = printerStatusCache.getOrDefault(item.getTargetPrinter(), "Ready");
+        if ("Offline".equalsIgnoreCase(liveStatus)) {
+            activityLogger.error("Blocked print: " + item.getFileName() + " (Printer " + item.getTargetPrinter() + " is OFFLINE)");
+            updateStatus("Error: Printer is Offline");
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Printer Offline");
+                alert.setHeaderText("Cannot print to " + item.getTargetPrinter());
+                alert.setContentText("The printer is currently Offline. Please turn it on and wait for the dashboard to show 'Ready'.");
+                alert.show();
+            });
+            return;
+        }
+
         activityLogger.info("Starting print job: " + item.getFileName() + " on " + item.getTargetPrinter());
         printQueueExecutor.submit(() -> {
             try {
@@ -795,6 +877,11 @@ public class App extends Application {
             try {
                 for (FileItem item : List.copyOf(fileQueue)) {
                     if ("None".equals(item.getTargetPrinter())) continue;
+                    // Skip offline printers in batch
+                    if ("Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(item.getTargetPrinter(), "Ready"))) {
+                        Platform.runLater(() -> item.setStatus("Skipped (Offline)"));
+                        continue;
+                    }
                     printService.printPDF(item, s -> Platform.runLater(() -> item.setStatus(s)));
                     Thread.sleep(1000);
                 }
@@ -1345,6 +1432,27 @@ public class App extends Application {
         ComboBox<String> printerCombo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
         printerCombo.setPromptText("Select Printer");
         printerCombo.setMaxWidth(Double.MAX_VALUE);
+        printerCombo.setCellFactory(lv -> new ListCell<String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) setText(null);
+                else {
+                    String status = printerStatusCache.getOrDefault(item, "Ready");
+                    if ("Offline".equalsIgnoreCase(status)) {
+                        setText(item + " (OFFLINE)");
+                        setStyle("-fx-text-fill: #aaa;");
+                        setDisable(true);
+                    } else {
+                        setText(item);
+                        setStyle("-fx-text-fill: black;");
+                        setDisable(false);
+                    }
+                }
+            }
+        });
+        // Also update the button cell (the one shown when the combo is closed)
+        printerCombo.setButtonCell(printerCombo.getCellFactory().call(null));
+        
         printerCombo.valueProperty().bindBidirectional(group.selectedPrinterProperty());
 
         Button sendBtn = new Button("Send Print");
@@ -1357,14 +1465,44 @@ public class App extends Application {
         roomStatus.setStyle("-fx-font-style: italic;");
 
         Label printerIndicator = new Label();
-        printerIndicator.setStyle("-fx-font-size: 10px; -fx-text-fill: #777;");
-        group.selectedPrinterProperty().addListener((o, ov, nv) -> {
-            if (nv != null && printerStatusCache.containsKey(nv)) {
-                String s = printerStatusCache.get(nv);
-                printerIndicator.setText("Status: " + s);
-                printerIndicator.setStyle("-fx-font-size: 10px; -fx-text-fill: " + ("Ready".equalsIgnoreCase(s) ? "green" : "red") + ";");
-            } else printerIndicator.setText("");
+        printerIndicator.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;");
+        
+        // Listen to printer selection AND global status cache changes
+        Runnable updateBtnState = () -> {
+            String p = group.getSelectedPrinter();
+            if (p != null && !"None".equals(p)) {
+                String s = printerStatusCache.getOrDefault(p, "Ready");
+                Platform.runLater(() -> {
+                    if ("Offline".equalsIgnoreCase(s)) {
+                        printerIndicator.setText("⚠ PRINTER OFFLINE");
+                        printerIndicator.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
+                        sendBtn.setDisable(true);
+                        sendBtn.setTooltip(new Tooltip("Cannot print while printer is Offline"));
+                    } else {
+                        printerIndicator.setText("✔ Printer Ready");
+                        printerIndicator.setStyle("-fx-text-fill: #4CAF50;");
+                        sendBtn.setDisable(false);
+                        sendBtn.setTooltip(null);
+                    }
+                });
+            } else {
+                Platform.runLater(() -> {
+                    printerIndicator.setText("");
+                    sendBtn.setDisable(false);
+                });
+            }
+        };
+
+        group.selectedPrinterProperty().addListener((o, ov, nv) -> updateBtnState.run());
+        // Periodic check to ensure button state stays in sync with background polls
+        Thread btnWatcher = new Thread(() -> {
+            while (true) {
+                try { Thread.sleep(2000); updateBtnState.run(); } 
+                catch (InterruptedException e) { break; }
+            }
         });
+        btnWatcher.setDaemon(true);
+        btnWatcher.start();
 
         card.getChildren().addAll(title, table, printerCombo, printerIndicator, sendBtn, roomStatus);
         return card;
@@ -1372,7 +1510,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.0.3");
+        Label title = new Label("Smart QP Print Manager v3.0.6");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -1507,47 +1645,83 @@ public class App extends Application {
     }
 
     private void printRoom(RoomGroup group) {
-        if ("None".equals(group.getSelectedPrinter()) || group.getSelectedPrinter() == null) { updateStatus("Error: Select a printer."); return; }
+        String printer = group.getSelectedPrinter();
+        if (printer == null || "None".equals(printer)) { 
+            updateStatus("Error: Select a printer."); 
+            return; 
+        }
+
+        // 1. Prevent printing to Offline printers
+        String liveStatus = printerStatusCache.getOrDefault(printer, "Ready");
+        if ("Offline".equalsIgnoreCase(liveStatus)) {
+            activityLogger.error("Blocked room print: " + group.getRoomSerial() + " (Printer " + printer + " is OFFLINE)");
+            updateStatus("Error: Printer is Offline");
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Printer Offline");
+                alert.setHeaderText("Cannot print to " + printer);
+                alert.setContentText("The printer is currently Offline. Please turn it on and wait for the dashboard to show 'Ready'.");
+                alert.show();
+            });
+            return;
+        }
+
         boolean printCover = printCoverPageCbox.isSelected();
         group.setStatus("Sending...");
-        saveConfigs(); // Force save on status change
+        saveConfigs();
+
         roomPrintExecutor.submit(() -> {
             try {
-                // 1. Optional Cover Page Generation
-                logger.info("printCover is {}", printCover);
+                // Track success of all items
+                boolean allSuccess = true;
+                
+                // Optional Cover Page
                 if (printCover) {
                     try {
                         File coverFile = generateRoomCoverPage(group);
-                        FileItem coverItem = new FileItem(coverFile, 1, "", group.getSelectedPrinter(), false, false, "Left", 1, "A4", "");
-                        coverItem.setFileName("Cover_Room_" + group.getRoomSerial());
-                        activityLogger.info("Generating Cover Page for Room: " + group.getRoomSerial());
+                        FileItem coverItem = new FileItem(coverFile, 1, "", printer, false, false, "Left", 1, "A4", "");
                         printService.printPDF(coverItem, s -> {});
                         Thread.sleep(1000);
                     } catch (Exception ce) { 
-                        logger.error("Failed to generate cover page", ce);
-                        activityLogger.error("Failed to generate cover page: " + ce.getMessage()); 
+                        activityLogger.error("Cover page failed for Room " + group.getRoomSerial());
                     }
                 }
 
-                // 2. Print actual QP items
+                // Print QP items
                 for (RoomItem roomItem : group.getItems()) {
-                    if (roomItem.getMatchedFile() == null) { roomItem.setStatus("File Not Found"); continue; }
+                    if (roomItem.getMatchedFile() == null) { 
+                        Platform.runLater(() -> roomItem.setStatus("File Not Found"));
+                        allSuccess = false;
+                        continue; 
+                    }
+                    
                     roomItem.setStatus("Printing...");
                     FileItem fileItem = roomItem.getMatchedFile();
-                    FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), group.getSelectedPrinter(), fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
+                    FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), printer, fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
                     jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
-                    printService.printPDF(jobItem, s -> Platform.runLater(() -> roomItem.setStatus(s)));
-                    Thread.sleep(300);
+                    
+                    // We need to wait for completion feedback for each item
+                    final java.util.concurrent.CompletableFuture<String> jobResult = new java.util.concurrent.CompletableFuture<>();
+                    printService.printPDF(jobItem, s -> {
+                        Platform.runLater(() -> roomItem.setStatus(s));
+                        if (s.contains("Finished") || s.contains("Error")) jobResult.complete(s);
+                    });
+                    
+                    String result = jobResult.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                    if (result.contains("Error")) allSuccess = false;
+                    Thread.sleep(500);
                 }
+
+                final boolean finalSuccess = allSuccess;
                 Platform.runLater(() -> {
-                    group.setStatus("Finished");
+                    group.setStatus(finalSuccess ? "Finished" : "Partial Error");
                     saveConfigs();
+                    if (finalSuccess) activityLogger.success("Room " + group.getRoomSerial() + " printed successfully.");
+                    else activityLogger.error("Room " + group.getRoomSerial() + " completed with ERRORS.");
                 });
             } catch (Exception e) { 
-                Platform.runLater(() -> {
-                    group.setStatus("Error");
-                    saveConfigs();
-                }); 
+                Platform.runLater(() -> { group.setStatus("Error"); saveConfigs(); });
+                logger.error("Room print error", e);
             }
         });
     }
