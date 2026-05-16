@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<jpackage-state version="21.0.11" platform="windows">
+  <app-version>3.0.2</app-version>
+  <main-launcher>Smart QP Print Manager</main-launcher>
+  <main-class>com.printmanager.Launcher</main-class>
+  <signed>false</signed>
+  <app-store>false</app-store></jpackage-state>

@@ -5,6 +5,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -116,7 +117,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.0.4");
+        primaryStage.setTitle("Smart QP Print Manager v3.0.5");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -312,9 +313,34 @@ public class App extends Application {
         copiesCol.setPrefWidth(80); copiesCol.setMaxWidth(90);
         copiesCol.setCellFactory(tc -> new TableCell<FileItem, Integer>() {
             private final Spinner<Integer> spinner = new Spinner<>(1, 999, 1);
-            { spinner.setPrefWidth(70); spinner.valueProperty().addListener((o, ov, nv) -> {
-                if (getTableRow().getItem() != null) getTableRow().getItem().setCopies(nv);
-            }); }
+            {
+                spinner.setPrefWidth(70);
+                spinner.setEditable(true);
+                
+                // Commit value on focus lost or enter
+                spinner.focusedProperty().addListener((obs, oldVal, newVal) -> {
+                    if (!newVal) commitSpinnerValue();
+                });
+                
+                spinner.valueProperty().addListener((o, ov, nv) -> {
+                    if (getTableRow().getItem() != null) getTableRow().getItem().setCopies(nv);
+                });
+            }
+
+            private void commitSpinnerValue() {
+                try {
+                    String text = spinner.getEditor().getText();
+                    javafx.util.StringConverter<Integer> converter = spinner.getValueFactory().getConverter();
+                    if (converter != null) {
+                        Integer value = converter.fromString(text);
+                        spinner.getValueFactory().setValue(value);
+                    }
+                } catch (Exception e) {
+                    // Reset to current value on error
+                    spinner.getEditor().setText(spinner.getValueFactory().getConverter().toString(spinner.getValue()));
+                }
+            }
+
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty) setGraphic(null);
@@ -473,12 +499,14 @@ public class App extends Application {
         private final SimpleStringProperty status;
         private final SimpleStringProperty activeJobs;
         private final SimpleStringProperty currentTask;
+        private final PrinterHealthMonitor monitor;
 
         public PrinterDisplay(String name, String status) {
             this.name = name;
             this.status = new SimpleStringProperty(status);
             this.activeJobs = new SimpleStringProperty("0");
             this.currentTask = new SimpleStringProperty("Idle");
+            this.monitor = new PrinterHealthMonitor(name);
         }
 
         public String getName() { return name; }
@@ -493,6 +521,9 @@ public class App extends Application {
         public String getCurrentTask() { return currentTask.get(); }
         public SimpleStringProperty currentTaskProperty() { return currentTask; }
         public void setCurrentTask(String currentTask) { this.currentTask.set(currentTask); }
+
+        public PrinterHealthMonitor getMonitor() { return monitor; }
+        public StringProperty healthStatusProperty() { return monitor.healthStatusProperty(); }
     }
 
     private VBox createPrinterDashboardView() {
@@ -520,6 +551,22 @@ public class App extends Application {
             }
         });
 
+        TableColumn<PrinterDisplay, String> healthCol = new TableColumn<>("Hardware Health");
+        healthCol.setCellValueFactory(d -> d.getValue().healthStatusProperty());
+        healthCol.setCellFactory(tc -> new TableCell<PrinterDisplay, String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); }
+                else {
+                    setText(item); setAlignment(javafx.geometry.Pos.CENTER);
+                    if ("Ready".equalsIgnoreCase(item) || "No Error".equalsIgnoreCase(item)) setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
+                    else if (item.contains("Low")) setStyle("-fx-text-fill: orange; -fx-font-weight: bold;");
+                    else if (item.contains("Jam") || item.contains("No Paper") || item.contains("Open") || item.contains("Error")) setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+                    else setStyle("-fx-text-fill: #555;");
+                }
+            }
+        });
+
         TableColumn<PrinterDisplay, String> jobsCol = new TableColumn<>("Active Jobs");
         jobsCol.setCellValueFactory(d -> d.getValue().activeJobsProperty());
         jobsCol.setPrefWidth(100); jobsCol.setMaxWidth(120);
@@ -539,11 +586,15 @@ public class App extends Application {
             }
         });
 
-        table.getColumns().addAll(nameCol, statusCol, jobsCol, taskCol);
+        table.getColumns().addAll(nameCol, statusCol, healthCol, jobsCol, taskCol);
 
         printService.getAvailablePrinters().stream()
             .filter(n -> !"None".equals(n))
-            .forEach(n -> printerDisplays.add(new PrinterDisplay(n, "Checking...")));
+            .forEach(n -> {
+                PrinterDisplay pd = new PrinterDisplay(n, "Checking...");
+                printerDisplays.add(pd);
+                pd.getMonitor().start();
+            });
 
         Thread dashboardUpdater = new Thread(() -> {
             while (true) {
@@ -593,8 +644,26 @@ public class App extends Application {
                         routeSmartPart(b, file.getName(), matched, false);
                     }
                     int total = pdfService.getPageCount(file);
-                    File a = pdfService.splitPages(file, pageIdx, total);
-                    routeSmartPart(a, file.getName(), matched, true);
+                    int afterCountWithKeyword = total - pageIdx + 1;
+                    
+                    // Logic refinement: Use configurable thresholds (e.g., "5,9")
+                    boolean shouldSkip = false;
+                    String thresholds = matched.getSkipThresholds();
+                    if (thresholds != null && !thresholds.isEmpty()) {
+                        String[] parts = thresholds.split(",");
+                        for (String p : parts) {
+                            if (p.trim().equals(String.valueOf(afterCountWithKeyword))) {
+                                shouldSkip = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    int startPage = shouldSkip ? pageIdx + 1 : pageIdx;
+                    if (startPage <= total) {
+                        File a = pdfService.splitPages(file, startPage, total);
+                        routeSmartPart(a, file.getName(), matched, true);
+                    }
                 } else {
                     addFileToQueue(file, null, null);
                 }
@@ -615,7 +684,7 @@ public class App extends Application {
                 f = pdfService.splitPages(file, 2, 5); 
                 pages = 4; 
                 style = "Booklet"; 
-                overlay = "MCQ"; 
+                overlay = rule.getAfterOverlayText(); 
             } else style = rule.getAfterStyle6Plus();
         } else {
             if (pages == 1) style = rule.getBeforeStyle1();
@@ -734,7 +803,7 @@ public class App extends Application {
         });
     }
 
-    private VBox createSettingsView() {
+    private javafx.scene.Parent createSettingsView() {
         CheckBox simMode = new CheckBox("Enable Print Simulation Mode (Test Run)");
         simMode.setSelected(printService.isSimulationMode());
         simMode.setOnAction(e -> {
@@ -814,9 +883,31 @@ public class App extends Application {
         TextField ssPreB = new TextField(); ssPreB.setPromptText("Prefix Before"); ssPreB.setPrefWidth(120);
         TextField ssPreA = new TextField(); ssPreA.setPromptText("Prefix After"); ssPreA.setPrefWidth(120);
         
-        VBox smartControls = new VBox(10,
-            new HBox(10, new Label("Active:"), ssEn, new Label("Target Keyword:"), ssKw),
-            new HBox(10, new Label("Name Prefix (Before):"), ssPreB, new Label("Name Prefix (After):"), ssPreA)
+        TextField ssOverlay = new TextField(); ssOverlay.setPromptText("Overlay Text (e.g. MCQ)"); ssOverlay.setPrefWidth(120);
+        TextField ssSkipThr = new TextField(); ssSkipThr.setPromptText("Skip if after pages are (e.g. 5,9)"); ssSkipThr.setPrefWidth(180);
+        
+        ComboBox<String> ssB1 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        ComboBox<String> ssB2 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        ComboBox<String> ssB3 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        
+        ComboBox<String> ssA1 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        ComboBox<String> ssA2 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        ComboBox<String> ssA3 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+        ComboBox<String> ssA6 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
+
+        VBox smartControls = new VBox(15,
+            new HBox(15, new Label("Active:"), ssEn, new Label("Target Keyword:"), ssKw),
+            new HBox(15, new Label("Page Skip Logic:"), new Label("Skip Keyword Page only if 'After' part has exactly these page counts (comma separated):"), ssSkipThr),
+            new HBox(15, new Label("Name Prefix:"), new Label("Before:"), ssPreB, new Label("After:"), ssPreA, new Label("After Overlay:"), ssOverlay),
+            new VBox(5, 
+                new Label("Style Mapping for 'Before' Split:"),
+                new HBox(10, new Label("If 1 Page:"), ssB1, new Label("If 2 Pages:"), ssB2, new Label("If 3+ Pages:"), ssB3)
+            ),
+            new VBox(5, 
+                new Label("Style Mapping for 'After' Split:"),
+                new HBox(10, new Label("If 1 Page:"), ssA1, new Label("If 2 Pages:"), ssA2, new Label("If 3-4 Pages:"), ssA3, new Label("If 6+ Pages:"), ssA6)
+            ),
+            new Label("Note: If 'After' part is exactly 5 pages, it triggers the 'Special MCQ Mode' (Splits at page 2, adds overlay).")
         );
 
         smartListV.setOnMouseClicked(e -> {
@@ -827,6 +918,15 @@ public class App extends Application {
                     ssKw.setText(nv.getKeyword());
                     ssPreB.setText(nv.getBeforePrefix());
                     ssPreA.setText(nv.getAfterPrefix());
+                    ssOverlay.setText(nv.getAfterOverlayText());
+                    ssSkipThr.setText(nv.getSkipThresholds());
+                    ssB1.setValue(nv.getBeforeStyle1());
+                    ssB2.setValue(nv.getBeforeStyle2());
+                    ssB3.setValue(nv.getBeforeStyle3Plus());
+                    ssA1.setValue(nv.getAfterStyle1());
+                    ssA2.setValue(nv.getAfterStyle2());
+                    ssA3.setValue(nv.getAfterStyle3To4());
+                    ssA6.setValue(nv.getAfterStyle6Plus());
                 }
             }
         });
@@ -839,6 +939,15 @@ public class App extends Application {
                 sel.setKeyword(ssKw.getText());
                 sel.setBeforePrefix(ssPreB.getText());
                 sel.setAfterPrefix(ssPreA.getText());
+                sel.setAfterOverlayText(ssOverlay.getText());
+                sel.setSkipThresholds(ssSkipThr.getText());
+                sel.setBeforeStyle1(ssB1.getValue());
+                sel.setBeforeStyle2(ssB2.getValue());
+                sel.setBeforeStyle3Plus(ssB3.getValue());
+                sel.setAfterStyle1(ssA1.getValue());
+                sel.setAfterStyle2(ssA2.getValue());
+                sel.setAfterStyle3To4(ssA3.getValue());
+                sel.setAfterStyle6Plus(ssA6.getValue());
                 smartListV.refresh();
                 saveConfigs();
             }
@@ -850,6 +959,15 @@ public class App extends Application {
             nr.setEnabled(ssEn.isSelected());
             nr.setBeforePrefix(ssPreB.getText());
             nr.setAfterPrefix(ssPreA.getText());
+            nr.setAfterOverlayText(ssOverlay.getText());
+            nr.setSkipThresholds(ssSkipThr.getText().isEmpty() ? "5,9" : ssSkipThr.getText());
+            nr.setBeforeStyle1(ssB1.getValue() != null ? ssB1.getValue() : "Simplex");
+            nr.setBeforeStyle2(ssB2.getValue() != null ? ssB2.getValue() : "Duplex");
+            nr.setBeforeStyle3Plus(ssB3.getValue() != null ? ssB3.getValue() : "Booklet");
+            nr.setAfterStyle1(ssA1.getValue() != null ? ssA1.getValue() : "Simplex");
+            nr.setAfterStyle2(ssA2.getValue() != null ? ssA2.getValue() : "Duplex");
+            nr.setAfterStyle3To4(ssA3.getValue() != null ? ssA3.getValue() : "Booklet");
+            nr.setAfterStyle6Plus(ssA6.getValue() != null ? ssA6.getValue() : "Booklet");
             smartSplitRulesList.add(nr);
             saveConfigs();
         });
@@ -881,7 +999,10 @@ public class App extends Application {
             new HBox(10, addSmartBtn, updateSmartBtn, remSmartBtn)
         );
         layout.setPadding(new Insets(20));
-        return layout;
+        
+        ScrollPane sp = new ScrollPane(layout);
+        sp.setFitToWidth(true);
+        return sp;
     }
 
     private void loadJsonAndUpdateCopies(Stage stage) {
@@ -1249,7 +1370,7 @@ public class App extends Application {
         return card;
     }
 
-    private VBox createAboutView() {
+    private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
         Label title = new Label("Smart QP Print Manager v3.0.3");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
@@ -1277,8 +1398,11 @@ public class App extends Application {
         helpPane.getTabs().add(new Tab("Overview", new ScrollPane(new Label(overview) {{ setPadding(new Insets(10)); setWrapText(true); }})));
         helpPane.getTabs().add(new Tab("Room Router", new ScrollPane(new Label(roomLogic) {{ setPadding(new Insets(10)); setWrapText(true); }})));
 
-        layout.getChildren().addAll(title, createdBy, new Separator(), helpPane);
-        return layout;
+        layout.getChildren().addAll(title, createdBy, new Separator(), helpPane, new Separator(), configInfo);
+        
+        ScrollPane sp = new ScrollPane(layout);
+        sp.setFitToWidth(true);
+        return sp;
     }
 
     private void previewRoomItem(RoomItem item) {

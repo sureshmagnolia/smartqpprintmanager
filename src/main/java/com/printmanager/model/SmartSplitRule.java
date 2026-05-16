@@ -18,12 +18,21 @@ public class SmartSplitRule {
     private String afterStyle1 = "Simplex";
     private String afterStyle2 = "Duplex";
     private String afterStyle3To4 = "Booklet";
-    private boolean special5PageMode = true; // Remove keyword page, add "As MCQ" overlay
+    private boolean special5PageMode = true; // Remove keyword page, add overlay
+    private String afterOverlayText = "MCQ";
+    private String skipThresholds = "5,9";
+    private boolean skipKeywordPage = true;
     private String afterStyle6Plus = "Booklet";
 
     public SmartSplitRule() {}
 
     // Getters and Setters
+    public String getAfterOverlayText() { return afterOverlayText; }
+    public void setAfterOverlayText(String afterOverlayText) { this.afterOverlayText = afterOverlayText; }
+    public String getSkipThresholds() { return skipThresholds; }
+    public void setSkipThresholds(String skipThresholds) { this.skipThresholds = skipThresholds; }
+    public boolean isSkipKeywordPage() { return skipKeywordPage; }
+    public void setSkipKeywordPage(boolean skipKeywordPage) { this.skipKeywordPage = skipKeywordPage; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public String getKeyword() { return keyword; }
