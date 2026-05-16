@@ -17,6 +17,10 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -112,7 +116,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.0.3");
+        primaryStage.setTitle("Smart QP Print Manager v3.0.4");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -448,7 +452,13 @@ public class App extends Application {
         loadJsonBtn.setTooltip(new Tooltip("Upload a JSON file to automatically update copy counts based on QP codes"));
         loadJsonBtn.setOnAction(e -> loadJsonAndUpdateCopies(stage));
 
-        HBox btns = new HBox(15, addBtn, loadJsonBtn, printBtn, clearBtn);
+        Button fetchExamflowBtn = new Button("\u2601 Fetch from Examflow");
+        fetchExamflowBtn.setId("fetch-examflow-btn");
+        fetchExamflowBtn.setTooltip(new Tooltip("Fetch seating data directly from the cloud using your College ID"));
+        fetchExamflowBtn.setOnAction(e -> fetchFromExamflow(stage));
+        fetchExamflowBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        HBox btns = new HBox(15, addBtn, loadJsonBtn, fetchExamflowBtn, printBtn, clearBtn);
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
@@ -849,8 +859,21 @@ public class App extends Application {
             saveConfigs();
         });
 
+        TextField collegeIdField = new TextField(config.getCollegeId());
+        collegeIdField.setPromptText("Examflow College ID");
+        collegeIdField.setPrefWidth(300);
+        Button saveCidBtn = new Button("Save ID");
+        saveCidBtn.setOnAction(e -> {
+            config.setCollegeId(collegeIdField.getText().trim());
+            saveConfigs();
+            activityLogger.info("Examflow College ID updated to: " + config.getCollegeId());
+        });
+
         VBox layout = new VBox(15, 
             new Label("System Flags:"), simMode,
+            new Separator(),
+            new Label("Examflow Cloud Sync:"),
+            new HBox(10, new Label("College ID:"), collegeIdField, saveCidBtn),
             new Separator(),
             new Label("1. Page Count Routing Rules:"), ruleListV, ruleInputs, ruleBtns,
             new Separator(),
@@ -904,6 +927,134 @@ public class App extends Application {
             } catch (Exception e) { 
                 logger.error("JSON Error", e);
                 activityLogger.error("Failed to read JSON: " + e.getMessage());
+            }
+        });
+    }
+
+    private void fetchFromExamflow(Stage stage) {
+        String cid = config.getCollegeId();
+        if (cid == null || cid.isEmpty()) {
+            TextInputDialog dialog = new TextInputDialog();
+            dialog.setTitle("College ID Required");
+            dialog.setHeaderText("Enter your Examflow College ID");
+            dialog.setContentText("Please provide the unique ID found in your Examflow URL:");
+            Optional<String> result = dialog.showAndWait();
+            if (result.isPresent() && !result.get().trim().isEmpty()) {
+                cid = result.get().trim();
+                config.setCollegeId(cid);
+                saveConfigs();
+            } else {
+                return;
+            }
+        }
+
+        final String finalCid = cid;
+        activityLogger.info("Attempting to fetch data from Examflow Cloud (College ID: " + finalCid + ")");
+        updateStatus("Connecting to Examflow Cloud...");
+
+        analysisExecutor.submit(() -> {
+            try {
+                HttpClient client = HttpClient.newHttpClient();
+                String url = "https://firestore.googleapis.com/v1/projects/examflow-india/databases/(default)/documents/public_print_queue/" + finalCid;
+                
+                HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .build();
+
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() == 200) {
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode root = mapper.readTree(response.body());
+                    
+                    // Firestore REST API returns fields in a nested structure
+                    String payload = root.path("fields").path("payload").path("stringValue").asText("");
+                    
+                    if (payload.isEmpty()) {
+                        throw new Exception("Document found but payload is empty.");
+                    }
+
+                    JsonNode seatingData = mapper.readTree(payload);
+                    processSeatingJson(seatingData);
+                    processRoomWiseJson(seatingData, "Examflow Cloud");
+
+                } else if (response.statusCode() == 404) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.setTitle("Data Not Found");
+                        alert.setHeaderText("No data found for College ID: " + finalCid);
+                        alert.setContentText("Did you click 'Sync to Print Manager' in the Examflow web app first?");
+                        alert.show();
+                        
+                        // Clear invalid ID so user can re-enter
+                        config.setCollegeId("");
+                        saveConfigs();
+                    });
+                } else {
+                    throw new Exception("HTTP Error: " + response.statusCode());
+                }
+
+            } catch (Exception e) {
+                logger.error("Fetch Error", e);
+                activityLogger.error("Examflow Sync Failed: " + e.getMessage());
+                updateStatus("Sync Failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private void processSeatingJson(JsonNode root) {
+        if (fileQueue.isEmpty()) {
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("Queue Empty");
+                alert.setHeaderText("No files in Print Queue");
+                alert.setContentText("Please add your PDF files to the 'Print Queue' tab first, then click Fetch. The app will automatically match the files with the cloud data.");
+                alert.show();
+            });
+            updateStatus("Sync Skipped: Queue is empty.");
+            return;
+        }
+
+        Map<String, Integer> qpTotalCounts = new HashMap<>();
+        if (root.isArray()) {
+            for (JsonNode node : root) {
+                String qpCode = node.path("qpCode").asText("");
+                int count = node.path("count").asInt(0);
+                if (!qpCode.isEmpty()) {
+                    qpTotalCounts.put(qpCode, qpTotalCounts.getOrDefault(qpCode, 0) + count);
+                }
+            }
+        }
+
+        int countUpdated = 0;
+        for (Map.Entry<String, Integer> entry : qpTotalCounts.entrySet()) {
+            String qpCode = entry.getKey();
+            int totalCount = entry.getValue();
+            
+            for (FileItem item : fileQueue) {
+                String fileName = item.getFileName();
+                String extractedQP = extractQPFromFileName(fileName);
+                if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                    final int finalCount = totalCount;
+                    Platform.runLater(() -> item.setCopies(finalCount));
+                    countUpdated++;
+                    activityLogger.info("Synced " + fileName + ": set copies to " + totalCount + " (Matched QP: " + qpCode + ")");
+                }
+            }
+        }
+
+        final int finalUpdated = countUpdated;
+        Platform.runLater(() -> {
+            updateStatus("Finished: Synced " + finalUpdated + " files.");
+            activityLogger.success("Examflow cloud fetch complete. Total files updated: " + finalUpdated);
+            
+            if (finalUpdated == 0) {
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("No Matches Found");
+                alert.setHeaderText("Synced 0 files");
+                alert.setContentText("Cloud data was fetched, but no files in your queue matched the QP codes in the cloud data.\n\nEnsure your filenames contain the QP codes (e.g., '_143812_').");
+                alert.show();
             }
         });
     }
@@ -1162,51 +1313,55 @@ public class App extends Application {
                 updateStatus("Loading Room JSON...");
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
-                Map<String, RoomGroup> groups = new LinkedHashMap<>();
-                int matchedItems = 0;
-
-                if (root.isArray()) {
-                    for (JsonNode node : root) {
-                        String roomSerial = node.path("roomSerial").asText("Unknown");
-                        String qpCode = node.path("qpCode").asText("");
-                        String pdfFileName = node.path("pdfFileName").asText("");
-                        String courseName = node.path("courseName").asText(pdfFileName);
-                        int count = node.path("count").asInt(0);
-                        
-                        RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
-                        boolean matched = false;
-                        for (FileItem fileItem : fileQueue) {
-                            String fileName = fileItem.getFileName();
-                            String extractedQP = extractQPFromFileName(fileName);
-                            if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
-                                roomItem.setCourseName(courseName);
-                                roomItem.setMatchedFile(fileItem);
-                                group.getItems().add(roomItem);
-                                matched = true;
-                                matchedItems++;
-                                activityLogger.info("Room " + roomSerial + ": Matched QP " + qpCode + " (" + fileName + ")");
-                            }
-                        }
-                        if (!matched) {
-                            RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
-                            roomItem.setCourseName(courseName);
-                            group.getItems().add(roomItem);
-                            activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);
-                        }
-                    }
-                }
-                final int finalMatched = matchedItems;
-                final int finalGroupSize = groups.size();
-                Platform.runLater(() -> {
-                    roomGroupsList.setAll(groups.values());
-                    updateStatus("Loaded " + finalGroupSize + " rooms.");
-                    activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
-                });
+                processRoomWiseJson(root, file.getName());
             } catch (Exception e) { 
                 updateStatus("Error loading JSON."); 
                 activityLogger.error("Failed to load Room JSON: " + e.getMessage());
             }
+        });
+    }
+
+    private void processRoomWiseJson(JsonNode root, String sourceName) {
+        Map<String, RoomGroup> groups = new LinkedHashMap<>();
+        int matchedItems = 0;
+
+        if (root.isArray()) {
+            for (JsonNode node : root) {
+                String roomSerial = node.path("roomSerial").asText("Unknown");
+                String qpCode = node.path("qpCode").asText("");
+                String pdfFileName = node.path("pdfFileName").asText("");
+                String courseName = node.path("courseName").asText(pdfFileName);
+                int count = node.path("count").asInt(0);
+                
+                RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
+                boolean matched = false;
+                for (FileItem fileItem : fileQueue) {
+                    String fileName = fileItem.getFileName();
+                    String extractedQP = extractQPFromFileName(fileName);
+                    if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                        roomItem.setCourseName(courseName);
+                        roomItem.setMatchedFile(fileItem);
+                        group.getItems().add(roomItem);
+                        matched = true;
+                        matchedItems++;
+                        activityLogger.info("Room " + roomSerial + ": Matched QP " + qpCode + " (" + fileName + ")");
+                    }
+                }
+                if (!matched) {
+                    RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                    roomItem.setCourseName(courseName);
+                    group.getItems().add(roomItem);
+                    activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);
+                }
+            }
+        }
+        final int finalMatched = matchedItems;
+        final int finalGroupSize = groups.size();
+        Platform.runLater(() -> {
+            roomGroupsList.setAll(groups.values());
+            updateStatus("Loaded " + finalGroupSize + " rooms from " + sourceName);
+            activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
         });
     }
 

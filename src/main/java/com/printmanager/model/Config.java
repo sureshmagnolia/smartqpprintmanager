@@ -9,6 +9,7 @@ public class Config {
     private List<SmartSplitRule> smartSplitRules = new ArrayList<>();
     private List<FileItem> fileQueue = new ArrayList<>();
     private List<RoomGroup> roomGroups = new ArrayList<>();
+    private String collegeId = "";
 
     public Config() {
         // Initialize with default MCQ rule if none exist
@@ -16,6 +17,9 @@ public class Config {
             smartSplitRules.add(new SmartSplitRule());
         }
     }
+
+    public String getCollegeId() { return collegeId; }
+    public void setCollegeId(String collegeId) { this.collegeId = collegeId; }
 
     public List<PrintRule> getRules() { return rules; }
     public void setRules(List<PrintRule> rules) { this.rules = rules; }
