@@ -1,0 +1,609 @@
+{
+  "rules" : [ {
+    "minPages" : 1,
+    "maxPages" : 1,
+    "printerName" : "HP Smart Printing",
+    "duplex" : false,
+    "booklet" : false,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 2,
+    "maxPages" : 2,
+    "printerName" : "HP Smart Printing",
+    "duplex" : true,
+    "booklet" : false,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 3,
+    "maxPages" : 4,
+    "printerName" : "HP Smart Printing",
+    "duplex" : true,
+    "booklet" : true,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 5,
+    "maxPages" : 16,
+    "printerName" : null,
+    "duplex" : false,
+    "booklet" : true,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  } ],
+  "splitKeyword" : "",
+  "smartSplitRules" : [ {
+    "enabled" : true,
+    "keyword" : "Multiple Choice Questions for SDE",
+    "beforePrefix" : "Main_",
+    "afterPrefix" : "MCQ_",
+    "beforeStyle1" : "Simplex",
+    "beforeStyle2" : "Duplex",
+    "beforeStyle3Plus" : "Booklet",
+    "afterStyle1" : "Simplex",
+    "afterStyle2" : "Duplex",
+    "afterStyle3To4" : "Booklet",
+    "special5PageMode" : true,
+    "afterOverlayText" : "MCQ",
+    "skipThresholds" : "5,9",
+    "skipKeywordPage" : true,
+    "afterStyle6Plus" : "Booklet"
+  } ],
+  "fileQueue" : [ ],
+  "roomGroups" : [ {
+    "roomSerial" : "1",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__AADIKALEEN EVAM MADHYAKALEEN HINDI KAVITHA/ANCIENT AND MEDIEVAL HINDI POETRY (HIN4B05) [2019 SYLLABUS].pdf",
+      "count" : 3,
+      "courseName" : "AADIKALEEN EVAM MADHYAKALEEN HINDI KAVITHA/ANCIENT AND MEDIEVAL HINDI POETRY (HIN4B05) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__APPRECIATING FICTION (ENG4B05) [2019 SYLLABUS].pdf",
+      "count" : 3,
+      "courseName" : "APPRECIATING FICTION (ENG4B05) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS].pdf",
+      "count" : 1,
+      "courseName" : "CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__DRSYAKAVYASAMIKSHA(ABHIJNANASAKUNTALAM) (SKT4B05) [2019 SYLLABUS].pdf",
+      "count" : 2,
+      "courseName" : "DRSYAKAVYASAMIKSHA(ABHIJNANASAKUNTALAM) (SKT4B05) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 11,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "1",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "2",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "2",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "2",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "3",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "3",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "3",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "4",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "4",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "4",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "5",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "5",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "5",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "6",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "6",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "6",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "7",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "7",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "7",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "8",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "8",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS].pdf",
+      "count" : 13,
+      "courseName" : "Framing Perspectives : Literary and Cultural Narratives for Languages (VAC 2)-(ENG4FV109(1A)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "8",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 7,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "8",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "9",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "9",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "9",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "10",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "10",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "10",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "11",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "11",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "11",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "12",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "12",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "12",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "13",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "13",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "13",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "14",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "14",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS].pdf",
+      "count" : 9,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Commerce and Management (VAC 2)-(ENG4FV109(3)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "14",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 11,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "14",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "15",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "15",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "15",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "16",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "16",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "16",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "17",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "17",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "17",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "18",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "18",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "18",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "19",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "19",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 20,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "19",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 10,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "20",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "20",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS].pdf",
+      "count" : 15,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Humanities and Other BA Programmes (VAC 2)-(ENG4FV109(1B)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "20",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 15,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "21",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "21",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 30,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "22",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "22",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS].pdf",
+      "count" : 17,
+      "courseName" : "Framing Perspectives: Literary and Cultural Narratives for Sciences (VAC 2)-(ENG4FV109(2)) [2024 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "22",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__GOODS AND SERVICES TAX (4.4 BCH) [2017 SYLLABUS].pdf",
+      "count" : 1,
+      "courseName" : "GOODS AND SERVICES TAX (4.4 BCH) [2017 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "22",
+      "qpCode" : "",
+      "pdfFileName" : "Regular_18.05.2026_10-00 AM__PANDAIYA ILAKKIYAM (TML4B05) [2019 SYLLABUS].pdf",
+      "count" : 1,
+      "courseName" : "PANDAIYA ILAKKIYAM (TML4B05) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "23",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "23",
+      "qpCode" : "",
+      "pdfFileName" : "EDE_18.05.2026_10-00 AM__CORPORATE REGULATIONS (BBA4C03) [2019 SYLLABUS].pdf",
+      "count" : 1,
+      "courseName" : "CORPORATE REGULATIONS (BBA4C03) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    }, {
+      "roomSerial" : "23",
+      "qpCode" : "",
+      "pdfFileName" : "EDE_18.05.2026_10-00 AM__CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS].pdf",
+      "count" : 29,
+      "courseName" : "CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  }, {
+    "roomSerial" : "24",
+    "selectedPrinter" : "None",
+    "status" : "Ready",
+    "items" : [ {
+      "roomSerial" : "24",
+      "qpCode" : "",
+      "pdfFileName" : "EDE_18.05.2026_10-00 AM__CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS].pdf",
+      "count" : 21,
+      "courseName" : "CORPORATE REGULATIONS (BCM4B06) [2019 SYLLABUS]",
+      "matchedFile" : null,
+      "status" : "Pending"
+    } ]
+  } ],
+  "collegeId" : "ieMIUkBBiiuGUUd0PXSQ",
+  "baseDownloadPath" : "D:\\"
+}
