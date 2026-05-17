@@ -2,6 +2,9 @@
 /dist/
 /dist-*/
 /output/
+/bin/
+/jpackage_input*/
+/Smart QP Print Manager-Native-*/
 /*.zip
 /*.exe
 *.class

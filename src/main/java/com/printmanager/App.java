@@ -14,8 +14,45 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.layout.*;
+import javafx.scene.web.WebEngine;
+import javafx.scene.web.WebView;
+import javafx.embed.swing.SwingNode;
+import org.cef.CefApp;
+import org.cef.CefClient;
+import org.cef.browser.CefBrowser;
+import org.cef.browser.CefFrame;
+import org.cef.browser.CefMessageRouter;
+import org.cef.handler.CefDownloadHandlerAdapter;
+import org.cef.handler.CefLoadHandlerAdapter;
+import org.cef.handler.CefMessageRouterHandlerAdapter;
+import org.cef.callback.CefBeforeDownloadCallback;
+import org.cef.callback.CefDownloadItem;
+import org.cef.callback.CefDownloadItemCallback;
+import org.cef.callback.CefQueryCallback;
+import me.friwi.jcefmaven.CefAppBuilder;
+import me.friwi.jcefmaven.MavenCefAppHandlerAdapter;
+import me.friwi.jcefmaven.EnumProgress;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import netscape.javascript.JSObject;
+import javax.swing.SwingUtilities;
+import javax.swing.JTextField;
+import javax.swing.JButton;
+import javax.swing.JToolBar;
+import javax.swing.JPanel;
+import javax.swing.JFrame;
+import javax.swing.JTabbedPane;
+import javax.net.ssl.*;
+import java.awt.BorderLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import org.cef.handler.CefDisplayHandlerAdapter;
+import org.cef.handler.CefLoadHandlerAdapter;
+import java.security.cert.X509Certificate;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 import java.io.File;
 import java.net.URI;
@@ -64,6 +101,13 @@ public class App extends Application {
     private final HBox simAlertHeader = new HBox();
     private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
 
+    private CefApp cefApp;
+    private CefClient cefClient;
+    private final Map<CefBrowser, JTextField> browserAddressBars = new HashMap<>();
+    private final TextField urlField = new TextField("https://collegeportal.uoc.ac.in/");
+    private final TextField sessionNameField = new TextField();
+    private final TextField downloadPathField = new TextField();
+
     @Override
     public void start(Stage primaryStage) {
         config = configManager.loadConfig();
@@ -102,7 +146,9 @@ public class App extends Application {
         settingsTab.setClosable(false);
         Tab aboutTab = new Tab("About", createAboutView());
         aboutTab.setClosable(false);
-        tabPane.getTabs().addAll(mainTab, roomTab, printerTab, logsTab, settingsTab, aboutTab);
+        Tab portalTab = new Tab("Exam Portals", createPortalView());
+        portalTab.setClosable(false);
+        tabPane.getTabs().addAll(mainTab, roomTab, printerTab, logsTab, settingsTab, aboutTab, portalTab);
 
         simAlertHeader.setId("simulation-alert");
         simAlertHeader.getChildren().add(new Label("⚠ SIMULATION MODE ACTIVE: Actual printing is disabled. Change this in Settings."));
@@ -117,7 +163,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.0.5");
+        primaryStage.setTitle("Smart QP Print Manager v3.1.3");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -692,6 +738,7 @@ public class App extends Application {
     }
 
     private void processFile(File file) {
+        if (!file.getName().toLowerCase().endsWith(".pdf")) return;
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Analyzing: " + file.getName());
@@ -1510,7 +1557,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.0.6");
+        Label title = new Label("Smart QP Print Manager v3.1.3");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -1567,12 +1614,14 @@ public class App extends Application {
         fc.setTitle("Select Room JSON");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
-        if (file == null) return;
+        if (file != null) processRoomWiseJsonFile(file);
+    }
 
-        activityLogger.info("Loading Room Seating JSON: " + file.getName());
+    private void processRoomWiseJsonFile(File file) {
+        activityLogger.info("Auto-loading Seating JSON: " + file.getName());
         analysisExecutor.submit(() -> {
             try {
-                updateStatus("Loading Room JSON...");
+                updateStatus("Processing Seating JSON...");
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
                 processRoomWiseJson(root, file.getName());
@@ -1764,12 +1813,12 @@ public class App extends Application {
 
                 // Draw Table Rows
                 int sNo = 1;
-                for (RoomItem item : group.getItems()) {
+                for (RoomItem i : group.getItems()) {
                     String[] rowData = {
                         String.valueOf(sNo++),
-                        item.getDisplayName(),
-                        item.getCourseName() != null ? item.getCourseName() : item.getPdfFileName(),
-                        String.valueOf(item.getCount())
+                        i.getDisplayName(),
+                        i.getCourseName() != null ? i.getCourseName() : i.getPdfFileName(),
+                        String.valueOf(i.getCount())
                     };
                     drawTableRow(cs, margin, yPosition, colWidths, rowData, false);
                     yPosition -= rowHeight;
@@ -1836,5 +1885,335 @@ public class App extends Application {
         }
     }
 
-    public static void main(String[] args) { launch(args); }
+    private void initCef() {
+        if (cefApp != null) return;
+        analysisExecutor.submit(() -> {
+            try {
+                activityLogger.info("Initializing Smart Browser Engine...");
+                CefAppBuilder builder = new CefAppBuilder();
+                File projectDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
+                File localBundle = new File(projectDir, "bin/chromium");
+                File cachePath = new File(projectDir, "bin/chromium_cache");
+                if (!cachePath.exists()) cachePath.mkdirs();
+                if (localBundle.exists() && localBundle.isDirectory()) builder.setInstallDir(localBundle);
+                else builder.setInstallDir(new File(System.getProperty("user.home"), ".jcef-bundle"));
+                builder.setProgressHandler((progress, percentage) -> {
+                    String status = "Chromium " + progress + (percentage >= 0 ? ": " + String.format("%.0f", percentage) + "%" : "...");
+                    Platform.runLater(() -> updateStatus(status));
+                });
+                builder.getCefSettings().windowless_rendering_enabled = false;
+                builder.getCefSettings().cache_path = cachePath.getAbsolutePath();
+                builder.getCefSettings().persist_session_cookies = true;
+                builder.addJcefArgs("--no-sandbox", "--disable-gpu", "--enable-password-save", "--enable-automatic-password-saving", "--password-store=basic", "--enable-password-manager");
+                cefApp = builder.build();
+                cefClient = cefApp.createClient();
+                cefClient.addDisplayHandler(new CefDisplayHandlerAdapter() {
+                    @Override
+                    public void onAddressChange(CefBrowser browser, org.cef.browser.CefFrame frame, String url) {
+                        JTextField bar = browserAddressBars.get(browser);
+                        if (bar != null && frame.isMain()) {
+                            SwingUtilities.invokeLater(() -> bar.setText(url));
+                        }
+                    }
+                });
+                CefMessageRouter router = CefMessageRouter.create();
+                router.addHandler(new CefMessageRouterHandlerAdapter() {
+                    @Override
+                    public boolean onQuery(CefBrowser browser, CefFrame frame, long query_id, String request, boolean persistent, CefQueryCallback callback) {
+                        if (request.startsWith("download:")) {
+                            String[] parts = request.substring(9).split("\\|");
+                            if (parts.length >= 2) { new BrowserBridge().downloadQP(parts[0], parts[1]); callback.success("OK"); return true; }
+                        } else if (request.startsWith("session:")) {
+                            String s = request.substring(8); Platform.runLater(() -> sessionNameField.setText(s)); callback.success("OK"); return true;
+                        } else if (request.equals("examflow_sync_start")) {
+                            activityLogger.info("Examflow Sync Trigger received from browser tab. Waiting for cloud update...");
+                            updateStatus("Syncing with Examflow...");
+                            callback.success("OK"); return true;
+                        } else if (request.equals("examflow_sync")) {
+                            Platform.runLater(() -> fetchFromExamflow(null)); callback.success("OK"); return true;
+                        } else if (request.equals("check_session")) {
+                            String s = sessionNameField.getText().trim();
+                            callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;
+                        }
+                        return false;
+                    }
+                }, true);
+                cefClient.addMessageRouter(router);
+                cefClient.addDownloadHandler(new CefDownloadHandlerAdapter() {
+                    @Override
+                    public boolean onBeforeDownload(CefBrowser browser, CefDownloadItem downloadItem, String suggestedName, CefBeforeDownloadCallback callback) {
+                        File sessionDir = getSessionDir();
+                        if (sessionDir == null) return false;
+                        callback.Continue(new File(sessionDir, suggestedName).getAbsolutePath(), false); return true;
+                    }
+                    @Override
+                    public void onDownloadUpdated(CefBrowser browser, CefDownloadItem downloadItem, CefDownloadItemCallback callback) {
+                        if (downloadItem.isComplete()) {
+                            File f = new File(downloadItem.getFullPath());
+                            activityLogger.success("Download Ready: " + f.getName());
+                            String name = f.getName().toLowerCase();
+                            if (name.endsWith(".json")) {
+                                Platform.runLater(() -> processRoomWiseJsonFile(f));
+                            } else if (name.endsWith(".pdf")) {
+                                Platform.runLater(() -> processFile(f));
+                            }
+                        }
+                    }
+                });
+                cefClient.addLoadHandler(new CefLoadHandlerAdapter() {
+                    @Override
+                    public void onLoadEnd(CefBrowser browser, org.cef.browser.CefFrame frame, int httpStatusCode) {
+                        if (frame.isMain()) {
+                            String url = browser.getURL();
+                            String injectionScript = 
+                                "(function() { " +
+                                "  setInterval(function() { " +
+                                "    var btns = document.querySelectorAll('.btn_download'); " +
+                                "    if (btns.length > 0) { " +
+                                "      try { " +
+                                "        var raw = ''; " +
+                                "        var inp = document.getElementById('examdate'); " +
+                                "        if (inp && inp.value) { raw = inp.value; } " +
+                                "        else { " +
+                                "          var m = document.documentElement.innerHTML.match(/id=\\\"examdate\\\"[^>]*value=\\\"([^\\\"]+)\\\"/i); " +
+                                "          if (m) { raw = m[1]; } " +
+                                "          else { " +
+                                "            var m2 = document.body.innerText.match(/(\\d{2})\\/(\\d{2})\\/(\\d{4})/); " +
+                                "            if (m2) raw = m2[0]; " +
+                                "          } " +
+                                "        } " +
+                                "        if (raw && !window._lastDate) { " +
+                                "          window._lastDate = raw; " +
+                                "          var p = raw.split(/[/\\-.]/); " +
+                                "          var f = raw; " +
+                                "          if (p.length === 3) { " +
+                                "            if (p[0].length === 4) f = p[2] + '.' + p[1] + '.' + p[0].substring(2); " +
+                                "            else f = p[0] + '.' + p[1] + '.' + p[2].substring(p[2].length-2); " +
+                                "          } " +
+                                "          var row = document.querySelector('tr.odd, tr.even'); " +
+                                "          var suf = (row && row.cells[2].innerText.indexOf('PM') !== -1) ? 'AN' : 'FN'; " +
+                                "          window.cefQuery({ request: 'session:' + f + ' ' + suf }); " +
+                                "        } " +
+                                "      } catch(e) {} " +
+                                "      if (!document.getElementById('smart-bulk-header')) { " +
+                                "        var h = document.createElement('div'); " +
+                                "        h.id = 'smart-bulk-header'; " +
+                                "        h.style.background = '#f8f9fa'; h.style.padding = '15px'; h.style.marginBottom = '20px'; " +
+                                "        h.style.border = '1px solid #dee2e6'; h.style.borderRadius = '8px'; " +
+                                "        h.style.display = 'flex'; h.style.alignItems = 'center'; h.style.justifyContent = 'space-between'; " +
+                                "        h.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)'; " +
+                                "        var t = document.createElement('span'); " +
+                                "        t.innerText = 'Smart Print: Found ' + btns.length + ' Question Papers'; " +
+                                "        t.style.fontWeight = 'bold'; t.style.color = '#333'; t.style.fontSize = '16px'; " +
+                                "        var b = document.createElement('button'); " +
+                                "        b.id = 'smart-bulk-btn'; b.innerText = 'Start Bulk Download & Queue'; " +
+                                "        b.style.background = '#28a745'; b.style.color = 'white'; b.style.padding = '10px 20px'; " +
+                                "        b.style.borderRadius = '5px'; b.style.cursor = 'pointer'; b.style.border = 'none'; b.style.fontWeight = 'bold'; " +
+                                "        b.onclick = function() { " +
+                                "          window.cefQuery({ request: 'check_session', onSuccess: function(res) { " +
+                                "            if(res === 'MISSING') { alert('Please enter Detected Session name in the App first!'); return; } " +
+                                "            if(!confirm('Start automated download for ' + btns.length + ' papers?')) return; " +
+                                "            b.disabled = true; " +
+                                "            for (var i = 0; i < btns.length; i++) { " +
+                                "              (function(idx) { " +
+                                "                setTimeout(function() { " +
+                                "                  b.innerText = '⏳ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
+                                "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
+                                "                  var time = r.cells[2].innerText.replace(/:/g, '_'); " +
+                                "                  var dp = (window._lastDate || '').replace(/[/\\-]/g, '.'); " +
+                                "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
+                                "                  var fname = 'REG_' + dp + '_' + time + '_' + r.cells[0].innerText + '_' + r.cells[1].innerText.replace(/[^a-z0-9]/gi, '_'); " +
+                                "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
+                                "                  if (idx === btns.length - 1) { " +
+                                "                    b.innerText = '✅ All Files Queued'; " +
+                                "                    setTimeout(function() { b.innerText = 'Bulk Download Complete'; }, 2000); " +
+                                "                  } " +
+                                "                }, idx * 1000); " +
+                                "              })(i); " +
+                                "            } " +
+                                "          }}); " +
+                                "        }; " +
+                                "        h.appendChild(t); h.appendChild(b); " +
+                                "        var target = document.querySelector('.table-responsive') || document.querySelector('table') || document.body.firstChild; " +
+                                "        if(target) target.parentNode.insertBefore(h, target); " +
+                                "      } " +
+                                "    } " +
+                                "    if (window.location.href.indexOf('examflow-india.web.app') !== -1) { " +
+                                "      var sync = Array.from(document.querySelectorAll('button')).find(function(el) { return el.innerText.indexOf('Sync to Print Manager') !== -1; }); " +
+                                "      if (sync && !sync.getAttribute('data-jcef')) { " +
+                                "        sync.setAttribute('data-jcef', 'true'); " +
+                                "        sync.addEventListener('click', function() { " +
+                                "          window.cefQuery({ request: 'examflow_sync_start' }); " +
+                                "          setTimeout(function() { window.cefQuery({ request: 'examflow_sync' }); }, 2500); " +
+                                "        }); " +
+                                "      } " +
+                                "    } " +
+                                "  }, 2000); " +
+                                "})();";
+                            browser.executeJavaScript(injectionScript, url, 0);
+                        }
+                    }
+                });
+                activityLogger.success("Smart Browser Engine Ready.");
+                Platform.runLater(() -> updateStatus("Smart Browser Ready"));
+            } catch (Exception e) { activityLogger.error("Browser Init Failed: " + e.getMessage()); }
+        });
+    }
+
+    private void openSmartBrowser() {
+        if (cefApp == null) { initCef(); return; }
+        SwingUtilities.invokeLater(() -> {
+            JTabbedPane tabbedPane = new JTabbedPane();
+            
+            // Tab 1: University Portal
+            CefBrowser browser1 = cefClient.createBrowser("https://collegeportal.uoc.ac.in/", false, false);
+            JPanel panel1 = createBrowserTabPanel(browser1, "https://collegeportal.uoc.ac.in/");
+            tabbedPane.addTab("University Portal", panel1);
+            
+            // Tab 2: Examflow
+            CefBrowser browser2 = cefClient.createBrowser("https://examflow-india.web.app/index.html", false, false);
+            JPanel panel2 = createBrowserTabPanel(browser2, "https://examflow-india.web.app/index.html");
+            tabbedPane.addTab("Examflow Portal", panel2);
+
+            JFrame frame = new JFrame("Smart QP - Browser");
+            frame.getContentPane().add(tabbedPane, BorderLayout.CENTER);
+            frame.setSize(1280, 800);
+            frame.setLocationRelativeTo(null);
+            
+            frame.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    browserAddressBars.remove(browser1);
+                    browserAddressBars.remove(browser2);
+                    browser1.close(true);
+                    browser2.close(true);
+                }
+            });
+            
+            frame.setVisible(true);
+            activityLogger.info("Smart Browser window opened with tabs.");
+        });
+    }
+
+    private JPanel createBrowserTabPanel(CefBrowser browser, String initialUrl) {
+        JTextField addressBar = new JTextField(initialUrl);
+        browserAddressBars.put(browser, addressBar);
+        
+        JButton backBtn = new JButton("<");
+        JButton forwardBtn = new JButton(">");
+        JButton refreshBtn = new JButton("Refresh");
+        
+        backBtn.addActionListener(e -> browser.goBack());
+        forwardBtn.addActionListener(e -> browser.goForward());
+        refreshBtn.addActionListener(e -> browser.reload());
+        addressBar.addActionListener(e -> browser.loadURL(addressBar.getText()));
+        
+        JToolBar toolBar = new JToolBar();
+        toolBar.setFloatable(false);
+        toolBar.add(backBtn);
+        toolBar.add(forwardBtn);
+        toolBar.add(refreshBtn);
+        toolBar.addSeparator();
+        toolBar.add(addressBar);
+        
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(toolBar, BorderLayout.NORTH);
+        panel.add(browser.getUIComponent(), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private javafx.scene.Parent createPortalView() {
+        VBox layout = new VBox(15); layout.setAlignment(javafx.geometry.Pos.CENTER); layout.setPadding(new Insets(30));
+        Label info = new Label("University Portal Downloader"); info.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+        sessionNameField.setPromptText("Auto-detected after launch..."); sessionNameField.setPrefWidth(300);
+        HBox sessionBox = new HBox(10, new Label("Detected Session:"), sessionNameField); sessionBox.setAlignment(javafx.geometry.Pos.CENTER);
+        downloadPathField.setPromptText("Select Save Folder"); downloadPathField.setPrefWidth(400);
+        Button browseBtn = new Button("Browse...");
+        browseBtn.setOnAction(e -> {
+            javafx.stage.DirectoryChooser dc = new javafx.stage.DirectoryChooser(); dc.setTitle("Select Save Folder");
+            File initial = new File(downloadPathField.getText()); if (initial.exists()) dc.setInitialDirectory(initial);
+            File selected = dc.showDialog(null); if (selected != null) { downloadPathField.setText(selected.getAbsolutePath()); config.setBaseDownloadPath(selected.getAbsolutePath()); saveConfigs(); }
+        });
+        HBox pathBox = new HBox(10, new Label("Save Folder:"), downloadPathField, browseBtn); pathBox.setAlignment(javafx.geometry.Pos.CENTER);
+        Button launchBtn = new Button("Launch Smart Browser");
+        launchBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-padding: 15 30;");
+        launchBtn.setOnAction(e -> {
+            if (downloadPathField.getText().isEmpty()) { new Alert(Alert.AlertType.WARNING, "Please select a Save Folder first!").show(); return; }
+            openSmartBrowser();
+        });
+        layout.getChildren().addAll(info, sessionBox, pathBox, launchBtn);
+        return layout;
+    }
+
+    public class BrowserBridge {
+        public void downloadQP(String fileId, String fileName) {
+            if (sessionNameField.getText().trim().isEmpty()) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("Session Name Required");
+                    alert.setHeaderText("Session Name is missing");
+                    alert.setContentText("The application could not auto-detect the session name. Please enter it manually in the 'Detected Session' field on the Portal tab before downloading.");
+                    alert.show();
+                });
+                return;
+            }
+            activityLogger.info("Queued download: " + fileName);
+            analysisExecutor.submit(() -> {
+                try {
+                    updateStatus("Downloading: " + fileName);
+                    HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS).build();
+                    HttpRequest request = HttpRequest.newBuilder().uri(URI.create("https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId)).GET().build();
+                    HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    
+                    if (response.statusCode() == 200) {
+                        File sessionDir = getSessionDir(); 
+                        if (sessionDir == null) {
+                            activityLogger.error("Download directory missing for: " + fileName);
+                            return;
+                        }
+                        File saveFile = new File(sessionDir, fileName + ".pdf");
+                        java.nio.file.Files.write(saveFile.toPath(), response.body());
+                        Platform.runLater(() -> { 
+                            processFile(saveFile); 
+                            activityLogger.success("Fetched: " + fileName);
+                            updateStatus("Downloaded: " + fileName);
+                        });
+                    } else {
+                        activityLogger.error("Failed to fetch " + fileName + " (HTTP " + response.statusCode() + ")");
+                        updateStatus("Error downloading: " + fileName);
+                    }
+                } catch (Exception e) { 
+                    activityLogger.error("Download Error (" + fileName + "): " + e.getMessage()); 
+                    updateStatus("Download Failed: " + fileName);
+                }
+            });
+        }
+    }
+
+    private File getSessionDir() {
+        String base = downloadPathField.getText(); String session = sessionNameField.getText().trim();
+        if (base.isEmpty() || session.isEmpty()) return null;
+        File sessionDir = new File(base, session);
+        if (!sessionDir.exists()) sessionDir.mkdirs();
+        return sessionDir;
+    }
+
+    private static void bypassSSL() {
+        try {
+            TrustManager[] trustAllCerts = new TrustManager[]{ new X509TrustManager() {
+                public X509Certificate[] getAcceptedIssuers() { return null; }
+                public void checkClientTrusted(X509Certificate[] certs, String authType) { }
+                public void checkServerTrusted(X509Certificate[] certs, String authType) { }
+            }};
+            SSLContext sc = SSLContext.getInstance("SSL");
+            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
+        } catch (Exception e) {}
+    }
+
+    public static void main(String[] args) { 
+        bypassSSL();
+        launch(args); 
+    }
 }

@@ -10,6 +10,7 @@ public class Config {
     private List<FileItem> fileQueue = new ArrayList<>();
     private List<RoomGroup> roomGroups = new ArrayList<>();
     private String collegeId = "";
+    private String baseDownloadPath = "";
 
     public Config() {
         // Initialize with default MCQ rule if none exist
@@ -35,4 +36,7 @@ public class Config {
 
     public List<RoomGroup> getRoomGroups() { return roomGroups; }
     public void setRoomGroups(List<RoomGroup> roomGroups) { this.roomGroups = roomGroups; }
+
+    public String getBaseDownloadPath() { return baseDownloadPath; }
+    public void setBaseDownloadPath(String baseDownloadPath) { this.baseDownloadPath = baseDownloadPath; }
 }
