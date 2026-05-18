@@ -106,6 +106,26 @@ public class PDFService {
         }
     }
 
+    public File removePages(File file, int startPage, int endPage) throws IOException {
+        try (PDDocument document = Loader.loadPDF(file)) {
+            PDDocument newDoc = new PDDocument();
+            int total = document.getNumberOfPages();
+            for (int i = 1; i <= total; i++) {
+                if (i < startPage || i > endPage) {
+                    newDoc.importPage(document.getPage(i - 1));
+                }
+            }
+            if (newDoc.getNumberOfPages() == 0) {
+                newDoc.close();
+                return null;
+            }
+            File tempFile = File.createTempFile("remaining_", ".pdf");
+            newDoc.save(tempFile);
+            newDoc.close();
+            return tempFile;
+        }
+    }
+
     public File createBookletPDF(File inputFile, String bindingType, String paperSize) throws IOException {
         logger.info("Creating Adobe-standard vector booklet for: {} (Paper: {})", inputFile.getName(), paperSize);
         try (PDDocument srcDoc = Loader.loadPDF(inputFile);

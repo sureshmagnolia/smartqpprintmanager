@@ -11,6 +11,7 @@ public class Config {
     private List<RoomGroup> roomGroups = new ArrayList<>();
     private String collegeId = "";
     private String baseDownloadPath = "";
+    private boolean printCoverPage = true;
 
     public Config() {
         // Initialize with default MCQ rule if none exist
@@ -18,6 +19,9 @@ public class Config {
             smartSplitRules.add(new SmartSplitRule());
         }
     }
+
+    public boolean isPrintCoverPage() { return printCoverPage; }
+    public void setPrintCoverPage(boolean printCoverPage) { this.printCoverPage = printCoverPage; }
 
     public String getCollegeId() { return collegeId; }
     public void setCollegeId(String collegeId) { this.collegeId = collegeId; }

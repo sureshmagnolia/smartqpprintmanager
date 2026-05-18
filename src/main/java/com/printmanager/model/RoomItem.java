@@ -63,6 +63,8 @@ public class RoomItem {
             String fname = matchedFile.getFileName().toLowerCase();
             if (fname.contains("mcq")) return qpCode + " (MCQ)";
             if (fname.contains("main")) return qpCode + " (Main)";
+            if (fname.startsWith("split_")) return qpCode + " (Split)";
+            if (fname.startsWith("remain_")) return qpCode + " (Remain)";
         }
         return qpCode;
     }
