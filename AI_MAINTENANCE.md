@@ -44,7 +44,10 @@ To ensure distributions are sent to users without local trial/test data:
     jpackage --type exe --name "Smart QP Print Manager" --input <staging_folder> --main-jar java-print-manager-x.x.x.jar --main-class com.printmanager.Launcher --win-shortcut --win-menu --vendor "Magnolia" --app-version x.x.x --icon src/main/resources/icon.ico --dest dist-installer
     ```
 
-## 5. Maintenance Notes
-*   **Printer Status:** The app pings printers directly if they have an IP-based port name. This bypasses Windows Spooler caching.
-*   **Thread Safety:** Always use `Platform.runLater()` when updating UI elements from background threads (Health monitor, status polls, etc.).
-*   **Special Split Logic:** The "Special 5-Page Mode" splits at page 2 and applies an overlay. This is specifically tuned for university-style MCQ cover pages.
+## 5. Maintenance Notes (v3.1.4 Gold Standard)
+*   **Robust Room Matching:** Matches files to room slots using a triple-check: regex extraction (`_(\d{5,8})_`), literal `_QP_` containment, and literal `_QP.` containment. This ensures components like `Split_...` and `Remain_...` are correctly routed.
+*   **Split Component Management:** Manual splits generate two components: `Split_...` (the extracted range) and `Remain_...` (the remaining pages). The original file is removed after a successful split to maintain folder hygiene. Both components are treated as "newly added" files, triggering automatic rule re-evaluation (Style, Printer, Copies).
+*   **Booklet Rendering:** strictly adheres to the 4-page foldable rule (pads to multiple of 4) to ensure proper physical folding and alignment.
+*   **Reactive Room Router:** Utilizes JavaFX `Bindings` to instantly reflect changes in linked file status, name, and style within the room routing cards.
+*   **Thread Safety:** Always use `Platform.runLater()` when updating UI elements from background threads.
+*   **Production Logging:** Uses SLF4J/Logback for all diagnostics; `printStackTrace` and `System.out` are avoided for gold-standard observability.

@@ -3,7 +3,6 @@ package com.printmanager;
 import com.printmanager.model.*;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -56,6 +55,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -73,6 +75,7 @@ import org.slf4j.LoggerFactory;
 
 public class App extends Application {
     private static final Logger logger = LoggerFactory.getLogger(App.class);
+    private static SSLContext unsafeSslContext;
 
     private final PDFService pdfService = new PDFService();
     private final PrintService printService = new PrintService();
@@ -102,33 +105,12 @@ public class App extends Application {
     private final HBox simAlertHeader = new HBox();
     private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
 
-    private static HttpClient insecureHttpClient;
-
-    private static synchronized HttpClient getInsecureHttpClient() {
-        if (insecureHttpClient == null) {
-            try {
-                TrustManager[] trustAllCerts = new TrustManager[]{ new X509TrustManager() {
-                    public X509Certificate[] getAcceptedIssuers() { return null; }
-                    public void checkClientTrusted(X509Certificate[] certs, String authType) { }
-                    public void checkServerTrusted(X509Certificate[] certs, String authType) { }
-                }};
-                SSLContext sc = SSLContext.getInstance("TLS");
-                sc.init(null, trustAllCerts, new java.security.SecureRandom());
-                insecureHttpClient = HttpClient.newBuilder()
-                    .sslContext(sc)
-                    .followRedirects(HttpClient.Redirect.ALWAYS)
-                    .build();
-            } catch (Exception e) {
-                logger.error("Failed to create insecure HttpClient, falling back to default", e);
-                insecureHttpClient = HttpClient.newHttpClient();
-            }
-        }
-        return insecureHttpClient;
-    }
-
     private CefApp cefApp;
     private CefClient cefClient;
+    private volatile boolean initializingCef = false;
+    private volatile boolean autoOpenBrowser = false;
     private final Map<CefBrowser, JTextField> browserAddressBars = new HashMap<>();
+    private final Map<String, String> downloadFilenameMap = new java.util.concurrent.ConcurrentHashMap<>();
     private final TextField urlField = new TextField("https://collegeportal.uoc.ac.in/");
     private final TextField sessionNameField = new TextField();
     private final TextField downloadPathField = new TextField();
@@ -144,11 +126,9 @@ public class App extends Application {
         fileQueue.addAll(config.getFileQueue());
         roomGroupsList.addAll(config.getRoomGroups());
         
-        printCoverPageCbox.setSelected(config.isPrintCoverPage());
-        printCoverPageCbox.selectedProperty().addListener((o, ov, nv) -> {
-            config.setPrintCoverPage(nv);
-            saveConfigs();
-        });
+        // Initialize persistent UI fields from config
+        if (config.getCollegeId() != null) urlField.setText("https://collegeportal.uoc.ac.in/"); // Reset to default just in case
+        if (config.getBaseDownloadPath() != null) downloadPathField.setText(config.getBaseDownloadPath());
 
         // Re-link RoomItem.matchedFile to actual instances in fileQueue for identity consistency
         for (RoomGroup g : roomGroupsList) {
@@ -182,7 +162,7 @@ public class App extends Application {
         tabPane.getTabs().addAll(mainTab, roomTab, printerTab, logsTab, settingsTab, aboutTab, portalTab);
 
         simAlertHeader.setId("simulation-alert");
-        simAlertHeader.getChildren().add(new Label("⚠ SIMULATION MODE ACTIVE: Actual printing is disabled. Change this in Settings."));
+        simAlertHeader.getChildren().add(new Label("ΓÜá SIMULATION MODE ACTIVE: Actual printing is disabled. Change this in Settings."));
         simAlertHeader.setManaged(false);
         simAlertHeader.setVisible(false);
 
@@ -211,10 +191,7 @@ public class App extends Application {
             // Re-initialize Room Router view content to force UI refresh with loaded data
             roomTab.setContent(createRoomRouterView(primaryStage));
 
-            fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
-                saveConfigs();
-                relinkRoomItems();
-            });
+            fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> saveConfigs());
             roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
                 saveConfigs();
                 while (c.next()) {
@@ -269,9 +246,34 @@ public class App extends Application {
 
     @Override
     public void stop() {
-        analysisExecutor.shutdownNow();
-        printQueueExecutor.shutdownNow();
-        activityLogger.info("Application stopped");
+        try {
+            saveConfigs();
+            analysisExecutor.shutdownNow();
+            printQueueExecutor.shutdownNow();
+            roomPrintExecutor.shutdownNow();
+            
+            if (cefApp != null) {
+                cefApp.dispose();
+            }
+            
+            activityLogger.info("Application stopping. Cleaning up all background instances...");
+            
+            // 1. Kill the standard helper name
+            Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T");
+            
+            // 2. Kill any processes named after the app itself (which helper processes often inherit)
+            // We use a small delay to ensure this process has finished its own cleanup first
+            new Thread(() -> {
+                try {
+                    Thread.sleep(500);
+                    Runtime.getRuntime().exec("taskkill /F /IM \"Smart QP Print Manager.exe\" /T");
+                } catch (Exception e) {}
+            }).start();
+            
+            activityLogger.info("Application stopped");
+        } catch (Exception e) {
+            logger.error("Error during shutdown cleanup", e);
+        }
     }
 
     private HBox createStatusBarView() {
@@ -500,10 +502,10 @@ public class App extends Application {
                     String s = printerStatusCache.getOrDefault(val, "Ready");
                     Platform.runLater(() -> {
                         if ("Offline".equalsIgnoreCase(s)) {
-                            statusIndicator.setText("⚠ OFFLINE");
+                            statusIndicator.setText("ΓÜá OFFLINE");
                             statusIndicator.setStyle("-fx-text-fill: #f44336;");
                         } else {
-                            statusIndicator.setText("✔ Ready");
+                            statusIndicator.setText("Γ£ö Ready");
                             statusIndicator.setStyle("-fx-text-fill: #4CAF50;");
                         }
                     });
@@ -557,18 +559,19 @@ public class App extends Application {
         });
 
         TableColumn<FileItem, Void> actionCol = new TableColumn<>("Action");
-        actionCol.setMinWidth(280); actionCol.setMaxWidth(300);
+        actionCol.setMinWidth(250); actionCol.setMaxWidth(280);
         actionCol.setCellFactory(tc -> new TableCell<FileItem, Void>() {
             private final Button pBtn = new Button("Print");
             private final Button sBtn = new Button("Save");
             private final Button vBtn = new Button("\uD83D\uDC41");
             private final Button rBtn = new Button("X");
-            private final HBox container = new HBox(5, pBtn, sBtn, vBtn, rBtn);
+            private final HBox container = new HBox(8, pBtn, sBtn, vBtn, rBtn);
             {
                 container.setAlignment(javafx.geometry.Pos.CENTER);
                 pBtn.setOnAction(e -> { if (getTableRow().getItem() != null) printFile(getTableRow().getItem()); });
                 sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
-                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), false); });
+                // Eye button -> Rendered Preview
+                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), false, true); });
                 rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
                 rBtn.setStyle("-fx-text-fill: red;");
             }
@@ -593,69 +596,8 @@ public class App extends Application {
             });
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && !row.isEmpty()) {
-                    FileItem masterItem = row.getItem();
-                    pdfViewer.show(masterItem.getFile(), false, (subFile, name, style, overlay, start, end, subtract) -> {
-                        String baseName = masterItem.getFileName().replace(".pdf", "");
-                        String splitName = "Split_" + baseName + "_Part_" + start + "-" + end + ".pdf";
-                        
-                        // Persist Split part to original folder
-                        File permanentSplit = new File(masterItem.getFile().getParent(), splitName);
-                        try {
-                            java.nio.file.Files.copy(subFile.toPath(), permanentSplit.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                        } catch (Exception ex) { logger.error("Split save error", ex); }
-
-                        // Treat split part as new file (null style forces rule evaluation)
-                        addFileToQueue(permanentSplit, null, overlay, splitName);
-                        
-                        if (subtract) {
-                            analysisExecutor.submit(() -> {
-                                try {
-                                    File remaining = pdfService.removePages(masterItem.getFile(), start, end);
-                                    if (remaining == null) {
-                                        Platform.runLater(() -> fileQueue.remove(masterItem));
-                                    } else {
-                                        // Rename to Remain_ and Overwrite
-                                        File original = masterItem.getFile();
-                                        String oldName = masterItem.getFileName();
-                                        String newName = oldName.startsWith("Remain_") ? oldName : "Remain_" + oldName;
-                                        File renamed = new File(original.getParent(), newName);
-                                        
-                                        java.nio.file.Files.copy(remaining.toPath(), renamed.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                                        if (!original.equals(renamed)) {
-                                            original.delete();
-                                        }
-                                        
-                                        final File finalRenamed = renamed;
-                                        int newPages = pdfService.getPageCount(finalRenamed);
-                                        String newContent = pdfService.getText(finalRenamed);
-                                        PrintRule rule = findMatchingRule(newPages, newContent);
-
-                                        Platform.runLater(() -> {
-                                            masterItem.setFile(finalRenamed);
-                                            masterItem.setFileName(finalRenamed.getName());
-                                            masterItem.setPageCount(newPages);
-                                            masterItem.setContent(newContent);
-                                            
-                                            // Re-apply rules as if it's a new file
-                                            if (rule != null) {
-                                                masterItem.setTargetPrinter(rule.getPrinterName());
-                                                masterItem.setCopies(rule.getCopies());
-                                                masterItem.setPaperSize(rule.getPaperSize());
-                                                if (rule.isBooklet()) masterItem.setStyle("Booklet");
-                                                else if (rule.isDuplex()) masterItem.setStyle("Duplex");
-                                                else masterItem.setStyle("Simplex");
-                                            } else {
-                                                // Default to Simplex if no rule matches
-                                                masterItem.setStyle("Simplex");
-                                            }
-                                            
-                                            relinkRoomItems();
-                                        });
-                                    }
-                                } catch (Exception ex) { logger.error("Sub error", ex); }
-                            });
-                        }
-                    });
+                    // Row double-click -> Original Preview (for splitting)
+                    previewFile(row.getItem(), false, false);
                 }
             });
             return row;
@@ -835,6 +777,12 @@ public class App extends Application {
 
     private void processFile(File file) {
         if (!file.getName().toLowerCase().endsWith(".pdf")) return;
+        
+        // Remove existing entries for the same file path to allow "refresh/replace" behavior
+        Platform.runLater(() -> {
+            fileQueue.removeIf(item -> item.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath()));
+        });
+
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Analyzing: " + file.getName());
@@ -876,7 +824,10 @@ public class App extends Application {
                 } else {
                     addFileToQueue(file, null, null, null);
                 }
-            } catch (Exception e) { logger.error("Process error", e); }
+            } catch (Exception e) { 
+                logger.error("Error processing file: " + file.getName(), e); 
+                activityLogger.error("Failed to analyze: " + file.getName());
+            }
         });
     }
 
@@ -893,8 +844,18 @@ public class App extends Application {
                 f = pdfService.splitPages(file, 2, 5); 
                 pages = 4; 
                 style = "Booklet"; 
-                overlay = rule.getAfterOverlayText(); 
-            } else style = rule.getAfterStyle6Plus();
+                overlay = rule.getAfterOverlayText();
+                // Ensure MCQ_ prefix is applied for special mode
+                if (overlay != null && !overlay.isEmpty()) {
+                    prefix = overlay + "_";
+                }
+            } else {
+                style = rule.getAfterStyle6Plus();
+                // If an overlay text is defined, use it as a prefix (e.g. MCQ_)
+                if (rule.getAfterOverlayText() != null && !rule.getAfterOverlayText().isEmpty()) {
+                    prefix = rule.getAfterOverlayText() + "_";
+                }
+            }
         } else {
             if (pages == 1) style = rule.getBeforeStyle1();
             else if (pages == 2) style = rule.getBeforeStyle2();
@@ -902,9 +863,10 @@ public class App extends Application {
         }
 
         final String fs = style; final String fo = overlay; final File ff = f; final int fp = pages;
+        final String finalPrefix = prefix;
         Platform.runLater(() -> {
             FileItem item = new FileItem(ff, fp, "", "None", false, false, "Left", 1, "A4", fo);
-            item.setFileName(prefix + originalName);
+            item.setFileName(finalPrefix + originalName);
             item.setStyle(fs);
             fileQueue.add(item);
         });
@@ -937,7 +899,6 @@ public class App extends Application {
                     if (manualStyle != null) item.setStyle(manualStyle);
                     if (customName != null) item.setFileName(customName);
                     fileQueue.add(item);
-                    relinkRoomItems();
                 });
             } catch (Exception e) { logger.error("Add error", e); }
         });
@@ -948,69 +909,65 @@ public class App extends Application {
         return null;
     }
 
-    private void previewFile(FileItem item, boolean isReadOnly) {
+    private void previewFile(FileItem item, boolean isReadOnly, boolean showRendered) {
         analysisExecutor.submit(() -> {
             try {
                 File f = item.getFile();
-                if (item.isBooklet()) f = pdfService.createBookletPDF(f, item.getBindingType(), item.getPaperSize());
-                File finalF = f;
-                Platform.runLater(() -> pdfViewer.show(finalF, false, isReadOnly ? null : (sf, name, s, o, start, end, subtract) -> {
-                    String baseName = item.getFileName().replace(".pdf", "");
-                    String splitName = "Split_" + baseName + "_Part_" + start + "-" + end + ".pdf";
-                    
-                    // Persist Split part to original folder
-                    File permanentSplit = new File(item.getFile().getParent(), splitName);
-                    try {
-                        java.nio.file.Files.copy(sf.toPath(), permanentSplit.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    } catch (Exception ex) { logger.error("Split save error", ex); }
-
-                    addFileToQueue(permanentSplit, s, o, splitName);
-                    if (subtract) {
-                        analysisExecutor.submit(() -> {
-                            try {
-                                File remaining = pdfService.removePages(item.getFile(), start, end);
-                                if (remaining == null) {
-                                    Platform.runLater(() -> fileQueue.remove(item));
-                                } else {
-                                    // Rename to Remain_ and Overwrite
-                                    File original = item.getFile();
-                                    String oldName = item.getFileName();
-                                    String newName = oldName.startsWith("Remain_") ? oldName : "Remain_" + oldName;
-                                    File renamed = new File(original.getParent(), newName);
-                                    
-                                    java.nio.file.Files.copy(remaining.toPath(), renamed.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                                    if (!original.equals(renamed)) {
-                                        original.delete();
-                                    }
-                                    
-                                    final File finalRenamed = renamed;
-                                    int newPages = pdfService.getPageCount(finalRenamed);
-                                    String newContent = pdfService.getText(finalRenamed);
-                                    PrintRule rule = findMatchingRule(newPages, newContent);
-
-                                    Platform.runLater(() -> {
-                                        item.setFile(finalRenamed);
-                                        item.setFileName(finalRenamed.getName());
-                                        item.setPageCount(newPages);
-                                        item.setContent(newContent);
-                                        
-                                        if (rule != null) {
-                                            item.setTargetPrinter(rule.getPrinterName());
-                                            item.setCopies(rule.getCopies());
-                                            item.setPaperSize(rule.getPaperSize());
-                                            if (rule.isBooklet()) item.setStyle("Booklet");
-                                            else if (rule.isDuplex()) item.setStyle("Duplex");
-                                            else item.setStyle("Simplex");
-                                        }
-                                        
-                                        relinkRoomItems();
-                                    });
-                                }
-                            } catch (Exception ex) { logger.error("Sub error", ex); }
-                        });
+                // If showRendered is true, apply booklet and overlay to show the "final" output
+                if (showRendered) {
+                    if (item.isBooklet()) f = pdfService.createBookletPDF(f, item.getBindingType(), item.getPaperSize());
+                    if (item.getOverlayText() != null && !item.getOverlayText().isEmpty()) {
+                        File pf = printService.applyOverlayInternal(f, item.getOverlayText());
+                        // If we created a booklet temp file, delete it after overlay is applied to its copy
+                        if (f != item.getFile()) f.delete();
+                        f = pf;
                     }
+                }
+                
+                File finalF = f;
+                Platform.runLater(() -> pdfViewer.show(finalF, false, isReadOnly ? null : (sf, name, s, o, start, end, sub) -> {
+                    if (sub) handleManualSubtract(item, sf, start, end, s, o);
+                    else addFileToQueue(sf, s, o, "Split_" + item.getFileName());
                 }));
             } catch (Exception e) { logger.error("Preview error", e); }
+        });
+    }
+
+    private void handleManualSubtract(FileItem originalItem, File splitPart, int start, int end, String style, String overlay) {
+        analysisExecutor.submit(() -> {
+            try {
+                // 1. Add the split part to queue
+                String splitName = "Split_" + originalItem.getFileName();
+                Platform.runLater(() -> {
+                    addFileToQueue(splitPart, style, overlay, splitName);
+                    activityLogger.info("Manual Split added to queue: " + splitName);
+                });
+
+                // 2. Modify original file
+                File originalFile = originalItem.getFile();
+                pdfService.removePages(originalFile, start, end);
+                
+                // 3. Update FileItem page count and re-trigger rules if needed
+                int newCount = pdfService.getPageCount(originalFile);
+                Platform.runLater(() -> {
+                    originalItem.setPageCount(newCount);
+                    if (!originalItem.getFileName().startsWith("Remaining_")) {
+                        originalItem.setFileName("Remaining_" + originalItem.getFileName());
+                    }
+                    // Re-apply rules for the remainder
+                    PrintRule rule = findMatchingRule(newCount, originalItem.getContent());
+                    if (rule != null) {
+                        originalItem.setTargetPrinter(rule.getPrinterName());
+                        originalItem.setCopies(rule.getCopies());
+                        originalItem.setStyle(rule.isBooklet() ? "Booklet" : (rule.isDuplex() ? "Duplex" : "Simplex"));
+                    }
+                    activityLogger.success("Original file subtracted. Remainder: " + newCount + " pages.");
+                    relinkRoomItems();
+                });
+            } catch (Exception e) {
+                logger.error("Subtract error", e);
+                activityLogger.error("Manual subtract failed: " + e.getMessage());
+            }
         });
     }
 
@@ -1218,7 +1175,7 @@ public class App extends Application {
             }
         });
 
-        Button updateSmartBtn = new Button("Update Smart Rule");
+        Button updateSmartBtn = new Button("Update Rule");
         updateSmartBtn.setOnAction(e -> {
             SmartSplitRule sel = smartListV.getSelectionModel().getSelectedItem();
             if (sel != null) {
@@ -1258,7 +1215,7 @@ public class App extends Application {
             smartSplitRulesList.add(nr);
             saveConfigs();
         });
-        Button remSmartBtn = new Button("Remove Smart Rule");
+        Button remSmartBtn = new Button("Remove Rule");
         remSmartBtn.setOnAction(e -> {
             smartSplitRulesList.remove(smartListV.getSelectionModel().getSelectedItem());
             saveConfigs();
@@ -1362,7 +1319,9 @@ public class App extends Application {
 
         analysisExecutor.submit(() -> {
             try {
-                HttpClient client = getInsecureHttpClient();
+                HttpClient client = HttpClient.newBuilder()
+                    .sslContext(unsafeSslContext)
+                    .build();
                 String url = "https://firestore.googleapis.com/v1/projects/examflow-india/databases/(default)/documents/public_print_queue/" + finalCid;
                 
                 HttpRequest request = HttpRequest.newBuilder()
@@ -1469,17 +1428,43 @@ public class App extends Application {
 
     private String extractQPFromFileName(String fileName) {
         if (fileName == null) return null;
-        // Match the standard pattern _143812_ or similar
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile("_(\\d{5,8})_", java.util.regex.Pattern.CASE_INSENSITIVE);
-        java.util.regex.Matcher m = p.matcher(fileName);
-        if (m.find()) return m.group(1);
         
-        // Fallback for Examflow pattern _14.05.26_FN_143812_
+        // 1. Try robust standard pattern _143812_ (most common)
+        java.util.regex.Pattern p1 = java.util.regex.Pattern.compile("_(\\d{5,8})_", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m1 = p1.matcher(fileName);
+        if (m1.find()) return m1.group(1);
+
+        // 2. Try Examflow Fallback _14.05.26_FN_143812_
         java.util.regex.Pattern p2 = java.util.regex.Pattern.compile("_([A-Z0-9]{5,10})[_\\.]", java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher m2 = p2.matcher(fileName);
         if (m2.find()) return m2.group(1);
         
+        // 3. Last resort: standard datetime match from v3.1.3
+        java.util.regex.Pattern p3 = java.util.regex.Pattern.compile("_\\d{2}[-_:\\.]\\d{2}\\s+[AP]M_([A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m3 = p3.matcher(fileName);
+        if (m3.find()) return m3.group(1);
+
         return null;
+    }
+
+    private void relinkRoomItems() {
+        if (roomGroupsList.isEmpty()) return;
+        logger.info("Relinking Room Items to File Queue (Queue Size: {})", fileQueue.size());
+        for (RoomGroup g : roomGroupsList) {
+            for (RoomItem i : g.getItems()) {
+                boolean matched = false;
+                for (FileItem qItem : fileQueue) {
+                    String qName = qItem.getFileName();
+                    String extractedQP = extractQPFromFileName(qName);
+                    if (i.getQpCode().equalsIgnoreCase(extractedQP) || qName.contains("_" + i.getQpCode() + "_") || qName.contains("_" + i.getQpCode() + ".")) {
+                        i.setMatchedFile(qItem);
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) i.setMatchedFile(null);
+            }
+        }
     }
 
     private void updateRowStyle(TableRow<FileItem> row, String status) {
@@ -1499,7 +1484,6 @@ public class App extends Application {
         config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
         config.setFileQueue(new ArrayList<>(fileQueue));
         config.setRoomGroups(new ArrayList<>(roomGroupsList));
-        config.setPrintCoverPage(printCoverPageCbox.isSelected());
         configManager.saveConfig(config);
     }
 
@@ -1586,41 +1570,15 @@ public class App extends Application {
         title.setAlignment(javafx.geometry.Pos.CENTER);
 
         TableView<RoomItem> table = new TableView<>(group.getItems());
-        table.setPrefHeight(180);
+        table.setPrefHeight(150);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
         TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
-        qpCol.setCellValueFactory(d -> {
-            RoomItem ri = d.getValue();
-            FileItem fi = ri.getMatchedFile();
-            if (fi == null) return new SimpleStringProperty(ri.getDisplayName());
-            return Bindings.createStringBinding(() -> ri.getDisplayName(), fi.fileNameProperty());
-        });
+        qpCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getDisplayName()));
         
         TableColumn<RoomItem, String> styleCol = new TableColumn<>("St");
-        styleCol.setPrefWidth(40); styleCol.setMaxWidth(45);
-        styleCol.setCellValueFactory(d -> {
-            FileItem fi = d.getValue().getMatchedFile();
-            if (fi == null) return new SimpleStringProperty("-");
-            return Bindings.createStringBinding(() -> {
-                String s = fi.getStyle();
-                if ("Duplex".equalsIgnoreCase(s)) return "D";
-                if ("Booklet".equalsIgnoreCase(s)) return "B";
-                return "S";
-            }, fi.styleProperty());
-        });
-        styleCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
-            @Override protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setStyle(""); }
-                else {
-                    setText(item); setAlignment(javafx.geometry.Pos.CENTER);
-                    if ("D".equals(item)) setStyle("-fx-text-fill: #2196F3; -fx-font-weight: bold;");
-                    else if ("B".equals(item)) setStyle("-fx-text-fill: #9c27b0; -fx-font-weight: bold;");
-                    else setStyle("-fx-text-fill: #4CAF50; -fx-font-weight: bold;");
-                }
-            }
-        });
+        styleCol.setCellValueFactory(d -> d.getValue().getMatchedFile() != null ? d.getValue().getMatchedFile().styleProperty() : new SimpleStringProperty("N/A"));
+        styleCol.setPrefWidth(50);
 
         TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Qty");
         countCol.setCellValueFactory(d -> new SimpleObjectProperty<>(d.getValue().getCount()));
@@ -1657,7 +1615,7 @@ public class App extends Application {
             }
         });
 
-        table.getColumns().addAll(qpCol, styleCol, countCol, statusCol, actionCol);
+        table.getColumns().addAll(qpCol, countCol, statusCol, actionCol);
 
         table.setRowFactory(tv -> {
             TableRow<RoomItem> row = new TableRow<>();
@@ -1712,12 +1670,12 @@ public class App extends Application {
                 String s = printerStatusCache.getOrDefault(p, "Ready");
                 Platform.runLater(() -> {
                     if ("Offline".equalsIgnoreCase(s)) {
-                        printerIndicator.setText("⚠ PRINTER OFFLINE");
+                        printerIndicator.setText("ΓÜá PRINTER OFFLINE");
                         printerIndicator.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
                         sendBtn.setDisable(true);
                         sendBtn.setTooltip(new Tooltip("Cannot print while printer is Offline"));
                     } else {
-                        printerIndicator.setText("✔ Printer Ready");
+                        printerIndicator.setText("Γ£ö Printer Ready");
                         printerIndicator.setStyle("-fx-text-fill: #4CAF50;");
                         sendBtn.setDisable(false);
                         sendBtn.setTooltip(null);
@@ -1783,7 +1741,7 @@ public class App extends Application {
 
     private void previewRoomItem(RoomItem item) {
         if (item.getMatchedFile() == null) { updateStatus("No matched file to preview."); return; }
-        previewFile(item.getMatchedFile(), true);
+        previewFile(item.getMatchedFile(), true, true);
     }
 
     private void printSingleRoomItem(RoomItem roomItem, String selectedPrinter) {
@@ -1973,43 +1931,28 @@ public class App extends Application {
             doc.addPage(page);
             
             float margin = 50;
-            float pageWidth = page.getMediaBox().getWidth();
+            float width = page.getMediaBox().getWidth() - 2 * margin;
             float yStart = page.getMediaBox().getHeight() - margin;
+            float tableWidth = width;
             float rowHeight = 25f;
+            float cellMargin = 5f;
 
             try (org.apache.pdfbox.pdmodel.PDPageContentStream cs = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)) {
-                // Main Title: Question Paper Account (Centered)
-                org.apache.pdfbox.pdmodel.font.PDFont fontBold = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
-                float titleSize = 32;
-                String title = "Question Paper Account";
-                float titleWidth = fontBold.getStringWidth(title) / 1000 * titleSize;
-                
+                // Title
                 cs.beginText();
-                cs.setFont(fontBold, titleSize);
-                cs.newLineAtOffset((pageWidth - titleWidth) / 2, yStart - 40);
-                cs.showText(title);
-                cs.endText();
-
-                // Room Serial: ROOM # (Centered)
-                float roomSize = 24;
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD), 36);
+                cs.newLineAtOffset(margin, yStart - 40);
                 String safeRoomSerial = group.getRoomSerial() != null ? group.getRoomSerial().replaceAll("[^\\x00-\\x7F]", "") : "";
-                String roomText = "ROOM: " + safeRoomSerial;
-                float roomWidth = fontBold.getStringWidth(roomText) / 1000 * roomSize;
-                
-                cs.beginText();
-                cs.setFont(fontBold, roomSize);
-                cs.newLineAtOffset((pageWidth - roomWidth) / 2, yStart - 80);
-                cs.showText(roomText);
+                cs.showText("ROOM: " + safeRoomSerial);
                 cs.endText();
 
-                // Subtitle
                 cs.beginText();
-                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 12);
-                cs.newLineAtOffset(margin, yStart - 110);
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 14);
+                cs.newLineAtOffset(margin, yStart - 70);
                 cs.showText("Smart QP Print Manager - Routing Summary");
                 cs.endText();
 
-                float yPosition = yStart - 140;
+                float yPosition = yStart - 100;
                 float[] colWidths = {40, 100, 250, 80}; // S.No, QP Code, Course Name, Qty
                 String[] headers = {"S.No", "QP Code", "Course Name / File", "Qty"};
 
@@ -2092,27 +2035,68 @@ public class App extends Application {
     }
 
     private void initCef() {
-        if (cefApp != null) return;
-        analysisExecutor.submit(() -> {
+        if (cefApp != null || initializingCef) return;
+        initializingCef = true;
+        
+        // Move CEF initialization to a dedicated thread with slightly higher priority for stability
+        Thread initThread = new Thread(() -> {
             try {
-                activityLogger.info("Initializing Smart Browser Engine...");
+                activityLogger.info("Initializing Smart Browser Engine (Stability Guard Active)...");
                 CefAppBuilder builder = new CefAppBuilder();
+                // ... (rest of the builder setup remains the same)
                 File projectDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
                 File localBundle = new File(projectDir, "bin/chromium");
-                File cachePath = new File(projectDir, "bin/chromium_cache");
+                
+                // Use a robust AppData-based path for the cache to prevent permission and "ghost session" issues
+                File cachePath = getResolvedCacheDir();
                 if (!cachePath.exists()) cachePath.mkdirs();
+                
+                // FORCE CLEANUP of Chromium lock files to ensure a fresh session parenting
+                try {
+                    new File(cachePath, "SingletonLock").delete();
+                    new File(cachePath, "SingletonCookie").delete();
+                    new File(cachePath, "SingletonSocket").delete();
+                } catch (Exception e) {}
+
                 if (localBundle.exists() && localBundle.isDirectory()) builder.setInstallDir(localBundle);
                 else builder.setInstallDir(new File(System.getProperty("user.home"), ".jcef-bundle"));
+
+                // CRITICAL: Explicitly set subprocess path to jcef_helper.exe to prevent decoupling
+                File installDir = localBundle.exists() ? localBundle : new File(System.getProperty("user.home"), ".jcef-bundle");
+                File helper = new File(installDir, "jcef_helper.exe");
+                if (helper.exists()) {
+                    builder.getCefSettings().browser_subprocess_path = helper.getAbsolutePath();
+                    logger.info("JCEF Subprocess path set to: " + helper.getAbsolutePath());
+                }
+
                 builder.setProgressHandler((progress, percentage) -> {
                     String status = "Chromium " + progress + (percentage >= 0 ? ": " + String.format("%.0f", percentage) + "%" : "...");
                     Platform.runLater(() -> updateStatus(status));
                 });
+                
                 builder.getCefSettings().windowless_rendering_enabled = false;
                 builder.getCefSettings().cache_path = cachePath.getAbsolutePath();
                 builder.getCefSettings().persist_session_cookies = true;
-                builder.addJcefArgs("--no-sandbox", "--disable-gpu", "--enable-password-save", "--enable-automatic-password-saving", "--password-store=basic", "--enable-password-manager");
+                
+                // DEEP FIX FLAGS: Disable all features that cause window detachment or GPU stalls
+                builder.addJcefArgs(
+                    "--no-sandbox", 
+                    "--disable-gpu", 
+                    "--disable-gpu-compositing", 
+                    "--disable-features=CalculateNativeWinOcclusion",
+                    "--disable-direct-composition", 
+                    "--disable-gpu-rasterization",
+                    "--disable-dev-shm-usage",
+                    "--disable-software-rasterizer",
+                    "--enable-password-save", 
+                    "--enable-automatic-password-saving", 
+                    "--password-store=basic", 
+                    "--enable-password-manager"
+                );
+                
                 cefApp = builder.build();
                 cefClient = cefApp.createClient();
+                
                 cefClient.addDisplayHandler(new CefDisplayHandlerAdapter() {
                     @Override
                     public void onAddressChange(CefBrowser browser, org.cef.browser.CefFrame frame, String url) {
@@ -2122,13 +2106,22 @@ public class App extends Application {
                         }
                     }
                 });
+
                 CefMessageRouter router = CefMessageRouter.create();
                 router.addHandler(new CefMessageRouterHandlerAdapter() {
                     @Override
                     public boolean onQuery(CefBrowser browser, CefFrame frame, long query_id, String request, boolean persistent, CefQueryCallback callback) {
                         if (request.startsWith("download:")) {
                             String[] parts = request.substring(9).split("\\|");
-                            if (parts.length >= 2) { new BrowserBridge().downloadQP(parts[0], parts[1]); callback.success("OK"); return true; }
+                            if (parts.length >= 2) { 
+                                String fileId = parts[0];
+                                String fileName = parts[1];
+                                downloadFilenameMap.put(fileId, fileName);
+                                // Trigger standard browser download by loading the URL
+                                browser.loadURL("https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId);
+                                callback.success("OK"); 
+                                return true; 
+                            }
                         } else if (request.startsWith("session:")) {
                             String s = request.substring(8); Platform.runLater(() -> sessionNameField.setText(s)); callback.success("OK"); return true;
                         } else if (request.equals("examflow_sync_start")) {
@@ -2145,12 +2138,42 @@ public class App extends Application {
                     }
                 }, true);
                 cefClient.addMessageRouter(router);
+
                 cefClient.addDownloadHandler(new CefDownloadHandlerAdapter() {
                     @Override
                     public boolean onBeforeDownload(CefBrowser browser, CefDownloadItem downloadItem, String suggestedName, CefBeforeDownloadCallback callback) {
                         File sessionDir = getSessionDir();
                         if (sessionDir == null) return false;
-                        callback.Continue(new File(sessionDir, suggestedName).getAbsolutePath(), false); return true;
+                        
+                        String url = downloadItem.getURL();
+                        String fileName = suggestedName;
+                        
+                        // Check if this download was registered with a custom name
+                        if (url.contains("fileid=")) {
+                            String fileId = null;
+                            try {
+                                String search = "fileid=";
+                                int start = url.indexOf(search) + search.length();
+                                int end = url.indexOf("&", start);
+                                fileId = (end == -1) ? url.substring(start) : url.substring(start, end);
+                            } catch (Exception e) {}
+                            
+                        if (fileId != null && downloadFilenameMap.containsKey(fileId)) {
+                                fileName = downloadFilenameMap.get(fileId) + ".pdf";
+                                downloadFilenameMap.remove(fileId);
+                                logger.info("Applying mapped filename: {} for fileid: {}", fileName, fileId);
+                            }
+                        }
+
+                        File targetFile = new File(sessionDir, fileName);
+                        if (targetFile.exists()) {
+                            try {
+                                targetFile.delete();
+                                logger.info("Deleted existing file for replacement: {}", targetFile.getAbsolutePath());
+                            } catch (Exception e) { logger.warn("Failed to delete existing file: {}", targetFile.getName()); }
+                        }
+
+                        callback.Continue(targetFile.getAbsolutePath(), false); return true;
                     }
                     @Override
                     public void onDownloadUpdated(CefBrowser browser, CefDownloadItem downloadItem, CefDownloadItemCallback callback) {
@@ -2166,6 +2189,7 @@ public class App extends Application {
                         }
                     }
                 });
+
                 cefClient.addLoadHandler(new CefLoadHandlerAdapter() {
                     @Override
                     public void onLoadEnd(CefBrowser browser, org.cef.browser.CefFrame frame, int httpStatusCode) {
@@ -2223,16 +2247,19 @@ public class App extends Application {
                                 "            for (var i = 0; i < btns.length; i++) { " +
                                 "              (function(idx) { " +
                                 "                setTimeout(function() { " +
-                                "                  b.innerText = '⏳ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
+                                "                  b.innerText = '⌛ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
                                 "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
                                 "                  var time = r.cells[2].innerText.replace(/:/g, '_'); " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
-                                "                  var fname = 'REG_' + dp + '_' + time + '_' + r.cells[0].innerText + '_' + r.cells[1].innerText.replace(/[^a-z0-9]/gi, '_'); " +
+                                "                  var rowText = r.innerText.toUpperCase(); " +
+                                "                  var prefix = 'REG'; " +
+                                "                  if (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) prefix = 'EDE'; " +
+                                "                  var fname = prefix + '_' + dp + '_' + time + '_' + r.cells[0].innerText + '_' + r.cells[1].innerText.replace(/[^a-z0-9]/gi, '_'); " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
                                 "                  if (idx === btns.length - 1) { " +
-                                "                    b.innerText = '✅ All Files Queued'; " +
-                                "                    setTimeout(function() { b.innerText = 'Bulk Download Complete'; }, 2000); " +
+                                "                    b.innerText = '✓ All Files Queued'; " +
+                                "                    setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); " +
                                 "                  } " +
                                 "                }, idx * 1000); " +
                                 "              })(i); " +
@@ -2260,14 +2287,32 @@ public class App extends Application {
                         }
                     }
                 });
+
                 activityLogger.success("Smart Browser Engine Ready.");
-                Platform.runLater(() -> updateStatus("Smart Browser Ready"));
-            } catch (Exception e) { activityLogger.error("Browser Init Failed: " + e.getMessage()); }
+                Platform.runLater(() -> {
+                    updateStatus("Smart Browser Ready");
+                    initializingCef = false;
+                    if (autoOpenBrowser) {
+                        autoOpenBrowser = false;
+                        openSmartBrowser();
+                    }
+                });
+            } catch (Exception e) { 
+                initializingCef = false;
+                activityLogger.error("Browser Init Failed: " + e.getMessage()); 
+                logger.error("JCEF Init Error", e);
+            }
         });
+        initThread.setPriority(Thread.MAX_PRIORITY);
+        initThread.start();
     }
 
     private void openSmartBrowser() {
-        if (cefApp == null) { initCef(); return; }
+        if (cefApp == null) {
+            autoOpenBrowser = true;
+            initCef();
+            return;
+        }
         SwingUtilities.invokeLater(() -> {
             JTabbedPane tabbedPane = new JTabbedPane();
             
@@ -2308,10 +2353,17 @@ public class App extends Application {
         JButton backBtn = new JButton("<");
         JButton forwardBtn = new JButton(">");
         JButton refreshBtn = new JButton("Refresh");
+        JButton syncBtn = new JButton("Sync Files");
         
         backBtn.addActionListener(e -> browser.goBack());
         forwardBtn.addActionListener(e -> browser.goForward());
-        refreshBtn.addActionListener(e -> browser.reload());
+        refreshBtn.addActionListener(e -> {
+            logger.info("Browser reload triggered for: " + browser.getURL());
+            browser.reload();
+        });
+        syncBtn.addActionListener(e -> {
+            Platform.runLater(this::syncSessionFolder);
+        });
         addressBar.addActionListener(e -> browser.loadURL(addressBar.getText()));
         
         JToolBar toolBar = new JToolBar();
@@ -2320,12 +2372,27 @@ public class App extends Application {
         toolBar.add(forwardBtn);
         toolBar.add(refreshBtn);
         toolBar.addSeparator();
+        toolBar.add(syncBtn);
+        toolBar.addSeparator();
         toolBar.add(addressBar);
         
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(toolBar, BorderLayout.NORTH);
         panel.add(browser.getUIComponent(), BorderLayout.CENTER);
         return panel;
+    }
+
+    private void syncSessionFolder() {
+        File dir = getSessionDir();
+        if (dir == null || !dir.exists()) {
+            Platform.runLater(() -> new Alert(Alert.AlertType.WARNING, "Session folder not found!").show());
+            return;
+        }
+        File[] files = dir.listFiles((d, name) -> name.toLowerCase().endsWith(".pdf"));
+        if (files != null) {
+            activityLogger.info("Syncing session folder: Found " + files.length + " PDFs.");
+            for (File f : files) processFile(f);
+        }
     }
 
     private javafx.scene.Parent createPortalView() {
@@ -2341,58 +2408,25 @@ public class App extends Application {
             File selected = dc.showDialog(null); if (selected != null) { downloadPathField.setText(selected.getAbsolutePath()); config.setBaseDownloadPath(selected.getAbsolutePath()); saveConfigs(); }
         });
         HBox pathBox = new HBox(10, new Label("Save Folder:"), downloadPathField, browseBtn); pathBox.setAlignment(javafx.geometry.Pos.CENTER);
+        
+        Button syncBtn = new Button("Sync Downloaded Files");
+        syncBtn.setStyle("-fx-font-size: 16px; -fx-padding: 10 20;");
+        syncBtn.setTooltip(new Tooltip("Scan the current session folder and re-process all PDFs (Overwrites existing queue entries)"));
+        syncBtn.setOnAction(e -> syncSessionFolder());
+
         Button launchBtn = new Button("Launch Smart Browser");
         launchBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-padding: 15 30;");
         launchBtn.setOnAction(e -> {
             if (downloadPathField.getText().isEmpty()) { new Alert(Alert.AlertType.WARNING, "Please select a Save Folder first!").show(); return; }
             openSmartBrowser();
         });
-        layout.getChildren().addAll(info, sessionBox, pathBox, launchBtn);
+        layout.getChildren().addAll(info, sessionBox, pathBox, syncBtn, launchBtn);
         return layout;
     }
 
     public class BrowserBridge {
         public void downloadQP(String fileId, String fileName) {
-            if (sessionNameField.getText().trim().isEmpty()) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("Session Name Required");
-                    alert.setHeaderText("Session Name is missing");
-                    alert.setContentText("The application could not auto-detect the session name. Please enter it manually in the 'Detected Session' field on the Portal tab before downloading.");
-                    alert.show();
-                });
-                return;
-            }
-            activityLogger.info("Queued download: " + fileName);
-            analysisExecutor.submit(() -> {
-                try {
-                    updateStatus("Downloading: " + fileName);
-                    HttpClient client = getInsecureHttpClient();
-                    HttpRequest request = HttpRequest.newBuilder().uri(URI.create("https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId)).GET().build();
-                    HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-                    
-                    if (response.statusCode() == 200) {
-                        File sessionDir = getSessionDir(); 
-                        if (sessionDir == null) {
-                            activityLogger.error("Download directory missing for: " + fileName);
-                            return;
-                        }
-                        File saveFile = new File(sessionDir, fileName + ".pdf");
-                        java.nio.file.Files.write(saveFile.toPath(), response.body());
-                        Platform.runLater(() -> { 
-                            processFile(saveFile); 
-                            activityLogger.success("Fetched: " + fileName);
-                            updateStatus("Downloaded: " + fileName);
-                        });
-                    } else {
-                        activityLogger.error("Failed to fetch " + fileName + " (HTTP " + response.statusCode() + ")");
-                        updateStatus("Error downloading: " + fileName);
-                    }
-                } catch (Exception e) { 
-                    activityLogger.error("Download Error (" + fileName + "): " + e.getMessage()); 
-                    updateStatus("Download Failed: " + fileName);
-                }
-            });
+            // Legacy method - replaced by browser-based download in onQuery
         }
     }
 
@@ -2404,85 +2438,34 @@ public class App extends Application {
         return sessionDir;
     }
 
-    private void relinkRoomItems() {
-        for (RoomGroup g : roomGroupsList) {
-            List<RoomItem> existingItems = new ArrayList<>(g.getItems());
-            
-            // 1. Clear links to files no longer in queue
-            for (RoomItem ri : existingItems) {
-                if (ri.getMatchedFile() != null && !fileQueue.contains(ri.getMatchedFile())) {
-                    ri.setMatchedFile(null);
-                    ri.setStatus("");
-                }
-            }
-
-            // 2. Group by QP to process each requirement
-            Map<String, List<RoomItem>> byQp = existingItems.stream()
-                    .collect(Collectors.groupingBy(ri -> ri.getQpCode().toLowerCase()));
-
-            List<RoomItem> toAdd = new ArrayList<>();
-            List<RoomItem> toRemove = new ArrayList<>();
-
-            for (Map.Entry<String, List<RoomItem>> entry : byQp.entrySet()) {
-                String qp = entry.getKey();
-                List<RoomItem> items = entry.getValue();
-                
-                List<FileItem> matchingFiles = fileQueue.stream()
-                        .filter(fi -> {
-                            String fileName = fi.getFileName();
-                            String extractedQP = extractQPFromFileName(fileName);
-                            return qp.equalsIgnoreCase(extractedQP) || 
-                                   fileName.contains("_" + qp + "_") || 
-                                   fileName.contains("_" + qp + ".");
-                        })
-                        .collect(Collectors.toList());
-
-                // Prune extra nulls first
-                if (items.size() > 1) {
-                    List<RoomItem> unmatched = items.stream().filter(ri -> ri.getMatchedFile() == null).collect(Collectors.toList());
-                    boolean anyMatched = items.stream().anyMatch(ri -> ri.getMatchedFile() != null);
-                    if (anyMatched) {
-                        toRemove.addAll(unmatched);
-                        items.removeAll(unmatched);
-                    } else if (unmatched.size() > 1) {
-                        List<RoomItem> extras = unmatched.subList(1, unmatched.size());
-                        toRemove.addAll(extras);
-                        items.removeAll(extras);
-                    }
-                }
-
-                // Match files
-                for (FileItem fi : matchingFiles) {
-                    if (items.stream().anyMatch(ri -> ri.getMatchedFile() == fi)) continue;
-
-                    Optional<RoomItem> nullSlot = items.stream().filter(ri -> ri.getMatchedFile() == null).findFirst();
-                    if (nullSlot.isPresent()) {
-                        RoomItem slot = nullSlot.get();
-                        slot.setMatchedFile(fi);
-                        slot.setStatus("Pending");
-                    } else {
-                        RoomItem t = items.get(0);
-                        RoomItem ni = new RoomItem(g.getRoomSerial(), t.getQpCode(), t.getPdfFileName(), t.getCount());
-                        ni.setCourseName(t.getCourseName());
-                        ni.setMatchedFile(fi);
-                        ni.setStatus("Pending");
-                        toAdd.add(ni);
-                        items.add(ni);
-                    }
-                }
-            }
-            
-            if (!toRemove.isEmpty()) g.getItems().removeAll(toRemove);
-            if (!toAdd.isEmpty()) g.getItems().addAll(toAdd);
-
-            // 3. Reset Group status to Ready if it has Pending items or was cleared
-            long pendingCount = g.getItems().stream().filter(ri -> "Pending".equals(ri.getStatus())).count();
-            if (pendingCount > 0 || g.getItems().stream().allMatch(ri -> ri.getMatchedFile() == null)) {
-                if ("Finished".equals(g.getStatus()) || "Partial Error".equals(g.getStatus()) || g.getStatus() == null || g.getStatus().isEmpty()) {
-                    g.setStatus("Ready");
-                }
-            }
+    private File getResolvedCacheDir() {
+        String userDir = System.getProperty("user.dir");
+        String os = System.getProperty("os.name").toLowerCase();
+        boolean inProgramFiles = userDir.toLowerCase().contains("program files");
+        
+        if (!inProgramFiles) {
+            // Portable mode check
+            try {
+                Path testPath = Paths.get(userDir, ".write_test_" + System.currentTimeMillis());
+                Files.createFile(testPath);
+                Files.delete(testPath);
+                return new File(userDir, "bin/chromium_cache");
+            } catch (Exception e) {}
         }
+
+        // Installed mode: Use AppData
+        if (os.contains("win")) {
+            String appData = System.getenv("APPDATA");
+            return new File(appData != null ? appData : System.getProperty("user.home"), "SmartQPPrintManager/chromium_cache");
+        }
+        return new File(System.getProperty("user.home"), ".smartqpprintmanager/chromium_cache");
+    }
+
+    private static File getChromiumDir() {
+        File projectDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
+        File localBundle = new File(projectDir, "bin/chromium");
+        if (localBundle.exists() && localBundle.isDirectory()) return localBundle;
+        return new File(System.getProperty("user.home"), ".jcef-bundle");
     }
 
     private static void bypassSSL() {
@@ -2492,14 +2475,40 @@ public class App extends Application {
                 public void checkClientTrusted(X509Certificate[] certs, String authType) { }
                 public void checkServerTrusted(X509Certificate[] certs, String authType) { }
             }};
-            SSLContext sc = SSLContext.getInstance("SSL");
-            sc.init(null, trustAllCerts, new java.security.SecureRandom());
-            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            unsafeSslContext = SSLContext.getInstance("SSL");
+            unsafeSslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+            HttpsURLConnection.setDefaultSSLSocketFactory(unsafeSslContext.getSocketFactory());
             HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
         } catch (Exception e) {}
     }
 
     public static void main(String[] args) { 
+        // 1. Immediately exit if this is a JCEF helper process to prevent UI recursion
+        for (String arg : args) {
+            if (arg.contains("--type=renderer") || arg.contains("--type=gpu-process") || arg.contains("--type=utility")) {
+                return;
+            }
+        }
+
+        // 2. HARD RESET: Force cleanup before JavaFX even starts
+        try {
+            // Kill any ghosts
+            Process p = Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T");
+            p.waitFor();
+            
+            // Proactively clear Chromium locks in AppData to prevent "Opening in existing session" hand-off
+            String appData = System.getenv("APPDATA");
+            if (appData != null) {
+                File cacheDir = new File(appData, "SmartQPPrintManager/chromium_cache");
+                if (cacheDir.exists()) {
+                    new File(cacheDir, "SingletonLock").delete();
+                    new File(cacheDir, "SingletonCookie").delete();
+                    new File(cacheDir, "SingletonSocket").delete();
+                }
+            }
+            Thread.sleep(500); // Brief pause for OS stability
+        } catch (Exception e) {}
+
         bypassSSL();
         launch(args); 
     }

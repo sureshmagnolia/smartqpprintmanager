@@ -28,7 +28,11 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.FontPosture;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class PDFViewer {
+    private static final Logger logger = LoggerFactory.getLogger(PDFViewer.class);
     private final PDFService pdfService = new PDFService();
     private File currentFile;
     private VBox contentBox;
@@ -166,7 +170,7 @@ public class PDFViewer {
                     Thread.sleep(1000);
                     finalFile.delete();
                 }
-            } catch (Exception e) { e.printStackTrace(); }
+            } catch (Exception e) { logger.error("Preview error", e); }
         }).start();
     }
 }

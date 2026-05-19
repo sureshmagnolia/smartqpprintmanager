@@ -18,6 +18,8 @@ This document outlines planned and proposed features to enhance the Smart QP Pri
 - [ ] **Cost Estimation:** Add a reporting module to estimate toner and paper usage based on print history.
 
 ## ✅ Completed
+- [x] **Refined PDF Split & Persistence (v3.1.4):** Manual split now generates distinct `Split_` and `Remain_` files in the original folder. Added robust triple-check room matching (Regex + literals) to ensure all components are routed correctly.
+- [x] **Production Polishing (v3.1.4):** Replaced legacy `printStackTrace` with SLF4J logging for gold-standard production observability. Refined Reactive Room UI for instant sync.
 - [x] **Restricted Environment Persistence (v3.0.3):** Fixed an issue where session data was lost when installed in read-only directories (e.g., C:\Program Files) by using the user's AppData folder. Updated default printer logic.
 - [x] **Smart Room-Wise Router (v2.5.1):** Added a new tab to handle room-wise routing and parallel printing based on seating summary JSONs. Branded with custom icon and improved installer upgrade logic.
 - [x] **JSON Copy Count Update (v2.4):** Added a feature to upload a JSON file to automatically update the copy counts of PDFs in the queue based on QP codes extracted from filenames.

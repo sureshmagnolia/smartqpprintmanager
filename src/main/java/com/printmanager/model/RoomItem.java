@@ -13,7 +13,7 @@ public class RoomItem {
     private String pdfFileName;
     private String courseName;
     private final IntegerProperty count = new SimpleIntegerProperty();
-    private FileItem matchedFile;
+    private final ObjectProperty<FileItem> matchedFile = new SimpleObjectProperty<>();
     private final StringProperty status = new SimpleStringProperty("Pending");
 
     public RoomItem() {}
@@ -48,8 +48,11 @@ public class RoomItem {
     @JsonIgnore
     public IntegerProperty countProperty() { return count; }
 
-    public FileItem getMatchedFile() { return matchedFile; }
-    public void setMatchedFile(FileItem matchedFile) { this.matchedFile = matchedFile; }
+    @JsonProperty("matchedFile")
+    public FileItem getMatchedFile() { return matchedFile.get(); }
+    public void setMatchedFile(FileItem matchedFile) { this.matchedFile.set(matchedFile); }
+    @JsonIgnore
+    public ObjectProperty<FileItem> matchedFileProperty() { return matchedFile; }
 
     @JsonProperty("status")
     public String getStatus() { return status.get(); }
@@ -59,8 +62,9 @@ public class RoomItem {
 
     @JsonIgnore
     public String getDisplayName() {
-        if (matchedFile != null) {
-            String fname = matchedFile.getFileName().toLowerCase();
+        FileItem matched = matchedFile.get();
+        if (matched != null) {
+            String fname = matched.getFileName().toLowerCase();
             if (fname.contains("mcq")) return qpCode + " (MCQ)";
             if (fname.contains("main")) return qpCode + " (Main)";
             if (fname.startsWith("split_")) return qpCode + " (Split)";

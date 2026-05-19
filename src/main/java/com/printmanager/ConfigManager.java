@@ -115,7 +115,6 @@ public class ConfigManager {
             logger.info("Configuration saved successfully to {}", file.getAbsolutePath());
         } catch (IOException e) {
             logger.error("Error saving config to {}: {}", file.getAbsolutePath(), e.getMessage());
-            e.printStackTrace();
         }
     }
 }
