@@ -89,6 +89,7 @@ public class App extends Application {
     private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(10);
 
     private Config config;
+    private AppState appState;
     private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList(item -> new javafx.beans.Observable[] {
         item.copiesProperty(), item.targetPrinterProperty(), item.statusProperty(), item.styleProperty(), item.paperSizeProperty()
     });
@@ -134,13 +135,14 @@ public class App extends Application {
         }
 
         config = configManager.loadConfig();
+        appState = configManager.loadAppState();
         logger.info("Application start: Loaded {} rules, {} split rules, {} queue items, {} room groups",
-            config.getRules().size(), config.getSmartSplitRules().size(), config.getFileQueue().size(), config.getRoomGroups().size());
+            config.getRules().size(), config.getSmartSplitRules().size(), appState.getFileQueue().size(), appState.getRoomGroups().size());
 
         rulesList.addAll(config.getRules());
         smartSplitRulesList.addAll(config.getSmartSplitRules());
-        fileQueue.addAll(config.getFileQueue());
-        roomGroupsList.addAll(config.getRoomGroups());
+        fileQueue.addAll(appState.getFileQueue());
+        roomGroupsList.addAll(appState.getRoomGroups());
         
         // Initialize persistent UI fields from config
         if (config.getCollegeId() != null) urlField.setText("https://collegeportal.uoc.ac.in/"); // Reset to default just in case
@@ -190,7 +192,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.1.6");
+        primaryStage.setTitle("Smart QP Print Manager v3.1.7");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -953,41 +955,63 @@ public class App extends Application {
     private void handleManualSubtract(FileItem originalItem, File splitPart, int start, int end, String style, String overlay) {
         analysisExecutor.submit(() -> {
             try {
-                // 1. Add the split part to queue
-                String splitName = "Split_" + originalItem.getFileName();
+                File originalFile = originalItem.getFile();
+                String parentDir = originalFile.getParent();
+                if (parentDir == null) parentDir = ".";
+
+                String originalName = originalItem.getFileName();
+                String baseName = originalName.endsWith(".pdf") ? originalName.substring(0, originalName.length() - 4) : originalName;
+
+                // 1. Save the Split Part into the same directory as the original
+                String splitFileName = "Split_" + baseName + "_P" + start + "-" + end + ".pdf";
+                File finalSplitFile = new File(parentDir, splitFileName);
+                java.nio.file.Files.copy(splitPart.toPath(), finalSplitFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
                 Platform.runLater(() -> {
-                    addFileToQueue(splitPart, style, overlay, splitName);
-                    activityLogger.info("Manual Split added to queue: " + splitName);
+                    addFileToQueue(finalSplitFile, style, overlay, splitFileName);
+                    activityLogger.info("Manual Split saved & added: " + splitFileName);
                 });
 
-                // 2. Modify original file
-                File originalFile = originalItem.getFile();
-                pdfService.removePages(originalFile, start, end);
-                
-                // 3. Update FileItem page count and re-trigger rules if needed
-                int newCount = pdfService.getPageCount(originalFile);
-                Platform.runLater(() -> {
-                    originalItem.setPageCount(newCount);
-                    if (!originalItem.getFileName().startsWith("Remaining_")) {
-                        originalItem.setFileName("Remaining_" + originalItem.getFileName());
-                    }
-                    // Re-apply rules for the remainder
-                    PrintRule rule = findMatchingRule(newCount, originalItem.getContent());
-                    if (rule != null) {
-                        originalItem.setTargetPrinter(rule.getPrinterName());
-                        originalItem.setCopies(rule.getCopies());
-                        originalItem.setStyle(rule.isBooklet() ? "Booklet" : (rule.isDuplex() ? "Duplex" : "Simplex"));
-                    }
-                    activityLogger.success("Original file subtracted. Remainder: " + newCount + " pages.");
-                    relinkRoomItems();
-                });
+                // 2. Create the Remainder file and replace the original
+                File remainingTemp = pdfService.removePages(originalFile, start, end);
+                if (remainingTemp != null) {
+                    // Overwrite the original file with the remainder
+                    java.nio.file.Files.copy(remainingTemp.toPath(), originalFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+                    int newCount = pdfService.getPageCount(originalFile);
+
+                    Platform.runLater(() -> {
+                        // Trigger UI update and rule re-application
+                        originalItem.setFile(originalFile);
+                        originalItem.setPageCount(newCount);
+                        
+                        // Explicitly rename to Remain_ for visibility if not already prefixed
+                        if (!originalItem.getFileName().startsWith("Remain_") && !originalItem.getFileName().startsWith("Split_")) {
+                            originalItem.setFileName("Remain_" + originalItem.getFileName());
+                        }
+
+                        // Re-apply rules for the remainder based on new page count
+                        PrintRule rule = findMatchingRule(newCount, originalItem.getContent());
+                        if (rule != null) {
+                            originalItem.setTargetPrinter(rule.getPrinterName());
+                            originalItem.setCopies(rule.getCopies());
+                            originalItem.setStyle(rule.isBooklet() ? "Booklet" : (rule.isDuplex() ? "Duplex" : "Simplex"));
+                        }
+                        activityLogger.success("Original updated with Remainder: " + newCount + " pages.");
+                        relinkRoomItems();
+                        saveConfigs();
+                    });
+
+                    if (remainingTemp.exists()) remainingTemp.delete();
+                }
+                if (splitPart.exists()) splitPart.delete();
+
             } catch (Exception e) {
                 logger.error("Subtract error", e);
                 activityLogger.error("Manual subtract failed: " + e.getMessage());
             }
         });
     }
-
     private void saveFileAs(FileItem item) {
         FileChooser fc = new FileChooser();
         fc.setTitle("Save PDF"); fc.setInitialFileName(item.getFileName());
@@ -1479,20 +1503,61 @@ public class App extends Application {
 
     private void relinkRoomItems() {
         if (roomGroupsList.isEmpty()) return;
-        logger.info("Relinking Room Items to File Queue (Queue Size: {})", fileQueue.size());
+        logger.info("Relinking & Syncing Room Items (Queue Size: {})", fileQueue.size());
+        
         for (RoomGroup g : roomGroupsList) {
-            for (RoomItem i : g.getItems()) {
-                boolean matched = false;
-                for (FileItem qItem : fileQueue) {
-                    String qName = qItem.getFileName();
-                    String extractedQP = extractQPFromFileName(qName);
-                    if (i.getQpCode().equalsIgnoreCase(extractedQP) || qName.contains("_" + i.getQpCode() + "_") || qName.contains("_" + i.getQpCode() + ".")) {
-                        i.setMatchedFile(qItem);
-                        matched = true;
-                        break;
+            // Identify all unique QP codes currently in this room
+            Set<String> qpCodes = g.getItems().stream()
+                .map(RoomItem::getQpCode)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+            
+            for (String qp : qpCodes) {
+                // Find all matching files in queue for this QP
+                List<FileItem> matches = fileQueue.stream()
+                    .filter(f -> {
+                        String extracted = extractQPFromFileName(f.getFileName());
+                        return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
+                    })
+                    .collect(Collectors.toList());
+                
+                // For each match, ensure a RoomItem exists in this group
+                for (FileItem f : matches) {
+                    boolean exists = g.getItems().stream()
+                        .anyMatch(ri -> ri.getMatchedFile() == f);
+                    
+                    if (!exists) {
+                        // Create a new RoomItem by copying from an existing one with same QP
+                        RoomItem proto = g.getItems().stream()
+                            .filter(ri -> ri.getQpCode().equalsIgnoreCase(qp))
+                            .findFirst().orElse(null);
+                        
+                        if (proto != null) {
+                            RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount());
+                            newItem.setCourseName(proto.getCourseName());
+                            newItem.setMatchedFile(f);
+                            Platform.runLater(() -> {
+                                if (g.getItems().stream().noneMatch(ri -> ri.getMatchedFile() == f)) {
+                                    g.getItems().add(newItem);
+                                }
+                            });
+                        }
                     }
                 }
-                if (!matched) i.setMatchedFile(null);
+            }
+            
+            // Re-link existing items in case matchedFile was null
+            for (RoomItem i : g.getItems()) {
+                if (i.getMatchedFile() == null) {
+                    for (FileItem qItem : fileQueue) {
+                        String qName = qItem.getFileName();
+                        String extractedQP = extractQPFromFileName(qName);
+                        if (i.getQpCode().equalsIgnoreCase(extractedQP) || qName.contains("_" + i.getQpCode() + "_") || qName.contains("_" + i.getQpCode() + ".")) {
+                            i.setMatchedFile(qItem);
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1510,11 +1575,16 @@ public class App extends Application {
             // return; // Commented out for now to see if this is the cause
         }
         logger.info("Triggering saveConfigs. Queue size: {}, Room groups: {}", fileQueue.size(), roomGroupsList.size());
+        
+        // Save System Settings
         config.setRules(List.copyOf(rulesList));
         config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
-        config.setFileQueue(new ArrayList<>(fileQueue));
-        config.setRoomGroups(new ArrayList<>(roomGroupsList));
         configManager.saveConfig(config);
+        
+        // Save Dynamic Data
+        appState.setFileQueue(new ArrayList<>(fileQueue));
+        appState.setRoomGroups(new ArrayList<>(roomGroupsList));
+        configManager.saveAppState(appState);
     }
 
     private VBox createRoomRouterView(Stage stage) {
@@ -1569,6 +1639,12 @@ public class App extends Application {
         scrollPane.setContent(flowPane);
         scrollPane.setFitToWidth(true);
 
+        printCoverPageCbox.setSelected(config.isPrintCoverPage());
+        printCoverPageCbox.setOnAction(e -> {
+            config.setPrintCoverPage(printCoverPageCbox.isSelected());
+            saveConfigs();
+        });
+
         HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearch, printCoverPageCbox);
         header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
@@ -1579,93 +1655,123 @@ public class App extends Application {
     }
 
     private VBox createRoomCard(RoomGroup group) {
-        VBox card = new VBox(10);
-        String defaultStyle = "-fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);";
-        String finishedStyle = "-fx-background-color: #f1f8e9; -fx-border-color: #8bc34a; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(139,195,74,0.3), 10, 0, 0, 5);";
+        VBox card = new VBox(12);
+        String defaultStyle = "-fx-background-color: #ffffff; -fx-border-color: #e0e0e0; -fx-border-radius: 12; -fx-background-radius: 12; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.08), 15, 0, 0, 8);";
+        String finishedStyle = "-fx-background-color: #f9fdf9; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 12; -fx-background-radius: 12; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.15), 15, 0, 0, 8);";
         card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
-        card.setPrefWidth(350);
+        card.setPrefWidth(420); // Maintain spacious width
 
         group.statusProperty().addListener((obs, old, val) -> {
-            if (val != null && val.contains("Finished")) {
-                card.setStyle(finishedStyle);
-            } else {
-                card.setStyle(defaultStyle);
-            }
+            if (val != null && val.contains("Finished")) card.setStyle(finishedStyle);
+            else card.setStyle(defaultStyle);
         });
 
-        int totalQty = group.getItems().stream().mapToInt(RoomItem::getCount).sum();
-        Label title = new Label("Room: " + group.getRoomSerial() + " (Total Qty: " + totalQty + ")");
-        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #333;");
-        title.setMaxWidth(Double.MAX_VALUE);
-        title.setAlignment(javafx.geometry.Pos.CENTER);
+        // Reactive Total Qty calculation: Unify unique QP codes (max count per QP)
+        javafx.beans.binding.IntegerBinding totalQtyBinding = javafx.beans.binding.Bindings.createIntegerBinding(() -> {
+            Map<String, Integer> uniqueQps = new HashMap<>();
+            for (RoomItem ri : group.getItems()) {
+                String qp = ri.getQpCode();
+                if (qp != null) {
+                    uniqueQps.put(qp, Math.max(uniqueQps.getOrDefault(qp, 0), ri.getCount()));
+                }
+            }
+            return uniqueQps.values().stream().mapToInt(Integer::intValue).sum();
+        }, java.util.stream.Stream.concat(java.util.stream.Stream.of(group.getItems()), group.getItems().stream().map(RoomItem::countProperty)).toArray(javafx.beans.Observable[]::new));
+
+        Label title = new Label("Room: " + group.getRoomSerial());
+        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
+        Label subtitle = new Label();
+        subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("Total Students: ", totalQtyBinding.asString()));
+        subtitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        
+        VBox headerArea = new VBox(1, title, subtitle);
+        headerArea.setAlignment(javafx.geometry.Pos.CENTER);
+
+        // Add a listener to force re-bind when items are added/removed (e.g. during split)
+        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
+            subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("Total Students: ", 
+                javafx.beans.binding.Bindings.createIntegerBinding(() -> {
+                    Map<String, Integer> uq = new HashMap<>();
+                    for (RoomItem ri : group.getItems()) {
+                        String qp = ri.getQpCode();
+                        if (qp != null) uq.put(qp, Math.max(uq.getOrDefault(qp, 0), ri.getCount()));
+                    }
+                    return uq.values().stream().mapToInt(Integer::intValue).sum();
+                }, java.util.stream.Stream.concat(java.util.stream.Stream.of(group.getItems()), group.getItems().stream().map(RoomItem::countProperty)).toArray(javafx.beans.Observable[]::new)).asString()
+            ));
+        });
 
         TableView<RoomItem> table = new TableView<>(group.getItems());
-        table.setPrefHeight(180);
+        table.setPrefHeight(230);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.setStyle("-fx-font-size: 11px;");
 
         TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
-        qpCol.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().getDisplayName()));
+        qpCol.setCellValueFactory(d -> {
+            RoomItem ri = d.getValue();
+            return javafx.beans.binding.Bindings.createStringBinding(() -> ri.getDisplayName(), ri.matchedFileProperty());
+        });
+        qpCol.setPrefWidth(90);
         qpCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             private final Label label = new Label();
-            private final Label pin = new Label("\uD83D\uDCCC"); // 📌
-            private final HBox container = new HBox(3, pin, label);
-            {
-                pin.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
-                container.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-            }
+            private final Label icon = new Label();
+            private final HBox container = new HBox(4, icon, label);
+            { container.setAlignment(javafx.geometry.Pos.CENTER_LEFT); }
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) setGraphic(null);
                 else {
-                    label.setText(item);
+                    label.setText(item); label.setStyle("-fx-font-weight: bold;");
                     RoomItem ri = getTableRow().getItem();
                     if (ri != null && ri.getMatchedFile() != null) {
                         FileItem f = ri.getMatchedFile();
-                        int pp = calculatePP(f);
-                        if ("Booklet".equals(f.getStyle()) && pp > 1) {
-                            pin.setVisible(true); pin.setManaged(true);
-                            label.setStyle("-fx-text-fill: white;");
-                        } else {
-                            pin.setVisible(false); pin.setManaged(false);
-                            label.setStyle("-fx-text-fill: inherit;");
-                        }
-                    } else {
-                        pin.setVisible(false); pin.setManaged(false);
-                        label.setStyle("-fx-text-fill: inherit;");
-                    }
+                        String name = f.getFileName().toLowerCase();
+                        boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+                        if (name.startsWith("split_")) { icon.setText("\u2702"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#2196f3") + ";"); }
+                        else if (name.startsWith("remain_")) { icon.setText("\u21BB"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#ff9800") + ";"); }
+                        else { icon.setText("\uD83D\uDCC4"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#666") + ";"); }
+                        if (needStaple) label.setStyle("-fx-font-weight: bold; -fx-text-fill: white;");
+                        else label.setStyle("-fx-font-weight: bold; -fx-text-fill: black;");
+                    } else { icon.setText("\u2757"); icon.setStyle("-fx-text-fill: #f44336;"); }
                     setGraphic(container);
                 }
             }
         });
         
-        TableColumn<RoomItem, String> styleCol = new TableColumn<>("St");
-        styleCol.setCellValueFactory(d -> d.getValue().getMatchedFile() != null ? d.getValue().getMatchedFile().styleProperty() : new SimpleStringProperty("N/A"));
-        styleCol.setPrefWidth(55);
-        styleCol.setMaxWidth(60);
+        TableColumn<RoomItem, String> styleCol = new TableColumn<>("M"); // Mode
+        styleCol.setCellValueFactory(d -> {
+            RoomItem ri = d.getValue();
+            return javafx.beans.binding.Bindings.createStringBinding(() -> {
+                FileItem f = ri.getMatchedFile();
+                return f != null ? f.getStyle() : "-";
+            }, ri.matchedFileProperty());
+        });
+        styleCol.setPrefWidth(35);
         styleCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null || "N/A".equals(item)) { setText(null); setStyle(""); }
+                if (empty || item == null || "-".equals(item)) { setText(null); setStyle(""); }
                 else {
-                    String code = item.substring(0, 1).toUpperCase();
-                    setText(code);
-                    setAlignment(javafx.geometry.Pos.CENTER);
-                    RoomItem ri = getTableRow() != null ? getTableRow().getItem() : null;
-                    boolean inv = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
-                    if ("B".equals(code)) setStyle(inv ? "-fx-text-fill: #ffb74d; -fx-font-weight: bold;" : "-fx-text-fill: #ff9800; -fx-font-weight: bold;");
-                    else if ("D".equals(code)) setStyle(inv ? "-fx-text-fill: #64b5f6; -fx-font-weight: bold;" : "-fx-text-fill: #2196f3; -fx-font-weight: bold;");
-                    else setStyle(inv ? "-fx-text-fill: #81c784; -fx-font-weight: bold;" : "-fx-text-fill: #4caf50; -fx-font-weight: bold;");
+                    String code = item.substring(0,1).toUpperCase();
+                    setText(code); setAlignment(javafx.geometry.Pos.CENTER);
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    if (needStaple) setStyle("-fx-text-fill: white; -fx-font-weight: bold;");
+                    else if ("B".equals(code)) setStyle("-fx-text-fill: #e65100; -fx-font-weight: bold;");
+                    else if ("D".equals(code)) setStyle("-fx-text-fill: #0d47a1; -fx-font-weight: bold;");
+                    else setStyle("-fx-text-fill: #2e7d32; -fx-font-weight: bold;");
                 }
             }
         });
 
-        TableColumn<RoomItem, String> ppCol = new TableColumn<>("PP");
-        ppCol.setPrefWidth(55);
-        ppCol.setMaxWidth(60);
+        TableColumn<RoomItem, String> ppCol = new TableColumn<>("P"); // Pages/PP
+        ppCol.setPrefWidth(45);
         ppCol.setCellValueFactory(d -> {
-            FileItem f = d.getValue().getMatchedFile();
-            if (f == null) return new SimpleStringProperty("-");
-            return new SimpleStringProperty(calculatePP(f) + " PP");
+            RoomItem ri = d.getValue();
+            return javafx.beans.binding.Bindings.createStringBinding(() -> {
+                FileItem f = ri.getMatchedFile();
+                return (f == null) ? "-" : String.valueOf(calculatePP(f));
+            }, ri.matchedFileProperty());
         });
         ppCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
@@ -1673,69 +1779,81 @@ public class App extends Application {
                 if (empty || item == null) setText(null);
                 else { 
                     setText(item); setAlignment(javafx.geometry.Pos.CENTER); 
-                    RoomItem ri = getTableRow() != null ? getTableRow().getItem() : null;
-                    boolean inv = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
-                    setStyle(inv ? "-fx-font-size: 10px; -fx-font-weight: bold; -fx-text-fill: white;" : "-fx-font-size: 10px; -fx-font-weight: bold;"); 
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    setStyle("-fx-font-weight: bold; -fx-text-fill: " + (needStaple ? "white" : "#555") + ";");
                 }
             }
         });
 
-        TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Qty");
+        TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Q"); // Qty
         countCol.setCellValueFactory(d -> new SimpleObjectProperty<>(d.getValue().getCount()));
-        countCol.setPrefWidth(50);
+        countCol.setPrefWidth(40);
         countCol.setCellFactory(tc -> new TableCell<RoomItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setStyle(""); }
-                else {
-                    setText(String.valueOf(item)); setAlignment(javafx.geometry.Pos.CENTER);
-                    RoomItem ri = getTableRow() != null ? getTableRow().getItem() : null;
-                    boolean inv = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
-                    if (inv) setStyle("-fx-text-fill: white;"); else setStyle("");
+                if (empty || item == null) setText(null);
+                else { 
+                    setText(String.valueOf(item)); setAlignment(javafx.geometry.Pos.CENTER); 
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    setStyle("-fx-font-weight: bold; -fx-text-fill: " + (needStaple ? "white" : "black") + ";");
                 }
             }
         });
 
-        TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status");
+        TableColumn<RoomItem, String> statusCol = new TableColumn<>("S"); // Stat
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
+        statusCol.setPrefWidth(55);
         statusCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setStyle(""); }
+                if (empty || item == null) setText(null);
                 else {
-                    setText(item); setAlignment(javafx.geometry.Pos.CENTER);
-                    RoomItem ri = getTableRow() != null ? getTableRow().getItem() : null;
-                    boolean inv = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
-                    if (inv) setStyle("-fx-text-fill: white;"); else setStyle("");
+                    setText(item.startsWith("Fin") ? "OK" : (item.startsWith("Err") ? "ERR" : "PND")); 
+                    setAlignment(javafx.geometry.Pos.CENTER);
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    if (item.contains("Finished")) setStyle("-fx-text-fill: " + (needStaple ? "#81c784" : "#4caf50") + "; -fx-font-weight: bold;");
+                    else if (item.contains("Error")) setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
+                    else setStyle("-fx-text-fill: " + (needStaple ? "#ccc" : "#888") + ";");
                 }
             }
         });
 
-        TableColumn<RoomItem, Void> actionCol = new TableColumn<>("Action");
+        TableColumn<RoomItem, Void> actionCol = new TableColumn<>("");
+        actionCol.setPrefWidth(35);
         actionCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
-            private final Button btn = new Button("Edit & Send");
+            private final Button btn = new Button("\u270F"); // Pencil Icon (Reliable)
             {
-                btn.setStyle("-fx-font-size: 10px; -fx-padding: 2 5; -fx-background-color: #ff9800; -fx-text-fill: white;");
+                btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #2196f3; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
                 btn.setOnAction(e -> {
                     RoomItem item = getTableRow().getItem();
                     if (item != null) {
                         TextInputDialog dialog = new TextInputDialog(String.valueOf(item.getCount()));
-                        dialog.setTitle("Edit Quantity");
-                        dialog.setHeaderText("Update quantity for QP: " + item.getQpCode());
-                        dialog.setContentText("Enter new quantity:");
+                        dialog.setTitle("Edit Qty");
+                        dialog.setHeaderText("QP: " + item.getQpCode());
+                        dialog.setContentText("Enter quantity:");
                         dialog.showAndWait().ifPresent(v -> {
-                            try {
+                            try { 
                                 int newQty = Integer.parseInt(v);
-                                item.setCount(newQty);
-                                printSingleRoomItem(item, group.getSelectedPrinter());
-                            } catch (Exception ex) { }
+                                item.setCount(newQty); 
+                                activityLogger.info("Updated Qty for " + item.getQpCode() + " to " + newQty);
+                                saveConfigs();
+                            } catch (Exception ex) {}
                         });
                     }
                 });
             }
             @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty) setGraphic(null); else setGraphic(btn);
+                if (empty) setGraphic(null); 
+                else {
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    btn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + (needStaple ? "white" : "#2196f3") + "; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
+                    setGraphic(btn);
+                }
             }
         });
 
@@ -1743,66 +1861,47 @@ public class App extends Application {
 
         table.setRowFactory(tv -> {
             TableRow<RoomItem> row = new TableRow<RoomItem>() {
-                @Override
-                protected void updateItem(RoomItem item, boolean empty) {
+                @Override protected void updateItem(RoomItem item, boolean empty) {
                     super.updateItem(item, empty);
-                    if (empty || item == null) {
-                        setStyle("");
-                    } else {
+                    if (empty || item == null) setStyle("");
+                    else {
                         FileItem f = item.getMatchedFile();
-                        if (f != null && "Booklet".equals(f.getStyle()) && calculatePP(f) > 1) {
-                            setStyle("-fx-background-color: #2b2b2b; -fx-text-background-color: white;");
-                        } else {
-                            setStyle("");
-                        }
+                        if (f != null) {
+                            boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+                            if (needStaple) setStyle("-fx-background-color: #2b2b2b;"); // INVERTED for staple needed
+                            else {
+                                String name = f.getFileName().toLowerCase();
+                                if (name.startsWith("split_")) setStyle("-fx-background-color: #f0f7ff;");
+                                else if (name.startsWith("remain_")) setStyle("-fx-background-color: #fffaf0;");
+                                else setStyle("");
+                            }
+                        } else setStyle("-fx-background-color: #fff9f9;");
                     }
                 }
             };
-            row.setOnMouseClicked(event -> {
-                if (event.getClickCount() == 2 && !row.isEmpty()) previewRoomItem(row.getItem());
-            });
+            row.setOnMouseClicked(event -> { if (event.getClickCount() == 2 && !row.isEmpty()) previewRoomItem(row.getItem()); });
             return row;
         });
 
         ComboBox<String> printerCombo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
-        printerCombo.setPromptText("Select Printer");
+        printerCombo.setPromptText("Assign Printer");
         printerCombo.setMaxWidth(Double.MAX_VALUE);
-        printerCombo.setCellFactory(lv -> new ListCell<String>() {
-            @Override protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
-                else {
-                    String status = printerStatusCache.getOrDefault(item, "Ready");
-                    if ("Offline".equalsIgnoreCase(status)) {
-                        setText(item + " (OFFLINE)");
-                        setStyle("-fx-text-fill: #aaa;");
-                        setDisable(true);
-                    } else {
-                        setText(item);
-                        setStyle("-fx-text-fill: black;");
-                        setDisable(false);
-                    }
-                }
-            }
-        });
-        // Also update the button cell (the one shown when the combo is closed)
-        printerCombo.setButtonCell(printerCombo.getCellFactory().call(null));
-        
+        printerCombo.setStyle("-fx-font-size: 13px;");
         printerCombo.valueProperty().bindBidirectional(group.selectedPrinterProperty());
 
-        Button sendBtn = new Button("Send Print");
+        Button sendBtn = new Button("SEND PRINT BATCH");
         sendBtn.setMaxWidth(Double.MAX_VALUE);
-        sendBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+        sendBtn.setStyle("-fx-background-color: #1a237e; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;");
         sendBtn.setOnAction(e -> printRoom(group));
 
         Label roomStatus = new Label();
         roomStatus.textProperty().bind(group.statusProperty());
-        roomStatus.setStyle("-fx-font-style: italic;");
+        roomStatus.setStyle("-fx-font-style: italic; -fx-text-fill: #888; -fx-font-size: 12px;");
+        roomStatus.setMaxWidth(Double.MAX_VALUE); roomStatus.setAlignment(javafx.geometry.Pos.CENTER);
 
         Label printerIndicator = new Label();
         printerIndicator.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;");
         
-        // Listen to printer selection AND global status cache changes
         Runnable updateBtnState = () -> {
             String p = group.getSelectedPrinter();
             if (p != null && !"None".equals(p)) {
@@ -1810,26 +1909,20 @@ public class App extends Application {
                 Platform.runLater(() -> {
                     if ("Offline".equalsIgnoreCase(s)) {
                         printerIndicator.setText("\u26A0 PRINTER OFFLINE");
-                        printerIndicator.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
+                        printerIndicator.setStyle("-fx-text-fill: #f44336;");
                         sendBtn.setDisable(true);
-                        sendBtn.setTooltip(new Tooltip("Cannot print while printer is Offline"));
                     } else {
-                        printerIndicator.setText("\u2714 Printer Ready");
+                        printerIndicator.setText("\u2714 Printer Ready (" + p + ")");
                         printerIndicator.setStyle("-fx-text-fill: #4CAF50;");
                         sendBtn.setDisable(false);
-                        sendBtn.setTooltip(null);
                     }
                 });
             } else {
-                Platform.runLater(() -> {
-                    printerIndicator.setText("");
-                    sendBtn.setDisable(false);
-                });
+                Platform.runLater(() -> { printerIndicator.setText(""); sendBtn.setDisable(false); });
             }
         };
 
         group.selectedPrinterProperty().addListener((o, ov, nv) -> updateBtnState.run());
-        // Periodic check to ensure button state stays in sync with background polls
         Thread btnWatcher = new Thread(() -> {
             while (true) {
                 try { Thread.sleep(2000); updateBtnState.run(); } 
@@ -1839,13 +1932,13 @@ public class App extends Application {
         btnWatcher.setDaemon(true);
         btnWatcher.start();
 
-        card.getChildren().addAll(title, table, printerCombo, printerIndicator, sendBtn, roomStatus);
+        card.getChildren().addAll(headerArea, table, printerCombo, printerIndicator, sendBtn, roomStatus);
         return card;
     }
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.1.6");
+        Label title = new Label("Smart QP Print Manager v3.1.7");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -2097,21 +2190,43 @@ public class App extends Application {
             float cellMargin = 5f;
 
             try (org.apache.pdfbox.pdmodel.PDPageContentStream cs = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)) {
-                // Title
+                float pageWidth = page.getMediaBox().getWidth();
+                
+                // 1. QUESTION PAPER ACCOUNT (Title) - Centered, Halved to 8pt
+                float titleFontSize = 8;
+                org.apache.pdfbox.pdmodel.font.PDFont titleFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
+                String titleText = "QUESTION PAPER ACCOUNT";
+                float titleWidth = titleFont.getStringWidth(titleText) / 1000 * titleFontSize;
                 cs.beginText();
-                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD), 36);
-                cs.newLineAtOffset(margin, yStart - 40);
+                cs.setFont(titleFont, titleFontSize);
+                cs.newLineAtOffset((pageWidth - titleWidth) / 2, yStart - 45);
+                cs.showText(titleText);
+                cs.endText();
+
+                // 2. ROOM: XXX (Room Number) - Centered, Doubled to 96pt
+                float roomFontSize = 96;
+                org.apache.pdfbox.pdmodel.font.PDFont roomFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
                 String safeRoomSerial = group.getRoomSerial() != null ? group.getRoomSerial().replaceAll("[^\\x00-\\x7F]", "") : "";
-                cs.showText("ROOM: " + safeRoomSerial);
-                cs.endText();
-
+                String roomText = "ROOM: " + safeRoomSerial;
+                float roomWidth = roomFont.getStringWidth(roomText) / 1000 * roomFontSize;
                 cs.beginText();
-                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 14);
-                cs.newLineAtOffset(margin, yStart - 70);
-                cs.showText("Smart QP Print Manager - Routing Summary");
+                cs.setFont(roomFont, roomFontSize);
+                cs.newLineAtOffset((pageWidth - roomWidth) / 2, yStart - 130);
+                cs.showText(roomText);
                 cs.endText();
 
-                float yPosition = yStart - 100;
+                // 3. Subtitle - Centered
+                float subFontSize = 12;
+                org.apache.pdfbox.pdmodel.font.PDFont subFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_OBLIQUE);
+                String subText = "Smart QP Print Manager - Routing Summary";
+                float subWidth = subFont.getStringWidth(subText) / 1000 * subFontSize;
+                cs.beginText();
+                cs.setFont(subFont, subFontSize);
+                cs.newLineAtOffset((pageWidth - subWidth) / 2, yStart - 160);
+                cs.showText(subText);
+                cs.endText();
+
+                float yPosition = yStart - 190;
                 float[] colWidths = {40, 100, 250, 80}; // S.No, QP Code, Course Name, Qty
                 String[] headers = {"S.No", "QP Code", "Course Name / File", "Qty"};
 

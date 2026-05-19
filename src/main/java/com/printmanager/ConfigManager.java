@@ -2,6 +2,7 @@ package com.printmanager;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.printmanager.model.Config;
+import com.printmanager.model.AppState;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,32 +16,27 @@ public class ConfigManager {
     private static final Logger logger = LoggerFactory.getLogger(ConfigManager.class);
     private static final String APP_NAME = "SmartQPPrintManager";
     private static final String CONFIG_FILE_NAME = "config.json";
+    private static final String STATE_FILE_NAME = "appstate.json";
     private final ObjectMapper mapper = new ObjectMapper();
 
     public String getConfigPath() {
-        return getResolvedConfigFile().getAbsolutePath();
+        return getResolvedFile(CONFIG_FILE_NAME).getAbsolutePath();
     }
 
-    private File getResolvedConfigFile() {
+    private File getResolvedFile(String fileName) {
         String userDir = System.getProperty("user.dir");
         String os = System.getProperty("os.name").toLowerCase();
         
-        // 1. Determine if we should force AppData (Installed Mode)
-        // If we are in Program Files, we almost certainly want AppData.
         boolean inProgramFiles = userDir.toLowerCase().contains("program files");
+        File localFile = new File(userDir, fileName);
         
-        File localFile = new File(userDir, CONFIG_FILE_NAME);
-        
-        if (!inProgramFiles) {
-            // Check if local directory is truly writable by trying to create/delete a dummy file
-            // canWrite() can sometimes be misleading on Windows due to VirtualStore
-            if (isDirWritable(userDir)) {
+        if (!inProgramFiles && isDirWritable(userDir)) {
+            if (fileName.equals(CONFIG_FILE_NAME)) {
                 logger.info("Portable Mode detected (writable directory): {}", userDir);
-                return localFile;
             }
+            return localFile;
         }
 
-        // 2. Use AppData / User Home (Installed Mode)
         File appDataDir;
         if (os.contains("win")) {
             String appData = System.getenv("APPDATA");
@@ -56,19 +52,16 @@ public class ConfigManager {
         }
 
         if (!appDataDir.exists()) {
-            boolean created = appDataDir.mkdirs();
-            logger.info("Creating AppData directory: {} -> {}", appDataDir.getAbsolutePath(), created);
+            appDataDir.mkdirs();
         }
         
-        File appDataFile = new File(appDataDir, CONFIG_FILE_NAME);
+        File appDataFile = new File(appDataDir, fileName);
         
-        // 3. Seed AppData from Local if AppData is new and Local exists
         if (!appDataFile.exists() && localFile.exists()) {
             try {
                 Files.copy(localFile.toPath(), appDataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                logger.info("Seeded AppData config from local installation: {}", localFile.getAbsolutePath());
             } catch (IOException e) {
-                logger.error("Failed to seed AppData config: {}", e.getMessage());
+                logger.error("Failed to seed AppData file {}: {}", fileName, e.getMessage());
             }
         }
         
@@ -87,15 +80,10 @@ public class ConfigManager {
     }
 
     public Config loadConfig() {
-        File file = getResolvedConfigFile();
-        if (!file.exists()) {
-            logger.info("Config file {} not found, returning default config.", file.getAbsolutePath());
-            return new Config();
-        }
+        File file = getResolvedFile(CONFIG_FILE_NAME);
+        if (!file.exists()) return new Config();
         try {
-            logger.info("Loading config from: {}", file.getAbsolutePath());
-            Config cfg = mapper.readValue(file, Config.class);
-            return cfg;
+            return mapper.readValue(file, Config.class);
         } catch (IOException e) {
             logger.error("Error loading config from {}: {}", file.getAbsolutePath(), e.getMessage());
             return new Config();
@@ -103,18 +91,37 @@ public class ConfigManager {
     }
 
     public void saveConfig(Config config) {
-        File file = getResolvedConfigFile();
+        File file = getResolvedFile(CONFIG_FILE_NAME);
         try {
-            logger.info("Saving config to: {}", file.getAbsolutePath());
-            // Ensure parent directory exists again just in case
             File parent = file.getParentFile();
-            if (parent != null && !parent.exists()) {
-                parent.mkdirs();
-            }
+            if (parent != null && !parent.exists()) parent.mkdirs();
             mapper.writerWithDefaultPrettyPrinter().writeValue(file, config);
             logger.info("Configuration saved successfully to {}", file.getAbsolutePath());
         } catch (IOException e) {
             logger.error("Error saving config to {}: {}", file.getAbsolutePath(), e.getMessage());
+        }
+    }
+
+    public AppState loadAppState() {
+        File file = getResolvedFile(STATE_FILE_NAME);
+        if (!file.exists()) return new AppState();
+        try {
+            return mapper.readValue(file, AppState.class);
+        } catch (IOException e) {
+            logger.error("Error loading app state from {}: {}", file.getAbsolutePath(), e.getMessage());
+            return new AppState();
+        }
+    }
+
+    public void saveAppState(AppState state) {
+        File file = getResolvedFile(STATE_FILE_NAME);
+        try {
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            mapper.writerWithDefaultPrettyPrinter().writeValue(file, state);
+            logger.info("App state saved successfully to {}", file.getAbsolutePath());
+        } catch (IOException e) {
+            logger.error("Error saving app state to {}: {}", file.getAbsolutePath(), e.getMessage());
         }
     }
 }

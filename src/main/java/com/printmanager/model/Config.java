@@ -7,9 +7,10 @@ public class Config {
     private List<PrintRule> rules = new ArrayList<>();
     private String splitKeyword = "";
     private List<SmartSplitRule> smartSplitRules = new ArrayList<>();
-    private List<FileItem> fileQueue = new ArrayList<>();
-    private List<RoomGroup> roomGroups = new ArrayList<>();
     private String collegeId = "";
+    private String collegeName = "Your Institution Name";
+    private String currentExamDate = "";
+    private String currentExamSession = "";
     private String baseDownloadPath = "";
     private boolean printCoverPage = true;
 
@@ -19,6 +20,15 @@ public class Config {
             smartSplitRules.add(new SmartSplitRule());
         }
     }
+
+    public String getCollegeName() { return collegeName; }
+    public void setCollegeName(String collegeName) { this.collegeName = collegeName; }
+
+    public String getCurrentExamDate() { return currentExamDate; }
+    public void setCurrentExamDate(String currentExamDate) { this.currentExamDate = currentExamDate; }
+
+    public String getCurrentExamSession() { return currentExamSession; }
+    public void setCurrentExamSession(String currentExamSession) { this.currentExamSession = currentExamSession; }
 
     public boolean isPrintCoverPage() { return printCoverPage; }
     public void setPrintCoverPage(boolean printCoverPage) { this.printCoverPage = printCoverPage; }
@@ -34,12 +44,6 @@ public class Config {
 
     public List<SmartSplitRule> getSmartSplitRules() { return smartSplitRules; }
     public void setSmartSplitRules(List<SmartSplitRule> smartSplitRules) { this.smartSplitRules = smartSplitRules; }
-
-    public List<FileItem> getFileQueue() { return fileQueue; }
-    public void setFileQueue(List<FileItem> fileQueue) { this.fileQueue = fileQueue; }
-
-    public List<RoomGroup> getRoomGroups() { return roomGroups; }
-    public void setRoomGroups(List<RoomGroup> roomGroups) { this.roomGroups = roomGroups; }
 
     public String getBaseDownloadPath() { return baseDownloadPath; }
     public void setBaseDownloadPath(String baseDownloadPath) { this.baseDownloadPath = baseDownloadPath; }

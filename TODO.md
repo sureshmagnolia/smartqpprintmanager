@@ -2,9 +2,7 @@
 
 This document outlines planned and proposed features to enhance the Smart QP Print Manager, specifically for high-volume academic environments (e.g., printing question papers).
 
-## 🚀 High Priority (Accuracy & Organization)
-- [ ] **Smart Subject Detection:** Implement Regex-based metadata extraction to automatically identify "Subject Code", "Course Name", and "Semester" from the first page of PDFs.
-- [ ] **Job Separator Pages:** Automatically generate and insert cover pages between different subjects to simplify physical sorting.
+## ðŸš€ High Priority (Accuracy & Organization)
 - [ ] **Print Auditing:** Create a persistent log (CSV/PDF) of all print jobs, including timestamps, file metadata, and printer status for accountability.
 
 ## 🛠️ Medium Priority (Efficiency & Quality)
