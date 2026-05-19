@@ -46,6 +46,7 @@ public class PDFViewer {
     public void show(File file, boolean isInitialAdd, FileItemCallback onResult) {
         this.currentFile = file;
         Stage stage = new Stage();
+        if (App.appIcon != null) stage.getIcons().add(App.appIcon);
         stage.setTitle("PDF Viewer & Manual Split: " + file.getName());
 
         contentBox = new VBox(10);

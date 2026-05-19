@@ -1,60 +1,31 @@
 {
   "rules" : [ {
+    "name" : "Normal Print (1-2 QP Pages)",
     "minPages" : 1,
-    "maxPages" : 1,
-    "printerName" : "Default Printer",
-    "duplex" : false,
-    "booklet" : false,
-    "bindingType" : "Left",
-    "keywords" : "",
-    "copies" : 1,
-    "paperSize" : "A4"
-  }, {
-    "minPages" : 2,
     "maxPages" : 2,
-    "printerName" : "Default Printer",
-    "duplex" : true,
-    "booklet" : false,
-    "bindingType" : "Left",
-    "keywords" : "",
-    "copies" : 1,
-    "paperSize" : "A4"
+    "targetPrinter" : "None",
+    "style" : "Simplex"
   }, {
+    "name" : "Duplex Print (3-4 QP Pages)",
     "minPages" : 3,
     "maxPages" : 4,
-    "printerName" : "Default Printer",
-    "duplex" : true,
-    "booklet" : true,
-    "bindingType" : "Left",
-    "keywords" : "",
-    "copies" : 1,
-    "paperSize" : "A4"
+    "targetPrinter" : "None",
+    "style" : "Duplex"
   }, {
+    "name" : "Booklet Print (5+ QP Pages)",
     "minPages" : 5,
-    "maxPages" : 16,
-    "printerName" : "Default Printer",
-    "duplex" : false,
-    "booklet" : true,
-    "bindingType" : "Left",
-    "keywords" : "",
-    "copies" : 1,
-    "paperSize" : "A4"
+    "maxPages" : 100,
+    "targetPrinter" : "None",
+    "style" : "Booklet"
   } ],
-  "splitKeyword" : "",
-  "smartSplitRules" : [ {
-    "enabled" : true,
-    "keyword" : "Multiple Choice Questions for SDE",
-    "beforePrefix" : "Main_",
-    "afterPrefix" : "MCQ_",
-    "beforeStyle1" : "Simplex",
-    "beforeStyle2" : "Duplex",
-    "beforeStyle3Plus" : "Booklet",
-    "afterStyle1" : "Simplex",
-    "afterStyle2" : "Duplex",
-    "afterStyle3To4" : "Booklet",
-    "special5PageMode" : true,
-    "afterStyle6Plus" : "Booklet"
+  "splitRules" : [ {
+    "name" : "Split Main/MCQ (6-page paper)",
+    "totalPageLimit" : 6,
+    "splitPage" : 4
   } ],
   "fileQueue" : [ ],
-  "roomGroups" : [ ]
+  "roomGroups" : [ ],
+  "collegeId" : "",
+  "baseDownloadPath" : "C:\\",
+  "printCoverPage" : true
 }
