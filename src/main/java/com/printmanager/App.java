@@ -192,7 +192,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.1.9");
+        primaryStage.setTitle("Smart QP Print Manager v3.1.10");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -233,29 +233,33 @@ public class App extends Application {
         simAlertHeader.setVisible(active);
     }
 
-    private void startPrinterStatusMonitor() {
-        // Immediate initial poll
-        analysisExecutor.submit(() -> {
-            try {
-                Map<String, String> initial = printService.getPrintersStatus();
-                Platform.runLater(() -> printerStatusCache.putAll(initial));
-            } catch (Exception e) { logger.error("Initial poll error", e); }
-        });
+    private final ObservableList<PrinterDisplay> printerDisplays = FXCollections.observableArrayList();
 
+    private void startPrinterStatusMonitor() {
         Thread monitorThread = new Thread(() -> {
             while (true) {
                 try {
-                    Map<String, String> currentStatus = printService.getPrintersStatus();
+                    // Fetch detailed status once per cycle
+                    Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
+                    
                     Platform.runLater(() -> {
+                        // 1. Update simple status cache (for row indicators)
                         printerStatusCache.clear();
-                        printerStatusCache.putAll(currentStatus);
+                        detailed.forEach((name, data) -> printerStatusCache.put(name, data.get("status")));
+                        
+                        // 2. Update dashboard displays
+                        for (PrinterDisplay pd : printerDisplays) {
+                            if (detailed.containsKey(pd.getName())) {
+                                Map<String, String> data = detailed.get(pd.getName());
+                                pd.setStatus(data.get("status"));
+                                pd.setActiveJobs(data.get("jobs"));
+                                pd.setCurrentTask(data.get("current"));
+                            }
+                        }
                     });
-                    Thread.sleep(10000); 
-                } catch (InterruptedException e) {
-                    break;
-                } catch (Exception e) {
-                    logger.error("Printer monitor error", e);
-                }
+                    Thread.sleep(5000); 
+                } catch (InterruptedException e) { break; }
+                catch (Exception e) { logger.error("Printer monitor error", e); }
             }
         });
         monitorThread.setDaemon(true);
@@ -1676,7 +1680,7 @@ public class App extends Application {
                 }
             }
             return uniqueQps.values().stream().mapToInt(Integer::intValue).sum();
-        }, java.util.stream.Stream.concat(java.util.stream.Stream.of(group.getItems()), group.getItems().stream().map(RoomItem::countProperty)).toArray(javafx.beans.Observable[]::new));
+        }, group.getItems());
 
         Label title = new Label("Room: " + group.getRoomSerial());
         title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
@@ -1684,22 +1688,17 @@ public class App extends Application {
         subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("Total Students: ", totalQtyBinding.asString()));
         subtitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
         
+        // Listener to refresh binding when individual quantities change
+        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
+            while (c.next()) {
+                if (c.wasAdded()) c.getAddedSubList().forEach(ri -> ri.countProperty().addListener(o -> totalQtyBinding.invalidate()));
+            }
+            totalQtyBinding.invalidate();
+        });
+        group.getItems().forEach(ri -> ri.countProperty().addListener(o -> totalQtyBinding.invalidate()));
+
         VBox headerArea = new VBox(1, title, subtitle);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
-
-        // Add a listener to force re-bind when items are added/removed (e.g. during split)
-        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
-            subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("Total Students: ", 
-                javafx.beans.binding.Bindings.createIntegerBinding(() -> {
-                    Map<String, Integer> uq = new HashMap<>();
-                    for (RoomItem ri : group.getItems()) {
-                        String qp = ri.getQpCode();
-                        if (qp != null) uq.put(qp, Math.max(uq.getOrDefault(qp, 0), ri.getCount()));
-                    }
-                    return uq.values().stream().mapToInt(Integer::intValue).sum();
-                }, java.util.stream.Stream.concat(java.util.stream.Stream.of(group.getItems()), group.getItems().stream().map(RoomItem::countProperty)).toArray(javafx.beans.Observable[]::new)).asString()
-            ));
-        });
 
         TableView<RoomItem> table = new TableView<>(group.getItems());
         table.setPrefHeight(230);
@@ -1963,7 +1962,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.1.9");
+        Label title = new Label("Smart QP Print Manager v3.1.10");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");

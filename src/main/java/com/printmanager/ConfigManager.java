@@ -81,13 +81,41 @@ public class ConfigManager {
 
     public Config loadConfig() {
         File file = getResolvedFile(CONFIG_FILE_NAME);
-        if (!file.exists()) return new Config();
-        try {
-            return mapper.readValue(file, Config.class);
-        } catch (IOException e) {
-            logger.error("Error loading config from {}: {}", file.getAbsolutePath(), e.getMessage());
-            return new Config();
+        Config config = null;
+        
+        if (file.exists()) {
+            try {
+                config = mapper.readValue(file, Config.class);
+                logger.info("Configuration loaded from {}", file.getAbsolutePath());
+            } catch (IOException e) {
+                logger.error("Error loading config from {}: {}", file.getAbsolutePath(), e.getMessage());
+            }
         }
+        
+        // If config is missing or has no rules, try loading from resources as a fallback
+        if (config == null || config.getRules().isEmpty()) {
+            try (java.io.InputStream is = getClass().getResourceAsStream("/config.default.json")) {
+                if (is != null) {
+                    config = mapper.readValue(is, Config.class);
+                    logger.info("Loaded default configuration from resources fallback.");
+                }
+            } catch (IOException e) {
+                logger.error("Failed to load default configuration from resources: {}", e.getMessage());
+            }
+        }
+        
+        if (config == null) config = new Config();
+        
+        // Final safety: Ensure smartSplitRules is not null and has at least the default rule if empty
+        if (config.getSmartSplitRules() == null || config.getSmartSplitRules().isEmpty()) {
+            com.printmanager.model.SmartSplitRule defaultRule = new com.printmanager.model.SmartSplitRule();
+            defaultRule.setKeyword("Multiple Choice Questions for SDE");
+            defaultRule.setEnabled(true);
+            config.getSmartSplitRules().add(defaultRule);
+            logger.info("Injected missing default SmartSplitRule.");
+        }
+        
+        return config;
     }
 
     public void saveConfig(Config config) {

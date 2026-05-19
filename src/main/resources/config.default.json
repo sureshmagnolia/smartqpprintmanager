@@ -1,0 +1,67 @@
+{
+  "rules" : [ {
+    "minPages" : 1,
+    "maxPages" : 1,
+    "printerName" : "Default Printer",
+    "duplex" : false,
+    "booklet" : false,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 2,
+    "maxPages" : 2,
+    "printerName" : "Default Printer",
+    "duplex" : true,
+    "booklet" : false,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 3,
+    "maxPages" : 4,
+    "printerName" : "Default Printer",
+    "duplex" : true,
+    "booklet" : true,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  }, {
+    "minPages" : 5,
+    "maxPages" : 100,
+    "printerName" : "Default Printer",
+    "duplex" : false,
+    "booklet" : true,
+    "bindingType" : "Left",
+    "keywords" : "",
+    "copies" : 1,
+    "paperSize" : "A4"
+  } ],
+  "splitKeyword" : "",
+  "smartSplitRules" : [ {
+    "enabled" : true,
+    "keyword" : "Multiple Choice Questions for SDE",
+    "beforePrefix" : "Main_",
+    "afterPrefix" : "MCQ_",
+    "beforeStyle1" : "Simplex",
+    "beforeStyle2" : "Duplex",
+    "beforeStyle3Plus" : "Booklet",
+    "afterStyle1" : "Simplex",
+    "afterStyle2" : "Duplex",
+    "afterStyle3To4" : "Booklet",
+    "special5PageMode" : true,
+    "afterOverlayText" : "MCQ",
+    "skipThresholds" : "5,9",
+    "skipKeywordPage" : true,
+    "afterStyle6Plus" : "Booklet"
+  } ],
+  "collegeId" : "",
+  "collegeName" : "Your Institution Name",
+  "currentExamDate" : "",
+  "currentExamSession" : "",
+  "baseDownloadPath" : "C:\\",
+  "printCoverPage" : true
+}
