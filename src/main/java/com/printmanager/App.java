@@ -192,7 +192,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.1.7");
+        primaryStage.setTitle("Smart QP Print Manager v3.1.8");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -1719,14 +1719,14 @@ public class App extends Application {
             { container.setAlignment(javafx.geometry.Pos.CENTER_LEFT); }
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) setGraphic(null);
+                if (empty || item == null) { setGraphic(null); setStyle(""); }
                 else {
                     label.setText(item); label.setStyle("-fx-font-weight: bold;");
                     RoomItem ri = getTableRow().getItem();
                     if (ri != null && ri.getMatchedFile() != null) {
                         FileItem f = ri.getMatchedFile();
-                        String name = f.getFileName().toLowerCase();
                         boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+                        String name = f.getFileName().toLowerCase();
                         if (name.startsWith("split_")) { icon.setText("\u2702"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#2196f3") + ";"); }
                         else if (name.startsWith("remain_")) { icon.setText("\u21BB"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#ff9800") + ";"); }
                         else { icon.setText("\uD83D\uDCC4"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#666") + ";"); }
@@ -1744,7 +1744,7 @@ public class App extends Application {
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
                 FileItem f = ri.getMatchedFile();
                 return f != null ? f.getStyle() : "-";
-            }, ri.matchedFileProperty());
+            }, ri.matchedFileProperty(), (ri.getMatchedFile() != null ? ri.getMatchedFile().styleProperty() : null));
         });
         styleCol.setPrefWidth(35);
         styleCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
@@ -1764,19 +1764,19 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, String> ppCol = new TableColumn<>("P"); // Pages/PP
+        TableColumn<RoomItem, String> ppCol = new TableColumn<>("PS"); // Printed Sheets
         ppCol.setPrefWidth(45);
         ppCol.setCellValueFactory(d -> {
             RoomItem ri = d.getValue();
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
                 FileItem f = ri.getMatchedFile();
                 return (f == null) ? "-" : String.valueOf(calculatePP(f));
-            }, ri.matchedFileProperty());
+            }, ri.matchedFileProperty(), (ri.getMatchedFile() != null ? ri.getMatchedFile().pageCountProperty() : null), (ri.getMatchedFile() != null ? ri.getMatchedFile().styleProperty() : null));
         });
         ppCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
+                if (empty || item == null) { setText(null); setStyle(""); }
                 else { 
                     setText(item); setAlignment(javafx.geometry.Pos.CENTER); 
                     RoomItem ri = getTableRow().getItem();
@@ -1792,7 +1792,7 @@ public class App extends Application {
         countCol.setCellFactory(tc -> new TableCell<RoomItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
+                if (empty || item == null) { setText(null); setStyle(""); }
                 else { 
                     setText(String.valueOf(item)); setAlignment(javafx.geometry.Pos.CENTER); 
                     RoomItem ri = getTableRow().getItem();
@@ -1808,7 +1808,7 @@ public class App extends Application {
         statusCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
+                if (empty || item == null) { setText(null); setStyle(""); }
                 else {
                     setText(item.startsWith("Fin") ? "OK" : (item.startsWith("Err") ? "ERR" : "PND")); 
                     setAlignment(javafx.geometry.Pos.CENTER);
@@ -1847,7 +1847,7 @@ public class App extends Application {
             }
             @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty) setGraphic(null); 
+                if (empty) { setGraphic(null); setStyle(""); }
                 else {
                     RoomItem ri = getTableRow().getItem();
                     boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
@@ -1860,25 +1860,50 @@ public class App extends Application {
         table.getColumns().addAll(qpCol, styleCol, ppCol, countCol, statusCol, actionCol);
 
         table.setRowFactory(tv -> {
-            TableRow<RoomItem> row = new TableRow<RoomItem>() {
-                @Override protected void updateItem(RoomItem item, boolean empty) {
-                    super.updateItem(item, empty);
-                    if (empty || item == null) setStyle("");
+            TableRow<RoomItem> row = new TableRow<RoomItem>();
+            
+            // Helper to update row style based on item properties
+            Runnable updateRowStyle = () -> {
+                RoomItem item = row.getItem();
+                if (item != null && item.getMatchedFile() != null) {
+                    FileItem f = item.getMatchedFile();
+                    boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+                    if (needStaple) row.setStyle("-fx-background-color: #2b2b2b;"); // INVERTED for staple needed
                     else {
-                        FileItem f = item.getMatchedFile();
-                        if (f != null) {
-                            boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
-                            if (needStaple) setStyle("-fx-background-color: #2b2b2b;"); // INVERTED for staple needed
-                            else {
-                                String name = f.getFileName().toLowerCase();
-                                if (name.startsWith("split_")) setStyle("-fx-background-color: #f0f7ff;");
-                                else if (name.startsWith("remain_")) setStyle("-fx-background-color: #fffaf0;");
-                                else setStyle("");
-                            }
-                        } else setStyle("-fx-background-color: #fff9f9;");
+                        String name = f.getFileName().toLowerCase();
+                        if (name.startsWith("split_")) row.setStyle("-fx-background-color: #f0f7ff;");
+                        else if (name.startsWith("remain_")) row.setStyle("-fx-background-color: #fffaf0;");
+                        else row.setStyle("");
                     }
+                } else if (item != null && item.getMatchedFile() == null) {
+                    row.setStyle("-fx-background-color: #fff9f9;");
+                } else {
+                    row.setStyle("");
                 }
             };
+
+            row.itemProperty().addListener((obs, old, nv) -> {
+                if (old != null) {
+                    old.matchedFileProperty().removeListener((o, v, n) -> updateRowStyle.run());
+                }
+                if (nv != null) {
+                    updateRowStyle.run();
+                    nv.matchedFileProperty().addListener((o, v, n) -> {
+                        updateRowStyle.run();
+                        if (n != null) {
+                            n.styleProperty().addListener((o2, v2, n2) -> updateRowStyle.run());
+                            n.pageCountProperty().addListener((o2, v2, n2) -> updateRowStyle.run());
+                        }
+                    });
+                    if (nv.getMatchedFile() != null) {
+                        nv.getMatchedFile().styleProperty().addListener((o2, v2, n2) -> updateRowStyle.run());
+                        nv.getMatchedFile().pageCountProperty().addListener((o2, v2, n2) -> updateRowStyle.run());
+                    }
+                } else {
+                    row.setStyle("");
+                }
+            });
+
             row.setOnMouseClicked(event -> { if (event.getClickCount() == 2 && !row.isEmpty()) previewRoomItem(row.getItem()); });
             return row;
         });
@@ -1938,7 +1963,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.1.7");
+        Label title = new Label("Smart QP Print Manager v3.1.8");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
