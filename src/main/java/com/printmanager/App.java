@@ -174,7 +174,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.1.4");
+        primaryStage.setTitle("Smart QP Print Manager v3.1.5");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -1706,7 +1706,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.1.4");
+        Label title = new Label("Smart QP Print Manager v3.1.5");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");

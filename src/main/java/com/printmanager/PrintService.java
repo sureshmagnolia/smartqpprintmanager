@@ -216,8 +216,11 @@ public class PrintService {
         }
 
         try (PDDocument document = Loader.loadPDF(processedFile)) {
+            java.awt.print.PrinterJob job = java.awt.print.PrinterJob.getPrinterJob();
+            
+            // Find and set the specific printer service
+            javax.print.PrintService[] services = javax.print.PrintServiceLookup.lookupPrintServices(null, null);
             javax.print.PrintService selectedService = null;
-            javax.print.PrintService[] services = PrintServiceLookup.lookupPrintServices(null, null);
             for (javax.print.PrintService service : services) {
                 if (service.getName().equalsIgnoreCase(printerName)) {
                     selectedService = service;
@@ -228,50 +231,26 @@ public class PrintService {
             if (selectedService == null) {
                 throw new PrinterException("Printer not found: " + printerName);
             }
+            job.setPrintService(selectedService);
 
-            DocPrintJob job = selectedService.createPrintJob();
-            
-            job.addPrintJobListener(new PrintJobAdapter() {
-                @Override
-                public void printDataTransferCompleted(PrintJobEvent pje) {
-                    statusCallback.accept("Sent ✓");
-                }
-
-                @Override
-                public void printJobCompleted(PrintJobEvent pje) {
-                    statusCallback.accept("Finished ✔");
-                }
-
-                @Override
-                public void printJobFailed(PrintJobEvent pje) {
-                    statusCallback.accept("Error: Failed");
-                }
-
-                @Override
-                public void printJobCanceled(PrintJobEvent pje) {
-                    statusCallback.accept("Canceled");
-                }
-
-                @Override
-                public void printJobNoMoreEvents(PrintJobEvent pje) {
-                    // Fallback for drivers that don't support printJobCompleted
-                    statusCallback.accept("Finished ✔");
-                }
-            });
-
+            // Configure Print Attributes
             PrintRequestAttributeSet attributes = new HashPrintRequestAttributeSet();
             attributes.add(new javax.print.attribute.standard.Copies(copies));
             attributes.add(new JobName(item.getFileName(), null));
             attributes.add(javax.print.attribute.standard.PrintQuality.HIGH);
 
+            // FORCE Paper Size Selection with specific printable area to nudge smart printers
             if ("A3".equalsIgnoreCase(paperSize)) {
                 attributes.add(javax.print.attribute.standard.MediaSizeName.ISO_A3);
+                // A3 dimensions: 297 x 420 mm
+                attributes.add(new javax.print.attribute.standard.MediaPrintableArea(5, 5, 287, 410, javax.print.attribute.standard.MediaPrintableArea.MM));
             } else {
                 attributes.add(javax.print.attribute.standard.MediaSizeName.ISO_A4);
+                // A4 dimensions: 210 x 297 mm
+                attributes.add(new javax.print.attribute.standard.MediaPrintableArea(5, 5, 200, 287, javax.print.attribute.standard.MediaPrintableArea.MM));
             }
 
             if (booklet) {
-                // For booklets, the sheets are already generated in landscape by PDFService
                 attributes.add(Sides.TWO_SIDED_SHORT_EDGE);
                 attributes.add(OrientationRequested.LANDSCAPE);
             } else if (duplex) {
@@ -282,12 +261,26 @@ public class PrintService {
                 attributes.add(OrientationRequested.PORTRAIT);
             }
 
-            // Use PDFPageable with high-quality settings
-            PDFPageable pageable = new PDFPageable(document);
-            Doc doc = new SimpleDoc(pageable, DocFlavor.SERVICE_FORMATTED.PAGEABLE, null);
-            job.print(doc, attributes);
+            // CRITICAL: Derive the PageFormat from the hardware attributes to force compliance
+            java.awt.print.PageFormat pf = job.getPageFormat(attributes);
+            
+            // Use PDFPrintable with Scaling to handle internal PDF dimension mismatches (Scale to Fit)
+            org.apache.pdfbox.printing.PDFPrintable printable = new org.apache.pdfbox.printing.PDFPrintable(document, org.apache.pdfbox.printing.Scaling.SHRINK_TO_FIT);
+            
+            // Create a Book to wrap the printable with the forced PageFormat
+            java.awt.print.Book book = new java.awt.print.Book();
+            book.append(printable, pf, document.getNumberOfPages());
+            job.setPageable(book);
 
-        } catch (PrintException e) {
+            statusCallback.accept("Sent ✓");
+            
+            // Execute the print job
+            job.print(attributes);
+            
+            statusCallback.accept("Finished ✔");
+
+        } catch (Exception e) {
+            logger.error("Print Error: ", e);
             throw new PrinterException(e.getMessage());
         } finally {
             for (File tf : tempFiles) {
