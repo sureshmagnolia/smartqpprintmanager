@@ -86,7 +86,7 @@ public class App extends Application {
 
     private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4);
     private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(10);
+    private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(2);
 
     private Config config;
     private AppState appState;
@@ -103,6 +103,7 @@ public class App extends Application {
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
+    private Button printAllBtn;
     private final javafx.collections.ObservableMap<String, String> printerStatusCache = FXCollections.observableHashMap();
     private final HBox simAlertHeader = new HBox();
     private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
@@ -192,7 +193,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.1.10");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.0");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -362,6 +363,22 @@ public class App extends Application {
         simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
         simWarning.managedProperty().bind(simAlertHeader.managedProperty());
 
+        Label mapAlert = new Label("CHECK FOR MAPS");
+        mapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        mapAlert.setVisible(false);
+        mapAlert.managedProperty().bind(mapAlert.visibleProperty());
+
+        javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), mapAlert);
+        ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
+
+        Label stapleAlert = new Label("\uD83D\uDCCC STAPLE ALERT");
+        stapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        stapleAlert.setVisible(false);
+        stapleAlert.managedProperty().bind(stapleAlert.visibleProperty());
+
+        javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), stapleAlert);
+        ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
+
         fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
             totalJobs.setText("Total Jobs: " + fileQueue.size());
             totalPages.setText("Total Pages: " + fileQueue.stream().mapToInt(FileItem::getPageCount).sum());
@@ -371,7 +388,15 @@ public class App extends Application {
             while(true) {
                 try {
                     long active = printerStatusCache.values().stream().filter(s -> "Ready".equalsIgnoreCase(s) || "Printing".equalsIgnoreCase(s)).count();
-                    Platform.runLater(() -> activePrinters.setText("Active Printers: " + active));
+                    boolean hasHistory = fileQueue.stream().anyMatch(f -> f.getFileName() != null && f.getFileName().toLowerCase().contains("history")) ||
+                                         roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+                    boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
+                                         .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
+                    Platform.runLater(() -> {
+                        activePrinters.setText("Active Printers: " + active);
+                        mapAlert.setVisible(hasHistory);
+                        stapleAlert.setVisible(hasStaple);
+                    });
                     Thread.sleep(5000);
                 } catch (Exception e) { break; }
             }
@@ -379,7 +404,9 @@ public class App extends Application {
         statsThread.setDaemon(true);
         statsThread.start();
 
-        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, simWarning);
+        HBox alertsBox = new HBox(8, mapAlert, stapleAlert);
+        alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, alertsBox, simWarning);
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
@@ -589,20 +616,57 @@ public class App extends Application {
             private final Button vBtn = new Button("\uD83D\uDC41");
             private final Button rBtn = new Button("X");
             private final HBox container = new HBox(8, pBtn, sBtn, vBtn, rBtn);
+            private javafx.beans.value.ChangeListener<String> statusListener = null;
             {
                 container.setAlignment(javafx.geometry.Pos.CENTER);
-                pBtn.setOnAction(e -> { if (getTableRow().getItem() != null) printFile(getTableRow().getItem()); });
+                pBtn.setOnAction(e -> {
+                    FileItem item = getTableRow().getItem();
+                    if (item == null) return;
+                    if ("Sent".equals(pBtn.getText())) {
+                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                        alert.setTitle("Print Confirmation");
+                        alert.setHeaderText("Already Sent!");
+                        alert.setContentText("This file has already been sent to the printer.\nAre you sure you want to print it again?");
+                        alert.showAndWait().ifPresent(response -> {
+                            if (response == ButtonType.OK) {
+                                pBtn.setText("Sending...");
+                                pBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold;");
+                                pBtn.setDisable(true);
+                                printFile(item);
+                            }
+                        });
+                    } else {
+                        pBtn.setText("Sending...");
+                        pBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold;");
+                        pBtn.setDisable(true);
+                        printFile(item);
+                    }
+                });
                 sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
-                // Eye button -> Rendered Preview
                 vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), false, true); });
                 rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
                 rBtn.setStyle("-fx-text-fill: red;");
             }
             @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty) setGraphic(null); else setGraphic(container);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    setGraphic(null);
+                    return;
+                }
+                FileItem fi = getTableRow().getItem();
+                // Remove old listener if row was recycled
+                if (statusListener != null && fi != null) {
+                    fi.statusProperty().removeListener(statusListener);
+                }
+                // Sync button state from current status
+                syncPrintBtnState(pBtn, fi.getStatus());
+                // Listen for future status changes
+                statusListener = (obs, ov, nv) -> Platform.runLater(() -> syncPrintBtnState(pBtn, nv));
+                fi.statusProperty().addListener(statusListener);
+                setGraphic(container);
             }
         });
+
 
         table.getColumns().addAll(snCol, nameCol, pagesCol, copiesCol, styleCol, printerCol, paperCol, statusCol, actionCol);
 
@@ -639,7 +703,14 @@ public class App extends Application {
         Button printBtn = new Button("Print All");
         printBtn.setId("print-btn");
         printBtn.setTooltip(new Tooltip("Print all files in the queue that have a printer assigned"));
-        printBtn.setOnAction(e -> printAll());
+        printAllBtn = printBtn;
+        printBtn.setOnAction(e -> {
+            if (isPrintingAll) return;
+            printBtn.setText("Sending...");
+            printBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold;");
+            printBtn.setDisable(true);
+            printAll();
+        });
 
         Button clearBtn = new Button("Clear All");
         clearBtn.setId("clear-btn");
@@ -1039,6 +1110,26 @@ public class App extends Application {
         }
     }
 
+    private void syncPrintBtnState(Button pBtn, String status) {
+        if (status == null || status.isEmpty() || status.equals("Ready") || status.equals("Queued")) {
+            pBtn.setText("Print");
+            pBtn.setStyle("");
+            pBtn.setDisable(false);
+        } else if (status.contains("Printing") || status.contains("Sending")) {
+            pBtn.setText("Sending...");
+            pBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold;");
+            pBtn.setDisable(true);
+        } else if (status.contains("Finished")) {
+            pBtn.setText("Sent");
+            pBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+            pBtn.setDisable(false);
+        } else if (status.contains("Error") || status.contains("Skipped")) {
+            pBtn.setText("Retry");
+            pBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
+            pBtn.setDisable(false);
+        }
+    }
+
     private void printFile(FileItem item) {
         if ("None".equals(item.getTargetPrinter())) { updateStatus("Error: No Printer"); return; }
         
@@ -1075,6 +1166,11 @@ public class App extends Application {
     private void printAll() {
         if (isPrintingAll) return;
         isPrintingAll = true;
+        if (printAllBtn != null) Platform.runLater(() -> {
+            printAllBtn.setText("Sending...");
+            printAllBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold;");
+            printAllBtn.setDisable(true);
+        });
         printQueueExecutor.submit(() -> {
             try {
                 for (FileItem item : List.copyOf(fileQueue)) {
@@ -1088,7 +1184,14 @@ public class App extends Application {
                     Thread.sleep(1000);
                 }
             } catch (Exception e) { logger.error("Batch error", e); }
-            finally { isPrintingAll = false; }
+            finally {
+                isPrintingAll = false;
+                if (printAllBtn != null) Platform.runLater(() -> {
+                    printAllBtn.setText("✔ Sent");
+                    printAllBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+                    printAllBtn.setDisable(false);
+                });
+            }
         });
     }
 
@@ -1567,10 +1670,13 @@ public class App extends Application {
     }
 
     private void updateRowStyle(TableRow<FileItem> row, String status) {
-        if (status == null) row.setStyle("");
+        FileItem item = row.getItem();
+        boolean isHistory = item != null && item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+
+        if (status == null) row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "");
         else if (status.contains("Finished")) row.setStyle("-fx-background-color: #c8e6c9;"); 
         else if (status.contains("Error")) row.setStyle("-fx-background-color: #ffcdd2;");    
-        else row.setStyle("");
+        else row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "");
     }
 
     private void saveConfigs() {
@@ -1649,7 +1755,39 @@ public class App extends Application {
             saveConfigs();
         });
 
-        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearch, printCoverPageCbox);
+        Label roomMapAlert = new Label("CHECK FOR MAPS");
+        roomMapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        roomMapAlert.setVisible(false);
+        roomMapAlert.managedProperty().bind(roomMapAlert.visibleProperty());
+
+        javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomMapAlert);
+        ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
+
+        Label roomStapleAlert = new Label("\uD83D\uDCCC STAPLE ALERT");
+        roomStapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        roomStapleAlert.setVisible(false);
+        roomStapleAlert.managedProperty().bind(roomStapleAlert.visibleProperty());
+
+        javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomStapleAlert);
+        ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
+
+        Runnable updateRoomAlerts = () -> {
+            boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+            boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
+                                  .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
+            roomMapAlert.setVisible(hasHistory);
+            roomStapleAlert.setVisible(hasStaple);
+        };
+        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> updateRoomAlerts.run());
+        updateRoomAlerts.run();
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox roomAlertsBox = new HBox(8, roomMapAlert, roomStapleAlert);
+        roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearch, printCoverPageCbox, spacer, roomAlertsBox);
         header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         VBox layout = new VBox(20, header, scrollPane);
@@ -1864,18 +2002,22 @@ public class App extends Application {
             // Helper to update row style based on item properties
             Runnable updateRowStyle = () -> {
                 RoomItem item = row.getItem();
+                boolean isHistory = item != null && ((item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
+                                                     (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history")));
+
                 if (item != null && item.getMatchedFile() != null) {
                     FileItem f = item.getMatchedFile();
                     boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
                     if (needStaple) row.setStyle("-fx-background-color: #2b2b2b;"); // INVERTED for staple needed
                     else {
                         String name = f.getFileName().toLowerCase();
-                        if (name.startsWith("split_")) row.setStyle("-fx-background-color: #f0f7ff;");
+                        if (isHistory) row.setStyle("-fx-background-color: #fff9c4;");
+                        else if (name.startsWith("split_")) row.setStyle("-fx-background-color: #f0f7ff;");
                         else if (name.startsWith("remain_")) row.setStyle("-fx-background-color: #fffaf0;");
                         else row.setStyle("");
                     }
                 } else if (item != null && item.getMatchedFile() == null) {
-                    row.setStyle("-fx-background-color: #fff9f9;");
+                    row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "-fx-background-color: #fff9f9;");
                 } else {
                     row.setStyle("");
                 }
@@ -1915,8 +2057,74 @@ public class App extends Application {
 
         Button sendBtn = new Button("SEND PRINT BATCH");
         sendBtn.setMaxWidth(Double.MAX_VALUE);
-        sendBtn.setStyle("-fx-background-color: #1a237e; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;");
-        sendBtn.setOnAction(e -> printRoom(group));
+        String defaultBtnStyle = "-fx-background-color: #1a237e; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
+        String sendingBtnStyle = "-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
+        String sentBtnStyle = "-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
+        String errorBtnStyle = "-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
+        
+        sendBtn.setStyle(defaultBtnStyle);
+        sendBtn.setOnAction(e -> {
+            if ("Sending...".equals(sendBtn.getText())) return;
+            if ("Sent".equals(sendBtn.getText())) {
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                alert.setTitle("Print Confirmation");
+                alert.setHeaderText("Already Sent!");
+                alert.setContentText("This room batch has already been sent to the printer.\nAre you sure you want to print it again?");
+                alert.showAndWait().ifPresent(response -> {
+                    if (response == ButtonType.OK) {
+                        sendBtn.setText("Sending...");
+                        sendBtn.setStyle(sendingBtnStyle);
+                        sendBtn.setDisable(true);
+                        printRoom(group);
+                    }
+                });
+            } else {
+                sendBtn.setText("Sending...");
+                sendBtn.setStyle(sendingBtnStyle);
+                sendBtn.setDisable(true);
+                printRoom(group);
+            }
+        });
+
+        group.statusProperty().addListener((obs, old, val) -> {
+            Platform.runLater(() -> {
+                if (val != null) {
+                    if (val.contains("Sending")) {
+                        sendBtn.setText("Sending...");
+                        sendBtn.setStyle(sendingBtnStyle);
+                        sendBtn.setDisable(true);
+                    } else if (val.contains("Finished")) {
+                        sendBtn.setText("Sent");
+                        sendBtn.setStyle(sentBtnStyle);
+                        sendBtn.setDisable(false);
+                    } else if (val.contains("Error")) {
+                        sendBtn.setText("Error - Try Again");
+                        sendBtn.setStyle(errorBtnStyle);
+                        sendBtn.setDisable(false);
+                    } else {
+                        sendBtn.setText("SEND PRINT BATCH");
+                        sendBtn.setStyle(defaultBtnStyle);
+                        if (!"Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(group.getSelectedPrinter(), "Ready"))) {
+                            sendBtn.setDisable(false);
+                        }
+                    }
+                }
+            });
+        });
+
+        if (group.getStatus() != null) {
+            if (group.getStatus().contains("Sending")) {
+                sendBtn.setText("Sending...");
+                sendBtn.setStyle(sendingBtnStyle);
+                sendBtn.setDisable(true);
+            } else if (group.getStatus().contains("Finished")) {
+                sendBtn.setText("Sent");
+                sendBtn.setStyle(sentBtnStyle);
+            } else if (group.getStatus().contains("Error")) {
+                sendBtn.setText("Error - Try Again");
+                sendBtn.setStyle(errorBtnStyle);
+            }
+        }
 
         Label roomStatus = new Label();
         roomStatus.textProperty().bind(group.statusProperty());
@@ -1934,15 +2142,18 @@ public class App extends Application {
                     if ("Offline".equalsIgnoreCase(s)) {
                         printerIndicator.setText("\u26A0 PRINTER OFFLINE");
                         printerIndicator.setStyle("-fx-text-fill: #f44336;");
-                        sendBtn.setDisable(true);
+                        if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(true);
                     } else {
                         printerIndicator.setText("\u2714 Printer Ready (" + p + ")");
                         printerIndicator.setStyle("-fx-text-fill: #4CAF50;");
-                        sendBtn.setDisable(false);
+                        if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(false);
                     }
                 });
             } else {
-                Platform.runLater(() -> { printerIndicator.setText(""); sendBtn.setDisable(false); });
+                Platform.runLater(() -> { 
+                    printerIndicator.setText(""); 
+                    if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(false); 
+                });
             }
         };
 
@@ -1962,7 +2173,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.1.10");
+        Label title = new Label("Smart QP Print Manager v3.2.0");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -2189,12 +2400,13 @@ public class App extends Application {
                 final boolean finalSuccess = allSuccess;
                 Platform.runLater(() -> {
                     group.setStatus(finalSuccess ? "Finished" : "Partial Error");
-                    saveConfigs();
                     if (finalSuccess) activityLogger.success("Room " + group.getRoomSerial() + " printed successfully.");
                     else activityLogger.error("Room " + group.getRoomSerial() + " completed with ERRORS.");
                 });
+                synchronized (this) { saveConfigs(); }
             } catch (Exception e) { 
-                Platform.runLater(() -> { group.setStatus("Error"); saveConfigs(); });
+                Platform.runLater(() -> { group.setStatus("Error"); });
+                synchronized (this) { saveConfigs(); }
                 logger.error("Room print error", e);
             }
         });
@@ -2216,23 +2428,33 @@ public class App extends Application {
             try (org.apache.pdfbox.pdmodel.PDPageContentStream cs = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)) {
                 float pageWidth = page.getMediaBox().getWidth();
                 
-                // 1. QUESTION PAPER ACCOUNT (Title) - Centered, Halved to 8pt
-                float titleFontSize = 8;
-                org.apache.pdfbox.pdmodel.font.PDFont titleFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
-                String titleText = "QUESTION PAPER ACCOUNT";
-                float titleWidth = titleFont.getStringWidth(titleText) / 1000 * titleFontSize;
-                cs.beginText();
-                cs.setFont(titleFont, titleFontSize);
-                cs.newLineAtOffset((pageWidth - titleWidth) / 2, yStart - 45);
-                cs.showText(titleText);
-                cs.endText();
+                // 1. Removed old title text per request
 
-                // 2. ROOM: XXX (Room Number) - Centered, Doubled to 96pt
+                // 2. Room Number - Centered, 96pt, in a square box with white background
                 float roomFontSize = 96;
                 org.apache.pdfbox.pdmodel.font.PDFont roomFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
                 String safeRoomSerial = group.getRoomSerial() != null ? group.getRoomSerial().replaceAll("[^\\x00-\\x7F]", "") : "";
-                String roomText = "ROOM: " + safeRoomSerial;
+                String roomText = safeRoomSerial; // Only the number
                 float roomWidth = roomFont.getStringWidth(roomText) / 1000 * roomFontSize;
+                
+                // Draw white background box with border
+                float boxPaddingX = 30f;
+                float boxPaddingY = 15f;
+                float boxWidth = roomWidth + 2 * boxPaddingX;
+                float boxHeight = roomFontSize * 0.75f + 2 * boxPaddingY; // Approximate font cap height
+                float boxX = (pageWidth - boxWidth) / 2;
+                float boxY = yStart - 130 - (roomFontSize * 0.15f);
+                
+                cs.setNonStrokingColor(1f, 1f, 1f); // White fill
+                cs.addRect(boxX, boxY, boxWidth, boxHeight);
+                cs.fill();
+                
+                cs.setStrokingColor(0f, 0f, 0f); // Black border
+                cs.setLineWidth(2f);
+                cs.addRect(boxX, boxY, boxWidth, boxHeight);
+                cs.stroke();
+                
+                cs.setNonStrokingColor(0f, 0f, 0f); // Black text
                 cs.beginText();
                 cs.setFont(roomFont, roomFontSize);
                 cs.newLineAtOffset((pageWidth - roomWidth) / 2, yStart - 130);
@@ -2242,7 +2464,7 @@ public class App extends Application {
                 // 3. Subtitle - Centered
                 float subFontSize = 12;
                 org.apache.pdfbox.pdmodel.font.PDFont subFont = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_OBLIQUE);
-                String subText = "Smart QP Print Manager - Routing Summary";
+                String subText = "Question Paper Account";
                 float subWidth = subFont.getStringWidth(subText) / 1000 * subFontSize;
                 cs.beginText();
                 cs.setFont(subFont, subFontSize);
@@ -2315,15 +2537,17 @@ public class App extends Application {
             // Sanitize text for standard Type1 PDF fonts (ASCII only) to prevent IllegalArgumentException
             text = text.replaceAll("[^\\x00-\\x7F]", "");
             
-            // Simple text truncation for width
-            float textWidth = font.getStringWidth(text) / 1000 * fontSize;
-            while (textWidth > widths[i] - 10 && text.length() > 3) {
-                text = text.substring(0, text.length() - 4) + "...";
-                textWidth = font.getStringWidth(text) / 1000 * fontSize;
+            // Adjust font size to fit width instead of truncating (abridging)
+            float currentFontSize = fontSize;
+            float textWidth = font.getStringWidth(text) / 1000 * currentFontSize;
+            while (textWidth > widths[i] - 10 && currentFontSize > 4f) {
+                currentFontSize -= 0.5f;
+                textWidth = font.getStringWidth(text) / 1000 * currentFontSize;
             }
-
+            
+            cs.setFont(font, currentFontSize);
             float textX = curX + (widths[i] - textWidth) / 2;
-            float textY = y - height + (height - fontSize) / 2 + 2;
+            float textY = y - height + (height - currentFontSize) / 2 + 2;
             cs.newLineAtOffset(textX, textY);
             cs.showText(text);
             cs.endText();
