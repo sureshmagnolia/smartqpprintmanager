@@ -136,6 +136,30 @@ public class PrintService {
         return statusMap;
     }
 
+    public File applyTopLeftOverlay(File source, String text) throws IOException {
+        File target = File.createTempFile("qp_overlay_", ".pdf");
+        try (PDDocument doc = Loader.loadPDF(source)) {
+            org.apache.pdfbox.pdmodel.font.PDFont font = new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD);
+            float fontSize = 12;
+
+            for (org.apache.pdfbox.pdmodel.PDPage page : doc.getPages()) {
+                try (org.apache.pdfbox.pdmodel.PDPageContentStream stream = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page, org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode.APPEND, true, true)) {
+                    stream.beginText();
+                    stream.setFont(font, fontSize);
+                    
+                    float x = 25; // Left margin
+                    float y = page.getMediaBox().getHeight() - 25; // Top margin
+
+                    stream.newLineAtOffset(x, y);
+                    stream.showText(text);
+                    stream.endText();
+                }
+            }
+            doc.save(target);
+        }
+        return target;
+    }
+
     public File applyOverlayInternal(File source, String text) throws IOException {
         File target = File.createTempFile("overlay_", ".pdf");
         try (PDDocument doc = Loader.loadPDF(source)) {

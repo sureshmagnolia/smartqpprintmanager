@@ -193,7 +193,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.0");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.1");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -410,6 +410,12 @@ public class App extends Application {
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
+        HBox.setHgrow(searchField, Priority.ALWAYS);
+        Button clearSearchBtn = new Button("Clear");
+        clearSearchBtn.setOnAction(e -> searchField.clear());
+        HBox searchBox = new HBox(5, searchField, clearSearchBtn);
+        searchBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
         searchField.textProperty().addListener((obs, old, newValue) -> {
             filteredQueue.setPredicate(item -> {
                 if (newValue == null || newValue.isEmpty()) return true;
@@ -643,7 +649,7 @@ public class App extends Application {
                     }
                 });
                 sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
-                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), false, true); });
+                vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), true, true); });
                 rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
                 rBtn.setStyle("-fx-text-fill: red;");
             }
@@ -732,7 +738,7 @@ public class App extends Application {
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
-        VBox layout = new VBox(10, statsDash, searchField, table, btns);
+        VBox layout = new VBox(10, statsDash, searchBox, table, btns);
         VBox.setVgrow(table, Priority.ALWAYS);
         layout.setPadding(new Insets(10));
         return layout;
@@ -832,6 +838,16 @@ public class App extends Application {
 
         table.getColumns().addAll(nameCol, statusCol, healthCol, jobsCol, taskCol);
 
+        table.setRowFactory(tv -> {
+            TableRow<PrinterDisplay> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && !row.isEmpty()) {
+                    openWindowsPrinterQueue(row.getItem().getName());
+                }
+            });
+            return row;
+        });
+
         printService.getAvailablePrinters().stream()
             .filter(n -> !"None".equals(n))
             .forEach(n -> {
@@ -867,6 +883,17 @@ public class App extends Application {
         layout.setAlignment(javafx.geometry.Pos.CENTER);
         VBox.setVgrow(table, Priority.ALWAYS);
         return layout;
+    }
+
+    private void openWindowsPrinterQueue(String printerName) {
+        try {
+            // rundll32.exe printui.dll,PrintUIEntry /o /n "Printer Name"
+            Runtime.getRuntime().exec("rundll32.exe printui.dll,PrintUIEntry /o /n \"" + printerName + "\"");
+            activityLogger.info("Opening Windows printer queue for: " + printerName);
+        } catch (Exception e) {
+            logger.error("Failed to open printer queue for " + printerName, e);
+            activityLogger.error("Failed to open printer queue for " + printerName);
+        }
     }
 
     private void processFile(File file) {
@@ -951,6 +978,18 @@ public class App extends Application {
                 }
             }
         } else {
+            // Main Part: Apply QP Overlay if keyword suggests MCQ/SDE
+            if (rule.getKeyword().toUpperCase().contains("MCQ") || rule.getKeyword().toUpperCase().contains("SDE")) {
+                String qp = extractQPFromFileName(originalName);
+                if (qp != null) {
+                    try {
+                        File overlaid = printService.applyTopLeftOverlay(file, qp);
+                        f = overlaid;
+                    } catch (Exception e) {
+                        logger.error("Failed to apply QP overlay", e);
+                    }
+                }
+            }
             if (pages == 1) style = rule.getBeforeStyle1();
             else if (pages == 2) style = rule.getBeforeStyle2();
             else style = rule.getBeforeStyle3Plus();
@@ -1723,6 +1762,12 @@ public class App extends Application {
         roomSearch.setPromptText("Filter rooms or QP codes...");
         roomSearch.setPrefWidth(300);
         roomSearch.setStyle("-fx-font-size: 14px; -fx-padding: 10;");
+        
+        Button clearRoomSearchBtn = new Button("Clear");
+        clearRoomSearchBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10;");
+        clearRoomSearchBtn.setOnAction(e -> roomSearch.clear());
+        HBox roomSearchBox = new HBox(5, roomSearch, clearRoomSearchBtn);
+        roomSearchBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         ScrollPane scrollPane = new ScrollPane();
         FlowPane flowPane = new FlowPane();
@@ -1787,7 +1832,7 @@ public class App extends Application {
         HBox roomAlertsBox = new HBox(8, roomMapAlert, roomStapleAlert);
         roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
-        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearch, printCoverPageCbox, spacer, roomAlertsBox);
+        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, spacer, roomAlertsBox);
         header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         VBox layout = new VBox(20, header, scrollPane);
@@ -2053,6 +2098,28 @@ public class App extends Application {
         printerCombo.setPromptText("Assign Printer");
         printerCombo.setMaxWidth(Double.MAX_VALUE);
         printerCombo.setStyle("-fx-font-size: 13px;");
+        
+        printerCombo.setCellFactory(lv -> new ListCell<String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) setText(null);
+                else {
+                    String status = printerStatusCache.getOrDefault(item, "Ready");
+                    if ("Offline".equalsIgnoreCase(status)) {
+                        setText(item + " (OFFLINE)");
+                        setStyle("-fx-text-fill: #aaa;");
+                        setDisable(true);
+                    } else {
+                        setText(item);
+                        setStyle("-fx-text-fill: black;");
+                        setDisable(false);
+                    }
+                }
+            }
+        });
+        // Button cell for closed state
+        printerCombo.setButtonCell(printerCombo.getCellFactory().call(null));
+
         printerCombo.valueProperty().bindBidirectional(group.selectedPrinterProperty());
 
         Button sendBtn = new Button("SEND PRINT BATCH");
@@ -2173,7 +2240,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.2.0");
+        Label title = new Label("Smart QP Print Manager v3.2.1");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");

@@ -1,5 +1,5 @@
 @echo off
-set VERSION=3.1.10
+set VERSION=3.2.0
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;%PATH%
 
@@ -35,4 +35,9 @@ echo Creating EXE Installer...
 jpackage --type exe --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser
 copy "output\%APPNAME%-%VERSION%.exe" "%APPNAME%-V%VERSION%.exe"
 
+echo Creating MSI Installer...
+jpackage --type msi --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser
+copy "output\%APPNAME%-%VERSION%.msi" "%APPNAME%-V%VERSION%.msi"
+
 echo Packaging Complete.
+
