@@ -59,9 +59,11 @@
     "afterStyle6Plus" : "Booklet"
   } ],
   "collegeId" : "",
+  "portalUsername" : "SMS121933",
+  "portalPassword" : "Csno1972#",
   "collegeName" : "Your Institution Name",
   "currentExamDate" : "",
   "currentExamSession" : "",
-  "baseDownloadPath" : "C:\\",
+  "baseDownloadPath" : "D:\\",
   "printCoverPage" : true
 }

@@ -193,7 +193,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.1");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.2");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -2240,7 +2240,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.2.1");
+        Label title = new Label("Smart QP Print Manager v3.2.2");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -2784,8 +2784,21 @@ public class App extends Application {
                     public void onLoadEnd(CefBrowser browser, org.cef.browser.CefFrame frame, int httpStatusCode) {
                         if (frame.isMain()) {
                             String url = browser.getURL();
+                            String u = config.getPortalUsername();
+                            String p = config.getPortalPassword();
+                            String autofillScript = (u != null && !u.isEmpty() && p != null && !p.isEmpty()) ? 
+                                "  if (window.location.href.indexOf('collegeportal.uoc.ac.in') !== -1) { " +
+                                "    var user = document.getElementById('id_username') || document.getElementById('username') || document.querySelector('input[name=\"username\"]'); " +
+                                "    var pass = document.getElementById('id_password') || document.getElementById('password') || document.querySelector('input[name=\"password\"]'); " +
+                                "    if (user && pass && !user.value) { " +
+                                "      user.value = '" + u + "'; " +
+                                "      pass.value = '" + p + "'; " +
+                                "    } " +
+                                "  } " : "";
+
                             String injectionScript = 
                                 "(function() { " +
+                                autofillScript +
                                 "  setInterval(function() { " +
                                 "    var btns = document.querySelectorAll('.btn_download'); " +
                                 "    if (btns.length > 0) { " +
@@ -3008,13 +3021,31 @@ public class App extends Application {
         syncBtn.setTooltip(new Tooltip("Scan the current session folder and re-process all PDFs (Overwrites existing queue entries)"));
         syncBtn.setOnAction(e -> syncSessionFolder());
 
+        // Portal Login Credentials (Moved from Settings)
+        TextField portalUserField = new TextField(config.getPortalUsername());
+        portalUserField.setPromptText("University Portal Username");
+        portalUserField.setPrefWidth(250);
+        PasswordField portalPassField = new PasswordField();
+        portalPassField.setText(config.getPortalPassword());
+        portalPassField.setPromptText("University Portal Password");
+        portalPassField.setPrefWidth(250);
+        Button savePortalBtn = new Button("Save Portal Credentials");
+        savePortalBtn.setOnAction(e -> {
+            config.setPortalUsername(portalUserField.getText().trim());
+            config.setPortalPassword(portalPassField.getText());
+            saveConfigs();
+            activityLogger.info("Portal credentials saved.");
+        });
+        HBox portalCredsBox = new HBox(10, new Label("Username:"), portalUserField, new Label("Password:"), portalPassField, savePortalBtn);
+        portalCredsBox.setAlignment(javafx.geometry.Pos.CENTER);
+
         Button launchBtn = new Button("Launch Smart Browser");
         launchBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-padding: 15 30;");
         launchBtn.setOnAction(e -> {
             if (downloadPathField.getText().isEmpty()) { new Alert(Alert.AlertType.WARNING, "Please select a Save Folder first!").show(); return; }
             openSmartBrowser();
         });
-        layout.getChildren().addAll(info, sessionBox, pathBox, syncBtn, launchBtn);
+        layout.getChildren().addAll(info, sessionBox, pathBox, syncBtn, new Separator(), new Label("University Portal Login (Auto-fill):") {{ setStyle("-fx-font-weight: bold;"); }}, portalCredsBox, new Separator(), launchBtn);
         return layout;
     }
 

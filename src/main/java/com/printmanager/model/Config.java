@@ -8,6 +8,8 @@ public class Config {
     private String splitKeyword = "";
     private List<SmartSplitRule> smartSplitRules = new ArrayList<>();
     private String collegeId = "";
+    private String portalUsername = "";
+    private String portalPassword = "";
     private String collegeName = "Your Institution Name";
     private String currentExamDate = "";
     private String currentExamSession = "";
@@ -35,6 +37,12 @@ public class Config {
 
     public String getCollegeId() { return collegeId; }
     public void setCollegeId(String collegeId) { this.collegeId = collegeId; }
+
+    public String getPortalUsername() { return portalUsername; }
+    public void setPortalUsername(String portalUsername) { this.portalUsername = portalUsername; }
+
+    public String getPortalPassword() { return portalPassword; }
+    public void setPortalPassword(String portalPassword) { this.portalPassword = portalPassword; }
 
     public List<PrintRule> getRules() { return rules; }
     public void setRules(List<PrintRule> rules) { this.rules = rules; }
