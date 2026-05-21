@@ -193,7 +193,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.2");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.3");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -2240,7 +2240,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.2.2");
+        Label title = new Label("Smart QP Print Manager v3.2.3");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -2722,6 +2722,50 @@ public class App extends Application {
                         } else if (request.equals("check_session")) {
                             String s = sessionNameField.getText().trim();
                             callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;
+                        } else if (request.equals("request_portal_data")) {
+                            CefBrowser portalBrowser = null;
+                            for (CefBrowser b : browserAddressBars.keySet()) {
+                                if (b.getURL().contains("collegeportal.uoc.ac.in")) { portalBrowser = b; break; }
+                            }
+                            if (portalBrowser == null) {
+                                callback.failure(1, "University Portal tab not found.");
+                            } else {
+                                String scraper = "(function() { " +
+                                    "  try { " +
+                                    "    var rows = document.querySelectorAll('table tr'); " +
+                                    "    var results = []; " +
+                                    "    rows.forEach(function(row) { " +
+                                    "      var cells = row.querySelectorAll('td'); " +
+                                    "      if (cells.length >= 3) { " +
+                                    "        var qp = cells[1].innerText.trim(); " +
+                                    "        var subject = cells[2].innerText.trim(); " +
+                                    "        if (/^\\\\d+$/.test(qp)) { results.push(qp + '\\\\t' + subject); } " +
+                                    "      } " +
+                                    "    }); " +
+                                    "    if (results.length > 0) { window.cefQuery({request: 'portal_data_relay:' + results.join('\\\\n')}); } " +
+                                    "    else { window.cefQuery({request: 'portal_error:NO DATA FOUND'}); } " +
+                                    "  } catch(e) { window.cefQuery({request: 'portal_error:SCRAPE FAILED'}); } " +
+                                    "})();";
+                                portalBrowser.executeJavaScript(scraper, portalBrowser.getURL(), 0);
+                                callback.success("OK");
+                            }
+                            return true;
+                        } else if (request.startsWith("portal_data_relay:")) {
+                            String data = request.substring(18);
+                            for (CefBrowser b : browserAddressBars.keySet()) {
+                                if (b.getURL().contains("examflow-india.web.app") || b.getURL().contains("localhost")) {
+                                    b.executeJavaScript("if (window.receivePortalData) window.receivePortalData(`" + data.replace("`", "\\`") + "`);", b.getURL(), 0);
+                                }
+                            }
+                            callback.success("OK"); return true;
+                        } else if (request.startsWith("portal_error:")) {
+                            String err = request.substring(13);
+                            for (CefBrowser b : browserAddressBars.keySet()) {
+                                if (b.getURL().contains("examflow-india.web.app") || b.getURL().contains("localhost")) {
+                                    b.executeJavaScript("if (window.portalError) window.portalError('" + err + "');", b.getURL(), 0);
+                                }
+                            }
+                            callback.success("OK"); return true;
                         }
                         return false;
                     }
@@ -2787,22 +2831,22 @@ public class App extends Application {
                             String u = config.getPortalUsername();
                             String p = config.getPortalPassword();
                             String autofillScript = (u != null && !u.isEmpty() && p != null && !p.isEmpty()) ? 
-                                "  if (window.location.href.indexOf('collegeportal.uoc.ac.in') !== -1) { " +
-                                "    var user = document.getElementById('id_username') || document.getElementById('username') || document.querySelector('input[name=\"username\"]'); " +
-                                "    var pass = document.getElementById('id_password') || document.getElementById('password') || document.querySelector('input[name=\"password\"]'); " +
-                                "    if (user && pass && !user.value) { " +
-                                "      user.value = '" + u + "'; " +
-                                "      pass.value = '" + p + "'; " +
-                                "    } " +
-                                "  } " : "";
+                                "    if (window.location.href.indexOf('collegeportal.uoc.ac.in') !== -1) { " +
+                                "      var user = document.getElementById('id_username') || document.getElementById('username') || document.querySelector('input[name=\"username\"]'); " +
+                                "      var pass = document.getElementById('id_password') || document.getElementById('password') || document.querySelector('input[name=\"password\"]'); " +
+                                "      if (user && pass && !user.value) { " +
+                                "        user.value = `" + u.replace("`", "\\`") + "`; " +
+                                "        pass.value = `" + p.replace("`", "\\`") + "`; " +
+                                "      } " +
+                                "    } " : "";
 
                             String injectionScript = 
                                 "(function() { " +
-                                autofillScript +
                                 "  setInterval(function() { " +
-                                "    var btns = document.querySelectorAll('.btn_download'); " +
-                                "    if (btns.length > 0) { " +
-                                "      try { " +
+                                "    try { " +
+                                autofillScript +
+                                "      var btns = document.querySelectorAll('.btn_download'); " +
+                                "      if (btns.length > 0) { " +
                                 "        var raw = ''; " +
                                 "        var inp = document.getElementById('examdate'); " +
                                 "        if (inp && inp.value) { raw = inp.value; } " +
@@ -2826,63 +2870,90 @@ public class App extends Application {
                                 "          var suf = (row && row.cells[2].innerText.indexOf('PM') !== -1) ? 'AN' : 'FN'; " +
                                 "          window.cefQuery({ request: 'session:' + f + ' ' + suf }); " +
                                 "        } " +
-                                "      } catch(e) {} " +
-                                "      if (!document.getElementById('smart-bulk-header')) { " +
-                                "        var h = document.createElement('div'); " +
-                                "        h.id = 'smart-bulk-header'; " +
-                                "        h.style.background = '#f8f9fa'; h.style.padding = '15px'; h.style.marginBottom = '20px'; " +
-                                "        h.style.border = '1px solid #dee2e6'; h.style.borderRadius = '8px'; " +
-                                "        h.style.display = 'flex'; h.style.alignItems = 'center'; h.style.justifyContent = 'space-between'; " +
-                                "        h.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)'; " +
-                                "        var t = document.createElement('span'); " +
-                                "        t.innerText = 'Smart Print: Found ' + btns.length + ' Question Papers'; " +
-                                "        t.style.fontWeight = 'bold'; t.style.color = '#333'; t.style.fontSize = '16px'; " +
-                                "        var b = document.createElement('button'); " +
-                                "        b.id = 'smart-bulk-btn'; b.innerText = 'Start Bulk Download & Queue'; " +
-                                "        b.style.background = '#28a745'; b.style.color = 'white'; b.style.padding = '10px 20px'; " +
-                                "        b.style.borderRadius = '5px'; b.style.cursor = 'pointer'; b.style.border = 'none'; b.style.fontWeight = 'bold'; " +
-                                "        b.onclick = function() { " +
-                                "          window.cefQuery({ request: 'check_session', onSuccess: function(res) { " +
-                                "            if(res === 'MISSING') { alert('Please enter Detected Session name in the App first!'); return; } " +
-                                "            if(!confirm('Start automated download for ' + btns.length + ' papers?')) return; " +
-                                "            b.disabled = true; " +
-                                "            for (var i = 0; i < btns.length; i++) { " +
-                                "              (function(idx) { " +
-                                "                setTimeout(function() { " +
+                                "        if (!document.getElementById('smart-bulk-header')) { " +
+                                "          var h = document.createElement('div'); h.id = 'smart-bulk-header'; " +
+                                "          h.style.cssText = 'background:#f8f9fa; padding:15px; margin-bottom:20px; border:1px solid #dee2e6; border-radius:8px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 2px 4px rgba(0,0,0,0.05);'; " +
+                                "          var t = document.createElement('span'); t.innerText = 'Smart Print: Found ' + btns.length + ' Question Papers'; t.style.fontWeight = 'bold'; " +
+                                "          var b = document.createElement('button'); b.id = 'smart-bulk-btn'; b.innerText = 'Start Bulk Download & Queue'; " +
+                                "          b.style.cssText = 'background:#28a745; color:white; padding:10px 20px; border-radius:5px; cursor:pointer; border:none; fontWeight:bold;'; " +
+                                "          b.onclick = function() { " +
+                                "            window.cefQuery({ request: 'check_session', onSuccess: function(res) { " +
+                                "              if(res === 'MISSING') { alert('Please enter Detected Session name in the App first!'); return; } " +
+                                "              if(!confirm('Start automated download for ' + btns.length + ' papers?')) return; " +
+                                "              b.disabled = true; " +
+                                "              for (var i = 0; i < btns.length; i++) { " +
+                                "                (function(idx) { setTimeout(function() { " +
                                 "                  b.innerText = '⌛ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
                                 "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
                                 "                  var time = r.cells[2].innerText.replace(/:/g, '_'); " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
-                                "                  var rowText = r.innerText.toUpperCase(); " +
-                                "                  var prefix = 'REG'; " +
-                                "                  if (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) prefix = 'EDE'; " +
+                                "                  var rowText = r.innerText.toUpperCase(); var prefix = (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) ? 'EDE' : 'REG'; " +
                                 "                  var fname = prefix + '_' + dp + '_' + time + '_' + r.cells[0].innerText + '_' + r.cells[1].innerText.replace(/[^a-z0-9]/gi, '_'); " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
-                                "                  if (idx === btns.length - 1) { " +
-                                "                    b.innerText = '✓ All Files Queued'; " +
-                                "                    setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); " +
-                                "                  } " +
-                                "                }, idx * 1000); " +
-                                "              })(i); " +
+                                "                  if (idx === btns.length - 1) { b.innerText = '✓ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
+                                "                }, idx * 1000); })(i); " +
+                                "              } " +
+                                "            }}); " +
+                                "          }; " +
+                                "          h.appendChild(t); h.appendChild(b); " +
+                                "          var target = document.querySelector('.table-responsive') || document.querySelector('table') || document.body.firstChild; " +
+                                "          if(target) target.parentNode.insertBefore(h, target); " +
+                                "        } " +
+                                "      } " +
+                                "      if (window.location.href.indexOf('examflow-india.web.app') !== -1 || window.location.href.indexOf('localhost') !== -1) { " +
+                                "        if (!window.receivePortalData) { " +
+                                "          window.receivePortalData = function(text) { " +
+                                "            const lines = text.split('\\n').filter(l => l.trim().length > 0); " +
+                                "            const parsed = lines.map(line => { const p = line.split('\\t'); return { c: p[0].trim(), s: p[1].trim().toUpperCase() }; }); " +
+                                "            let mCount = 0; " +
+                                "            document.querySelectorAll('#qp-code-container input[data-course]').forEach(input => { " +
+                                "              const uiN = input.dataset.course.toUpperCase(); " +
+                                "              const match = parsed.find(p => uiN.indexOf(p.s) !== -1 || p.s.indexOf(uiN) !== -1); " +
+                                "              if (match) { input.value = match.c; mCount++; } " +
+                                "            }); " +
+                                "            if (mCount > 0) { " +
+                                "               var st = document.getElementById('qp-code-status'); " +
+                                "               if (st) { st.style.color = 'red'; st.innerText = 'Auto-filled ' + mCount + ' codes from Portal. Click SAVE.'; } " +
                                 "            } " +
-                                "          }}); " +
-                                "        }; " +
-                                "        h.appendChild(t); h.appendChild(b); " +
-                                "        var target = document.querySelector('.table-responsive') || document.querySelector('table') || document.body.firstChild; " +
-                                "        if(target) target.parentNode.insertBefore(h, target); " +
+                                "          }; " +
+                                "          window.portalError = function(msg) { " +
+                                "             var fb = document.getElementById('smart-fetch-btn'); " +
+                                "             if (fb) { " +
+                                "                fb.innerText = '❌ ' + msg.toUpperCase(); " +
+                                "                fb.style.background = '#f44336'; " +
+                                "                setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); " +
+                                "             } " +
+                                "          }; " +
+                                "        } " +
+                                "        var qpT = document.getElementById('view-qpcodes'); " +
+                                "        if (qpT && !qpT.classList.contains('hidden')) { " +
+                                "          if (!document.getElementById('smart-fetch-btn')) { " +
+                                "            var header = qpT.querySelector('h2') || qpT.querySelector('h1'); " +
+                                "            if (header) { " +
+                                "              var fb = document.createElement('button'); fb.id = 'smart-fetch-btn'; fb.innerText = 'FETCH FROM PORTAL TAB'; " +
+                                "              fb.style.cssText = 'font-size:12px; background:#4CAF50; color:white; border:none; padding:8px 15px; border-radius:4px; margin:10px 0; cursor:pointer; font-weight:bold; width:100%; display:block;'; " +
+                                "              fb.onclick = function() { " +
+                                "                fb.innerText = '⌛ Connecting...'; fb.style.background = '#ff9800'; " +
+                                "                window.cefQuery({ request: 'request_portal_data', " +
+                                "                  onSuccess: function() { fb.innerText = '✔ Sync Sent'; fb.style.background = '#4CAF50'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; }, 3000); }, " +
+                                "                  onFailure: function(e, m) { fb.innerText = '❌ ' + m.toUpperCase(); fb.style.background = '#f44336'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); } " +
+                                "                }); " +
+                                "              }; " +
+                                "              header.parentNode.insertBefore(fb, header.nextSibling); " +
+                                "            } " +
+                                "          } " +
+                                "        } " +
+                                "        var sync = Array.from(document.querySelectorAll('button')).find(function(el) { return el.innerText.indexOf('Sync to Print Manager') !== -1; }); " +
+                                "        if (sync && !sync.getAttribute('data-jcef')) { " +
+                                "          sync.setAttribute('data-jcef', 'true'); " +
+                                "          sync.addEventListener('click', function() { " +
+                                "            window.cefQuery({ request: 'examflow_sync_start' }); " +
+                                "            setTimeout(function() { window.cefQuery({ request: 'examflow_sync' }); }, 2500); " +
+                                "          }); " +
+                                "        } " +
                                 "      } " +
-                                "    } " +
-                                "    if (window.location.href.indexOf('examflow-india.web.app') !== -1) { " +
-                                "      var sync = Array.from(document.querySelectorAll('button')).find(function(el) { return el.innerText.indexOf('Sync to Print Manager') !== -1; }); " +
-                                "      if (sync && !sync.getAttribute('data-jcef')) { " +
-                                "        sync.setAttribute('data-jcef', 'true'); " +
-                                "        sync.addEventListener('click', function() { " +
-                                "          window.cefQuery({ request: 'examflow_sync_start' }); " +
-                                "          setTimeout(function() { window.cefQuery({ request: 'examflow_sync' }); }, 2500); " +
-                                "        }); " +
-                                "      } " +
-                                "    } " +
+                                "    } catch(e) { console.error('Smart Injection Error:', e); } " +
                                 "  }, 2000); " +
                                 "})();";
                             browser.executeJavaScript(injectionScript, url, 0);
