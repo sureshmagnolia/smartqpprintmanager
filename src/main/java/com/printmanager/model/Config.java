@@ -12,6 +12,7 @@ public class Config {
     private String portalPassword = "";
     private String portalQpPassword = "";
     private String portalQpPrefix = "";
+    private String lastSessionName = "";
     private String collegeName = "Your Institution Name";
     private String currentExamDate = "";
     private String currentExamSession = "";
@@ -51,6 +52,9 @@ public class Config {
 
     public String getPortalQpPrefix() { return portalQpPrefix; }
     public void setPortalQpPrefix(String portalQpPrefix) { this.portalQpPrefix = portalQpPrefix; }
+
+    public String getLastSessionName() { return lastSessionName; }
+    public void setLastSessionName(String lastSessionName) { this.lastSessionName = lastSessionName; }
 
     public List<PrintRule> getRules() { return rules; }
     public void setRules(List<PrintRule> rules) { this.rules = rules; }

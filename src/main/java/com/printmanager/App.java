@@ -148,6 +148,11 @@ public class App extends Application {
         // Initialize persistent UI fields from config
         if (config.getCollegeId() != null) urlField.setText("https://collegeportal.uoc.ac.in/"); // Reset to default just in case
         if (config.getBaseDownloadPath() != null) downloadPathField.setText(config.getBaseDownloadPath());
+        if (config.getLastSessionName() != null) sessionNameField.setText(config.getLastSessionName());
+        sessionNameField.textProperty().addListener((obs, oldVal, newVal) -> {
+            config.setLastSessionName(newVal.trim());
+            saveConfigs();
+        });
 
         // Re-link RoomItem.matchedFile to actual instances in fileQueue for identity consistency
         for (RoomGroup g : roomGroupsList) {
@@ -193,7 +198,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.3");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.5");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -276,7 +281,9 @@ public class App extends Application {
             roomPrintExecutor.shutdownNow();
             
             if (cefApp != null) {
+                // Ensure cookies are flushed before disposal
                 cefApp.dispose();
+                Thread.sleep(500); 
             }
             
             activityLogger.info("Application stopping. Cleaning up all background instances...");
@@ -2240,7 +2247,7 @@ public class App extends Application {
 
     private javafx.scene.Parent createAboutView() {
         VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.2.3");
+        Label title = new Label("Smart QP Print Manager v3.2.5");
         title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
         Label createdBy = new Label("Created by Magnolia for Examination Management");
         createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
@@ -2643,8 +2650,8 @@ public class App extends Application {
                 // FORCE CLEANUP of Chromium lock files to ensure a fresh session parenting
                 try {
                     new File(cachePath, "SingletonLock").delete();
-                    new File(cachePath, "SingletonCookie").delete();
                     new File(cachePath, "SingletonSocket").delete();
+                    // SingletonCookie is KEPT to preserve login sessions
                 } catch (Exception e) {}
 
                 if (localBundle.exists() && localBundle.isDirectory()) builder.setInstallDir(localBundle);
@@ -2680,7 +2687,14 @@ public class App extends Application {
                     "--enable-password-save", 
                     "--enable-automatic-password-saving", 
                     "--password-store=basic", 
-                    "--enable-password-manager"
+                    "--enable-password-manager",
+                    "--persist-session-cookies",
+                    "--restore-last-session",
+                    "--enable-aggressive-domstorage-flushing",
+                    "--ignore-certificate-errors",
+                    "--disable-site-isolation-trials",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 );
                 
                 cefApp = builder.build();
@@ -2721,7 +2735,8 @@ public class App extends Application {
                             Platform.runLater(() -> fetchFromExamflow(null)); callback.success("OK"); return true;
                         } else if (request.equals("check_session")) {
                             String s = sessionNameField.getText().trim();
-                            callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;                        } else if (request.equals("request_portal_data")) {
+                            callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;
+                        } else if (request.equals("request_portal_data")) {
                             CefBrowser portalBrowser = null;
                             for (CefBrowser b : browserAddressBars.keySet()) {
                                 String url = b.getURL().toLowerCase().replace("%20", " ");
@@ -2838,10 +2853,19 @@ public class App extends Application {
 
                         File targetFile = new File(sessionDir, fileName);
                         if (targetFile.exists()) {
-                            try {
-                                targetFile.delete();
-                                logger.info("Deleted existing file for replacement: {}", targetFile.getAbsolutePath());
-                            } catch (Exception e) { logger.warn("Failed to delete existing file: {}", targetFile.getName()); }
+                            boolean deleted = targetFile.delete();
+                            if (!deleted) {
+                                // Try renaming first (move aside) to break locks
+                                File trash = new File(sessionDir, "old_" + System.currentTimeMillis() + "_" + fileName);
+                                if (targetFile.renameTo(trash)) {
+                                    trash.delete(); // Try to delete the moved file
+                                    logger.info("Replaced existing file (via rename): {}", fileName);
+                                } else {
+                                    logger.warn("CRITICAL: Could not replace existing file {}. Lock detected.", fileName);
+                                }
+                            } else {
+                                logger.info("Replaced existing file (direct delete): {}", fileName);
+                            }
                         }
 
                         callback.Continue(targetFile.getAbsolutePath(), false); return true;
@@ -2944,18 +2968,19 @@ public class App extends Application {
                                 "          } " +
                                 "          return {qp: q, paper: p, time: t}; " +
                                 "        })(); " +
-                                "        if (raw && !window._lastDate) { " +
+                                "        if (raw && (window._lastDate !== raw || window._lastTime !== tText)) { " +
                                 "          window._lastDate = raw; " +
-                                "          var p = raw.split(/[/\\-.]/); " +
-                                "          var f = raw; " +
-                                "          if (p.length === 3) { " +
-                                "            if (p[0].length === 4) f = p[2] + '.' + p[1] + '.' + p[0].substring(2); " +
-                                "            else f = p[0] + '.' + p[1] + '.' + p[2].substring(p[2].length-2); " +
+                                "          window._lastTime = tText; " +
+                                "          var dParts = raw.split(/[/\\-.]/); " +
+                                "          var formattedDate = ''; " +
+                                "          if (dParts.length === 3) { " +
+                                "            if (dParts[0].length === 4) formattedDate = dParts[2] + '-' + dParts[1] + '-' + dParts[0]; " +
+                                "            else formattedDate = dParts[0] + '-' + dParts[1] + '-' + dParts[2]; " +
                                 "          } " +
-                                "          var row = document.querySelector('tr.odd, tr.even') || Array.from(document.querySelectorAll('table tr')).find(function(r){return r.cells.length >= 3 && r.querySelector('.btn_download');}); " +
-                                "          var tText = (row && row.cells[cols.time]) ? row.cells[cols.time].innerText : ''; " +
-                                "          var suf = (tText.indexOf('PM') !== -1) ? 'AN' : 'FN'; " +
-                                "          window.cefQuery({ request: 'session:' + f + ' ' + suf }); " +
+                                "          if (formattedDate && tText) { " +
+                                "            var sessionKey = formattedDate + ' | ' + tText; " +
+                                "            window.cefQuery({ request: 'session:' + sessionKey }); " +
+                                "          } " +
                                 "        } " +
                                 "        if (!document.getElementById('smart-bulk-header')) { " +
                                 "          var h = document.createElement('div'); h.id = 'smart-bulk-header'; " +
@@ -2966,14 +2991,16 @@ public class App extends Application {
                                 "          b.onclick = function() { " +
                                 "            window.cefQuery({ request: 'check_session', onSuccess: function(res) { " +
                                 "              if(res === 'MISSING') { alert('Please enter Detected Session name in the App first!'); return; } " +
-                                "              if(!confirm('Start automated download for ' + btns.length + ' papers?')) return; " +
+                                "              if(!confirm('Start automated download for ' + btns.length + ' papers? (2s delay per file)')) return; " +
                                 "              b.disabled = true; " +
+                                "              var delayBase = 2000; " +
                                 "              for (var i = 0; i < btns.length; i++) { " +
                                 "                (function(idx) { setTimeout(function() { " +
-                                "                  b.innerText = '⌛ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
+                                "                  var progress = (idx + 1) + '/' + btns.length; " +
+                                "                  b.innerText = '⌛ Processing ' + progress + '...'; " +
                                 "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
-                                "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\s+/g, '_') : '00_00_AM'; " +
-                                "                  var dp = (window._lastDate || '').replace(/[/\\-]/g, '.'); " +
+                                "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\\\s+/g, '_') : '00_00_AM'; " +
+                                "                  var dp = (window._lastDate || '').replace(/[/\\\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
                                 "                  var rowText = r.innerText.toUpperCase(); var prefix = (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) ? 'EDE' : 'REG'; " +
                                 "                  var qpCode = (r.cells[cols.qp]) ? r.cells[cols.qp].innerText.trim() : '000000'; " +
@@ -2981,7 +3008,7 @@ public class App extends Application {
                                 "                  var fname = prefix + '_' + dp + '_' + tVal + '_' + qpCode + '_' + paperName; " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
                                 "                  if (idx === btns.length - 1) { b.innerText = '✓ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
-                                "                }, idx * 1000); })(i); " +
+                                "                }, idx * delayBase); })(i); " +
                                 "              } " +
                                 "            }}); " +
                                 "          }; " +
@@ -3142,6 +3169,7 @@ public class App extends Application {
             tabbedPane.addTab("Examflow Portal", panel2);
 
             JFrame frame = new JFrame("Smart QP - Browser");
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
             if (appIcon != null) {
                 try {
                     frame.setIconImage(javafx.embed.swing.SwingFXUtils.fromFXImage(appIcon, null));
@@ -3158,6 +3186,7 @@ public class App extends Application {
                     browserAddressBars.remove(browser2);
                     browser1.close(true);
                     browser2.close(true);
+                    frame.dispose();
                 }
             });
             
@@ -3178,18 +3207,24 @@ public class App extends Application {
         backBtn.addActionListener(e -> browser.goBack());
         forwardBtn.addActionListener(e -> browser.goForward());
         refreshBtn.addActionListener(e -> {
-            String url = browser.getURL();
-            logger.info("Browser reload triggered for: " + url);
-            if (url != null && !url.isEmpty()) {
-                browser.loadURL(url);
-            } else {
-                browser.reload();
-            }
+            logger.info("Browser reload triggered via browser.reloadIgnoreCache()");
+            activityLogger.info("Reloading browser tab (Hard Refresh)...");
+            browser.reloadIgnoreCache();
         });
         syncBtn.addActionListener(e -> {
             Platform.runLater(this::syncSessionFolder);
         });
-        addressBar.addActionListener(e -> browser.loadURL(addressBar.getText()));
+        
+        // Make address bar editable and clear
+        addressBar.setEditable(true);
+        addressBar.addActionListener(e -> {
+            String targetUrl = addressBar.getText().trim();
+            if (!targetUrl.isEmpty()) {
+                if (!targetUrl.startsWith("http")) targetUrl = "https://" + targetUrl;
+                activityLogger.info("Navigating to: " + targetUrl);
+                browser.loadURL(targetUrl);
+            }
+        });
         
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
@@ -3226,6 +3261,9 @@ public class App extends Application {
         sessionNameField.setPromptText("Auto-detected after launch..."); sessionNameField.setPrefWidth(300);
         HBox sessionBox = new HBox(10, new Label("Detected Session:"), sessionNameField); sessionBox.setAlignment(javafx.geometry.Pos.CENTER);
         downloadPathField.setPromptText("Select Save Folder"); downloadPathField.setPrefWidth(400);
+        downloadPathField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) { config.setBaseDownloadPath(downloadPathField.getText().trim()); saveConfigs(); }
+        });
         Button browseBtn = new Button("Browse...");
         browseBtn.setOnAction(e -> {
             javafx.stage.DirectoryChooser dc = new javafx.stage.DirectoryChooser(); dc.setTitle("Select Save Folder");
@@ -3243,17 +3281,33 @@ public class App extends Application {
         TextField portalUserField = new TextField(config.getPortalUsername());
         portalUserField.setPromptText("University Portal Username");
         portalUserField.setPrefWidth(200);
+        portalUserField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) { config.setPortalUsername(portalUserField.getText().trim()); saveConfigs(); }
+        });
+
         PasswordField portalPassField = new PasswordField();
         portalPassField.setText(config.getPortalPassword());
         portalPassField.setPromptText("University Portal Password");
         portalPassField.setPrefWidth(200);
+        portalPassField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) { config.setPortalPassword(portalPassField.getText()); saveConfigs(); }
+        });
+
         PasswordField portalQpPassField = new PasswordField();
         portalQpPassField.setText(config.getPortalQpPassword());
         portalQpPassField.setPromptText("QP Module Password");
         portalQpPassField.setPrefWidth(200);
+        portalQpPassField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) { config.setPortalQpPassword(portalQpPassField.getText()); saveConfigs(); }
+        });
+
         TextField portalQpPrefixField = new TextField(config.getPortalQpPrefix());
         portalQpPrefixField.setPromptText("QP Prefix (e.g. D)");
         portalQpPrefixField.setPrefWidth(120);
+        portalQpPrefixField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) { config.setPortalQpPrefix(portalQpPrefixField.getText().trim()); saveConfigs(); }
+        });
+
         Button savePortalBtn = new Button("Save Credentials");
         savePortalBtn.setOnAction(e -> {
             config.setPortalUsername(portalUserField.getText().trim());
@@ -3289,9 +3343,40 @@ public class App extends Application {
     }
 
     private File getSessionDir() {
-        String base = downloadPathField.getText(); String session = sessionNameField.getText().trim();
+        String base = downloadPathField.getText();
+        String session = sessionNameField.getText().trim();
         if (base.isEmpty() || session.isEmpty()) return null;
-        File sessionDir = new File(base, session);
+        
+        String folderName = session;
+        // Convert Examflow Key (DD-MM-YYYY | HH:MM AM) to Folder Name (DD.MM.YY FN/AN)
+        if (session.contains("|")) {
+            try {
+                String[] parts = session.split("\\|");
+                String datePart = parts[0].trim().replace("-", ".");
+                String timePart = parts[1].trim();
+                
+                // datePart: 22.05.2026 -> 22.05.26
+                String[] d = datePart.split("\\.");
+                if (d.length == 3 && d[2].length() == 4) {
+                    datePart = d[0] + "." + d[1] + "." + d[2].substring(2);
+                }
+                
+                // timePart: 09:30 AM -> FN/AN
+                String[] t = timePart.split(":");
+                int hour = Integer.parseInt(t[0]);
+                boolean isPm = timePart.toUpperCase().contains("PM");
+                if (isPm && hour < 12) hour += 12;
+                if (!isPm && hour == 12) hour = 0;
+                String suf = (hour >= 13) ? "AN" : "FN";
+                
+                folderName = datePart + " " + suf;
+            } catch (Exception e) {
+                // Fallback: Sanitize illegal characters
+                folderName = session.replace("|", "-").replace(":", "-").replace(" ", "_");
+            }
+        }
+        
+        File sessionDir = new File(base, folderName);
         if (!sessionDir.exists()) sessionDir.mkdirs();
         return sessionDir;
     }
@@ -3351,18 +3436,37 @@ public class App extends Application {
         // 2. HARD RESET: Force cleanup before JavaFX even starts
         try {
             // Kill any ghosts
-            Process p = Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T");
-            p.waitFor();
+            Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T").waitFor();
             
-            // Proactively clear Chromium locks in AppData to prevent "Opening in existing session" hand-off
+            // Get cache dir logic (mirrored from getResolvedCacheDir)
+            String userDir = System.getProperty("user.dir");
             String appData = System.getenv("APPDATA");
-            if (appData != null) {
-                File cacheDir = new File(appData, "SmartQPPrintManager/chromium_cache");
-                if (cacheDir.exists()) {
-                    new File(cacheDir, "SingletonLock").delete();
-                    new File(cacheDir, "SingletonCookie").delete();
-                    new File(cacheDir, "SingletonSocket").delete();
+            File cacheDir = null;
+            
+            // Portable check
+            boolean isPortable = false;
+            try {
+                Path testPath = Paths.get(userDir, ".write_test_" + System.currentTimeMillis());
+                Files.createFile(testPath);
+                Files.delete(testPath);
+                isPortable = true;
+            } catch (Exception e) {}
+            
+            if (isPortable && !userDir.toLowerCase().contains("program files")) {
+                cacheDir = new File(userDir, "bin/chromium_cache");
+            } else {
+                String os = System.getProperty("os.name").toLowerCase();
+                if (os.contains("win")) {
+                    cacheDir = new File(appData != null ? appData : System.getProperty("user.home"), "SmartQPPrintManager/chromium_cache");
+                } else {
+                    cacheDir = new File(System.getProperty("user.home"), ".smartqpprintmanager/chromium_cache");
                 }
+            }
+
+            if (cacheDir != null && cacheDir.exists()) {
+                new File(cacheDir, "SingletonLock").delete();
+                new File(cacheDir, "SingletonSocket").delete();
+                // SingletonCookie is KEPT to preserve session
             }
             Thread.sleep(500); // Brief pause for OS stability
         } catch (Exception e) {}
