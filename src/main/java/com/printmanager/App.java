@@ -2721,28 +2721,66 @@ public class App extends Application {
                             Platform.runLater(() -> fetchFromExamflow(null)); callback.success("OK"); return true;
                         } else if (request.equals("check_session")) {
                             String s = sessionNameField.getText().trim();
-                            callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;
-                        } else if (request.equals("request_portal_data")) {
+                            callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;                        } else if (request.equals("request_portal_data")) {
                             CefBrowser portalBrowser = null;
                             for (CefBrowser b : browserAddressBars.keySet()) {
-                                if (b.getURL().contains("collegeportal.uoc.ac.in")) { portalBrowser = b; break; }
+                                String url = b.getURL().toLowerCase().replace("%20", " ");
+                                if (url.contains("collegeportal.uoc.ac.in") || 
+                                    url.contains("centralized college portal") || 
+                                    url.contains("qpcollegehome") || 
+                                    url.contains("downloadqp") || 
+                                    url.contains("qp page") || 
+                                    url.contains("qp downloadpage")) { 
+                                    portalBrowser = b; 
+                                    break; 
+                                }
+                            }
+                            if (portalBrowser == null) {
+                                for (CefBrowser b : browserAddressBars.keySet()) {
+                                    if (b != browser) {
+                                        portalBrowser = b;
+                                        break;
+                                    }
+                                }
                             }
                             if (portalBrowser == null) {
                                 callback.failure(1, "University Portal tab not found.");
                             } else {
+                                String qpPrefix = config.getPortalQpPrefix() != null ? config.getPortalQpPrefix().trim().toUpperCase() : "";
                                 String scraper = "(function() { " +
                                     "  try { " +
+                                    "    var prefix = '" + qpPrefix + "'; " +
                                     "    var rows = document.querySelectorAll('table tr'); " +
                                     "    var results = []; " +
+                                    "    var cols = (function() { " +
+                                    "      var hr = Array.from(document.querySelectorAll('table tr')).find(function(r){return r.querySelector('th');}) || document.querySelector('table tr'); " +
+                                    "      var hs = hr ? Array.from(hr.querySelectorAll('th, td')).map(function(h){return h.innerText.toLowerCase().trim();}) : []; " +
+                                    "      var q = 0, p = 1, t = 2; " +
+                                    "      for(var col=0; col<hs.length; col++) { " +
+                                    "        var txt = hs[col]; " +
+                                    "        if(txt.indexOf('qp') !== -1 || txt.indexOf('code') !== -1) q = col; " +
+                                    "        else if(txt.indexOf('paper') !== -1 || txt.indexOf('subject') !== -1 || txt.indexOf('title') !== -1) p = col; " +
+                                    "        else if(txt.indexOf('time') !== -1) t = col; " +
+                                    "      } " +
+                                    "      return {qp: q, paper: p, time: t}; " +
+                                    "    })(); " +
                                     "    rows.forEach(function(row) { " +
                                     "      var cells = row.querySelectorAll('td'); " +
-                                    "      if (cells.length >= 3) { " +
-                                    "        var qp = cells[1].innerText.trim(); " +
-                                    "        var subject = cells[2].innerText.trim(); " +
-                                    "        if (/^\\\\d+$/.test(qp)) { results.push(qp + '\\\\t' + subject); } " +
+                                    "      if (cells.length >= 2) { " +
+                                    "        var val0 = cells[0].innerText.trim(); " +
+                                    "        var val1 = cells[1].innerText.trim(); " +
+                                    "        if (/^\\d+$/.test(val0)) { " +
+                                    "          results.push(prefix + val0 + '\\t' + val1); " +
+                                    "        } else if (/^\\d+$/.test(val1) && cells.length >= 3) { " +
+                                    "          results.push(prefix + val1 + '\\t' + cells[2].innerText.trim()); " +
+                                    "        } else if (row.cells[cols.qp] && /^\\d+$/.test(row.cells[cols.qp].innerText.trim())) { " +
+                                    "          var qpVal = row.cells[cols.qp].innerText.trim(); " +
+                                    "          var sVal = row.cells[cols.paper] ? row.cells[cols.paper].innerText.trim() : ''; " +
+                                    "          results.push(prefix + qpVal + '\\t' + sVal); " +
+                                    "        } " +
                                     "      } " +
                                     "    }); " +
-                                    "    if (results.length > 0) { window.cefQuery({request: 'portal_data_relay:' + results.join('\\\\n')}); } " +
+                                    "    if (results.length > 0) { window.cefQuery({request: 'portal_data_relay:' + results.join('\\n')}); } " +
                                     "    else { window.cefQuery({request: 'portal_error:NO DATA FOUND'}); } " +
                                     "  } catch(e) { window.cefQuery({request: 'portal_error:SCRAPE FAILED'}); } " +
                                     "})();";
@@ -2827,18 +2865,54 @@ public class App extends Application {
                     @Override
                     public void onLoadEnd(CefBrowser browser, org.cef.browser.CefFrame frame, int httpStatusCode) {
                         if (frame.isMain()) {
-                            String url = browser.getURL();
-                            String u = config.getPortalUsername();
-                            String p = config.getPortalPassword();
-                            String autofillScript = (u != null && !u.isEmpty() && p != null && !p.isEmpty()) ? 
-                                "    if (window.location.href.indexOf('collegeportal.uoc.ac.in') !== -1) { " +
-                                "      var user = document.getElementById('id_username') || document.getElementById('username') || document.querySelector('input[name=\"username\"]'); " +
-                                "      var pass = document.getElementById('id_password') || document.getElementById('password') || document.querySelector('input[name=\"password\"]'); " +
-                                "      if (user && pass && !user.value) { " +
-                                "        user.value = `" + u.replace("`", "\\`") + "`; " +
-                                "        pass.value = `" + p.replace("`", "\\`") + "`; " +
-                                "      } " +
-                                "    } " : "";
+                             String url = browser.getURL();
+                             String u = config.getPortalUsername();
+                             String p = config.getPortalPassword();
+                             String qpPassVal = config.getPortalQpPassword();
+                             
+                             String escapedUser = u != null ? u.replace("\\", "\\\\").replace("'", "\\'") : "";
+                             String escapedPass = p != null ? p.replace("\\", "\\\\").replace("'", "\\'") : "";
+                             String escapedQpPass = qpPassVal != null ? qpPassVal.replace("\\", "\\\\").replace("'", "\\'") : "";
+                             
+                             StringBuilder autofillBuilder = new StringBuilder();
+                              if (u != null && !u.isEmpty() && p != null && !p.isEmpty()) {
+                                  autofillBuilder.append(
+                                      "    if (window.location.href.indexOf('collegeportal.uoc.ac.in') !== -1 || " +
+                                      "        window.location.href.indexOf('Centralized') !== -1 || " +
+                                      "        window.location.href.indexOf('Portal.html') !== -1) { " +
+                                      "      var user = document.getElementById('id_username') || document.getElementById('username') || document.querySelector('input[name=\"username\"]'); " +
+                                      "      var pass = document.getElementById('id_password') || document.getElementById('password') || document.querySelector('input[name=\"password\"]'); " +
+                                      "      if (user && pass && !user.value) { " +
+                                      "        user.value = '" + escapedUser + "'; " +
+                                      "        pass.value = '" + escapedPass + "'; " +
+                                      "        var evt1 = document.createEvent('HTMLEvents'); evt1.initEvent('input', true, true); user.dispatchEvent(evt1); " +
+                                      "        var evt2 = document.createEvent('HTMLEvents'); evt2.initEvent('change', true, true); user.dispatchEvent(evt2); " +
+                                      "        var evt3 = document.createEvent('HTMLEvents'); evt3.initEvent('input', true, true); pass.dispatchEvent(evt3); " +
+                                      "        var evt4 = document.createEvent('HTMLEvents'); evt4.initEvent('change', true, true); pass.dispatchEvent(evt4); " +
+                                      "      } " +
+                                      "    } "
+                                  );
+                              }
+                              if (qpPassVal != null && !qpPassVal.isEmpty()) {
+                                  autofillBuilder.append(
+                                      "    if (window.location.href.indexOf('valuation_camp/qpcollegehome') !== -1 || window.location.href.indexOf('QP%20Page/Centralized%20College%20Portal.html') !== -1 || window.location.href.indexOf('QP Page/Centralized College Portal.html') !== -1) { " +
+                                      "      var qpPass = document.querySelector('input[type=\"password\"][name=\"password\"]'); " +
+                                      "      var declare = document.getElementById('declare'); " +
+                                      "      var submitBtn = document.getElementById('btn_submit'); " +
+                                      "      if (qpPass && !qpPass.value) { " +
+                                      "        qpPass.value = '" + escapedQpPass + "'; " +
+                                      "        if (declare && !declare.checked) { " +
+                                      "          declare.click(); " +
+                                      "        } " +
+                                      "        if (submitBtn) { " +
+                                      "          submitBtn.removeAttribute('disabled'); " +
+                                      "          setTimeout(function() { submitBtn.click(); }, 500); " +
+                                      "        } " +
+                                      "      } " +
+                                      "    } "
+                                  );
+                              }
+                              String autofillScript = autofillBuilder.toString();
 
                             String injectionScript = 
                                 "(function() { " +
@@ -2858,6 +2932,18 @@ public class App extends Application {
                                 "            if (m2) raw = m2[0]; " +
                                 "          } " +
                                 "        } " +
+                                "        var cols = (function() { " +
+                                "          var hr = Array.from(document.querySelectorAll('table tr')).find(function(r){return r.querySelector('th');}) || document.querySelector('table tr'); " +
+                                "          var hs = hr ? Array.from(hr.querySelectorAll('th, td')).map(function(h){return h.innerText.toLowerCase().trim();}) : []; " +
+                                "          var q = 0, p = 1, t = 2; " +
+                                "          for(var col=0; col<hs.length; col++) { " +
+                                "            var txt = hs[col]; " +
+                                "            if(txt.indexOf('qp') !== -1 || txt.indexOf('code') !== -1) q = col; " +
+                                "            else if(txt.indexOf('paper') !== -1 || txt.indexOf('subject') !== -1 || txt.indexOf('title') !== -1) p = col; " +
+                                "            else if(txt.indexOf('time') !== -1) t = col; " +
+                                "          } " +
+                                "          return {qp: q, paper: p, time: t}; " +
+                                "        })(); " +
                                 "        if (raw && !window._lastDate) { " +
                                 "          window._lastDate = raw; " +
                                 "          var p = raw.split(/[/\\-.]/); " +
@@ -2866,8 +2952,9 @@ public class App extends Application {
                                 "            if (p[0].length === 4) f = p[2] + '.' + p[1] + '.' + p[0].substring(2); " +
                                 "            else f = p[0] + '.' + p[1] + '.' + p[2].substring(p[2].length-2); " +
                                 "          } " +
-                                "          var row = document.querySelector('tr.odd, tr.even'); " +
-                                "          var suf = (row && row.cells[2].innerText.indexOf('PM') !== -1) ? 'AN' : 'FN'; " +
+                                "          var row = document.querySelector('tr.odd, tr.even') || Array.from(document.querySelectorAll('table tr')).find(function(r){return r.cells.length >= 3 && r.querySelector('.btn_download');}); " +
+                                "          var tText = (row && row.cells[cols.time]) ? row.cells[cols.time].innerText : ''; " +
+                                "          var suf = (tText.indexOf('PM') !== -1) ? 'AN' : 'FN'; " +
                                 "          window.cefQuery({ request: 'session:' + f + ' ' + suf }); " +
                                 "        } " +
                                 "        if (!document.getElementById('smart-bulk-header')) { " +
@@ -2885,11 +2972,13 @@ public class App extends Application {
                                 "                (function(idx) { setTimeout(function() { " +
                                 "                  b.innerText = '⌛ Processing ' + (idx + 1) + '/' + btns.length + '...'; " +
                                 "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
-                                "                  var time = r.cells[2].innerText.replace(/:/g, '_'); " +
+                                "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\s+/g, '_') : '00_00_AM'; " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
                                 "                  var rowText = r.innerText.toUpperCase(); var prefix = (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) ? 'EDE' : 'REG'; " +
-                                "                  var fname = prefix + '_' + dp + '_' + time + '_' + r.cells[0].innerText + '_' + r.cells[1].innerText.replace(/[^a-z0-9]/gi, '_'); " +
+                                "                  var qpCode = (r.cells[cols.qp]) ? r.cells[cols.qp].innerText.trim() : '000000'; " +
+                                "                  var paperName = (r.cells[cols.paper]) ? r.cells[cols.paper].innerText.replace(/[^a-z0-9]/gi, '_') : 'Subject'; " +
+                                "                  var fname = prefix + '_' + dp + '_' + tVal + '_' + qpCode + '_' + paperName; " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
                                 "                  if (idx === btns.length - 1) { b.innerText = '✓ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
                                 "                }, idx * 1000); })(i); " +
@@ -2904,20 +2993,74 @@ public class App extends Application {
                                 "      if (window.location.href.indexOf('examflow-india.web.app') !== -1 || window.location.href.indexOf('localhost') !== -1) { " +
                                 "        if (!window.receivePortalData) { " +
                                 "          window.receivePortalData = function(text) { " +
-                                "            const lines = text.split('\\n').filter(l => l.trim().length > 0); " +
-                                "            const parsed = lines.map(line => { const p = line.split('\\t'); return { c: p[0].trim(), s: p[1].trim().toUpperCase() }; }); " +
-                                "            let mCount = 0; " +
-                                "            document.querySelectorAll('#qp-code-container input[data-course]').forEach(input => { " +
-                                "              const uiN = input.dataset.course.toUpperCase(); " +
-                                "              const match = parsed.find(p => uiN.indexOf(p.s) !== -1 || p.s.indexOf(uiN) !== -1); " +
-                                "              if (match) { input.value = match.c; mCount++; } " +
+                                "            var lines = text.split('\\n').map(function(l){return l.trim();}).filter(function(l){return l.length > 0;}); " +
+                                "            var parsedPairs = []; " +
+                                "            lines.forEach(function(line) { " +
+                                "              var parts = line.split('\\t').map(function(p){return p.trim();}); " +
+                                "              if (parts.length >= 2) { " +
+                                "                var qpCode = parts[0]; " +
+                                "                var paperName = parts[1]; " +
+                                "                var finalQpCode = qpCode.toUpperCase().replace(/\\s+/g, ''); " +
+                                "                parsedPairs.push({ " +
+                                "                  searchText: paperName.toUpperCase(), " +
+                                "                  code: finalQpCode, " +
+                                "                  isEde: finalQpCode.endsWith('A') " +
+                                "                }); " +
+                                "              } " +
                                 "            }); " +
-                                "            if (mCount > 0) { " +
-                                "               var st = document.getElementById('qp-code-status'); " +
-                                "               if (st) { st.style.color = 'red'; st.innerText = 'Auto-filled ' + mCount + ' codes from Portal. Click SAVE.'; } " +
+                                "            if (parsedPairs.length === 0) return; " +
+                                "            var matched = 0; " +
+                                "            function sanitizeCourse(name) { " +
+                                "              if (!name) return ''; " +
+                                "              return name.replace(/[\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]/g, ' ') " +
+                                "                         .replace(/[^a-zA-Z0-9\\s()+\\-]/g, '') " +
+                                "                         .replace(/\\s+/g, ' ') " +
+                                "                         .trim(); " +
+                                "            } " +
+                                "            document.querySelectorAll('#qp-code-container input[data-course]').forEach(function(input) { " +
+                                "              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
+                                "              var streamName = (input.dataset.stream || '').toUpperCase(); " +
+                                "              var isEdeStream = streamName.indexOf('EDE') !== -1; " +
+                                "              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
+                                "              if (validPairs.length === 0) validPairs = parsedPairs; " +
+                                "              var bestMatch = null; " +
+                                "              bestMatch = validPairs.find(function(p){return p.searchText.indexOf(uiCourseName) !== -1 || uiCourseName.indexOf(p.searchText) !== -1;}); " +
+                                "              if (!bestMatch) { " +
+                                "                var words = uiCourseName.split(/[\\s,.-]+/).filter(function(w){return w.length > 2;}); " +
+                                "                if (words.length > 0) { " +
+                                "                  var bestScore = 0; " +
+                                "                  validPairs.forEach(function(p) { " +
+                                "                    var score = 0; " +
+                                "                    words.forEach(function(w){ if(p.searchText.indexOf(w) !== -1) score++; }); " +
+                                "                    if (score > bestScore) { " +
+                                "                      bestScore = score; " +
+                                "                      bestMatch = p; " +
+                                "                    } " +
+                                "                  }); " +
+                                "                  if (bestScore < 1) bestMatch = null; " +
+                                "                } " +
+                                "              } " +
+                                "              if (bestMatch) { " +
+                                "                input.value = bestMatch.code; " +
+                                "                matched++; " +
+                                "                var evt = document.createEvent('HTMLEvents'); " +
+                                "                evt.initEvent('input', true, true); " +
+                                "                input.dispatchEvent(evt); " +
+                                "                var evt2 = document.createEvent('HTMLEvents'); " +
+                                "                evt2.initEvent('change', true, true); " +
+                                "                input.dispatchEvent(evt2); " +
+                                "              } " +
+                                "            }); " +
+                                "            if (matched > 0) { " +
+                                "              var st = document.getElementById('qp-code-status'); " +
+                                "              if (st) { " +
+                                "                st.style.color = '#28a745'; " +
+                                "                st.innerText = '✅ Auto-filled ' + matched + ' codes from Portal. Click SAVE QP Codes below.'; " +
+                                "              } " +
                                 "            } " +
                                 "          }; " +
-                                "          window.portalError = function(msg) { " +
+                                "        } " +
+                                "        window.portalError = function(msg) { " +
                                 "             var fb = document.getElementById('smart-fetch-btn'); " +
                                 "             if (fb) { " +
                                 "                fb.innerText = '❌ ' + msg.toUpperCase(); " +
@@ -2925,7 +3068,6 @@ public class App extends Application {
                                 "                setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); " +
                                 "             } " +
                                 "          }; " +
-                                "        } " +
                                 "        var qpT = document.getElementById('view-qpcodes'); " +
                                 "        if (qpT && !qpT.classList.contains('hidden')) { " +
                                 "          if (!document.getElementById('smart-fetch-btn')) { " +
@@ -3036,8 +3178,13 @@ public class App extends Application {
         backBtn.addActionListener(e -> browser.goBack());
         forwardBtn.addActionListener(e -> browser.goForward());
         refreshBtn.addActionListener(e -> {
-            logger.info("Browser reload triggered for: " + browser.getURL());
-            browser.reload();
+            String url = browser.getURL();
+            logger.info("Browser reload triggered for: " + url);
+            if (url != null && !url.isEmpty()) {
+                browser.loadURL(url);
+            } else {
+                browser.reload();
+            }
         });
         syncBtn.addActionListener(e -> {
             Platform.runLater(this::syncSessionFolder);
@@ -3095,19 +3242,34 @@ public class App extends Application {
         // Portal Login Credentials (Moved from Settings)
         TextField portalUserField = new TextField(config.getPortalUsername());
         portalUserField.setPromptText("University Portal Username");
-        portalUserField.setPrefWidth(250);
+        portalUserField.setPrefWidth(200);
         PasswordField portalPassField = new PasswordField();
         portalPassField.setText(config.getPortalPassword());
         portalPassField.setPromptText("University Portal Password");
-        portalPassField.setPrefWidth(250);
-        Button savePortalBtn = new Button("Save Portal Credentials");
+        portalPassField.setPrefWidth(200);
+        PasswordField portalQpPassField = new PasswordField();
+        portalQpPassField.setText(config.getPortalQpPassword());
+        portalQpPassField.setPromptText("QP Module Password");
+        portalQpPassField.setPrefWidth(200);
+        TextField portalQpPrefixField = new TextField(config.getPortalQpPrefix());
+        portalQpPrefixField.setPromptText("QP Prefix (e.g. D)");
+        portalQpPrefixField.setPrefWidth(120);
+        Button savePortalBtn = new Button("Save Credentials");
         savePortalBtn.setOnAction(e -> {
             config.setPortalUsername(portalUserField.getText().trim());
             config.setPortalPassword(portalPassField.getText());
+            config.setPortalQpPassword(portalQpPassField.getText());
+            config.setPortalQpPrefix(portalQpPrefixField.getText().trim());
             saveConfigs();
             activityLogger.info("Portal credentials saved.");
         });
-        HBox portalCredsBox = new HBox(10, new Label("Username:"), portalUserField, new Label("Password:"), portalPassField, savePortalBtn);
+        HBox portalCredsBox = new HBox(10, 
+            new Label("Username:"), portalUserField, 
+            new Label("Password:"), portalPassField, 
+            new Label("QP Password:"), portalQpPassField, 
+            new Label("QP Prefix:"), portalQpPrefixField,
+            savePortalBtn
+        );
         portalCredsBox.setAlignment(javafx.geometry.Pos.CENTER);
 
         Button launchBtn = new Button("Launch Smart Browser");

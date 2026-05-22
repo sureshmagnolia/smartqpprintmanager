@@ -10,6 +10,8 @@ public class Config {
     private String collegeId = "";
     private String portalUsername = "";
     private String portalPassword = "";
+    private String portalQpPassword = "";
+    private String portalQpPrefix = "";
     private String collegeName = "Your Institution Name";
     private String currentExamDate = "";
     private String currentExamSession = "";
@@ -43,6 +45,12 @@ public class Config {
 
     public String getPortalPassword() { return portalPassword; }
     public void setPortalPassword(String portalPassword) { this.portalPassword = portalPassword; }
+
+    public String getPortalQpPassword() { return portalQpPassword; }
+    public void setPortalQpPassword(String portalQpPassword) { this.portalQpPassword = portalQpPassword; }
+
+    public String getPortalQpPrefix() { return portalQpPrefix; }
+    public void setPortalQpPrefix(String portalQpPrefix) { this.portalQpPrefix = portalQpPrefix; }
 
     public List<PrintRule> getRules() { return rules; }
     public void setRules(List<PrintRule> rules) { this.rules = rules; }
