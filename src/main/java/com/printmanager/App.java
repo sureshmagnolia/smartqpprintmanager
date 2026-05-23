@@ -3,9 +3,8 @@ package com.printmanager;
 import com.printmanager.model.*;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -118,8 +117,30 @@ public class App extends Application {
     private final TextField sessionNameField = new TextField();
     private final TextField downloadPathField = new TextField();
 
+    // Global Synchronization Engine
+    private final DoubleProperty globalPulseOpacity = new SimpleDoubleProperty(1.0);
+    private final BooleanProperty dualAlertPhase = new SimpleBooleanProperty(true); // true = Red, false = Black
+
     @Override
     public void start(Stage primaryStage) {
+        // Initialize Global Pulse Timeline (0.7 to 1.0)
+        javafx.animation.Timeline globalPulse = new javafx.animation.Timeline(
+            new javafx.animation.KeyFrame(javafx.util.Duration.ZERO, 
+                new javafx.animation.KeyValue(globalPulseOpacity, 1.0)),
+            new javafx.animation.KeyFrame(javafx.util.Duration.millis(800), 
+                new javafx.animation.KeyValue(globalPulseOpacity, 0.7))
+        );
+        globalPulse.setAutoReverse(true);
+        globalPulse.setCycleCount(javafx.animation.Animation.INDEFINITE);
+        globalPulse.play();
+
+        // Initialize Dual Alert Phase Timer (flips every 1.6s)
+        javafx.animation.Timeline phaseFlip = new javafx.animation.Timeline(
+            new javafx.animation.KeyFrame(javafx.util.Duration.millis(1600), e -> dualAlertPhase.set(!dualAlertPhase.get()))
+        );
+        phaseFlip.setCycleCount(javafx.animation.Animation.INDEFINITE);
+        phaseFlip.play();
+
         // Load icon early and keep reference for other windows
         try {
             appIcon = new Image(getClass().getResourceAsStream("/icon.png"));
@@ -198,7 +219,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.8");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.9");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -374,21 +395,17 @@ public class App extends Application {
         simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
         simWarning.managedProperty().bind(simAlertHeader.managedProperty());
 
-        Label mapAlert = new Label("\uD83D\uDDFA CHECK FOR MAPS");
-        mapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        Label mapAlert = new Label("\uD83D\uDDFA MAP ALERT");
+        mapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #800020; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
         mapAlert.setVisible(false);
         mapAlert.managedProperty().bind(mapAlert.visibleProperty());
-
-        javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), mapAlert);
-        ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
+        mapAlert.opacityProperty().bind(globalPulseOpacity);
 
         Label stapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
-        stapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        stapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 2px; -fx-border-radius: 5px;");
         stapleAlert.setVisible(false);
         stapleAlert.managedProperty().bind(stapleAlert.visibleProperty());
-
-        javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), stapleAlert);
-        ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
+        stapleAlert.opacityProperty().bind(globalPulseOpacity);
 
         Runnable updateQueueStats = () -> {
             totalJobs.setText("Total Jobs: " + fileQueue.size());
@@ -424,7 +441,7 @@ public class App extends Application {
 
         HBox alertsBox = new HBox(8, mapAlert, stapleAlert);
         alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
-        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, totalCopies, totalPP, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, alertsBox, simWarning);
+        statsDash.getChildren().addAll(totalPP, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, totalJobs, activePrinters, totalPages, totalCopies, alertsBox, simWarning);
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
@@ -450,8 +467,11 @@ public class App extends Application {
         snCol.setCellFactory(col -> new TableCell<FileItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty) setText(null);
-                else setText(String.valueOf(getIndex() + 1));
+                if (empty) { setText(null); setStyle(""); }
+                else { 
+                    setText(String.valueOf(getIndex() + 1));
+                    setStyle("-fx-text-fill: " + (isAlertItem(getTableRow().getItem()) ? "white" : "black") + ";");
+                }
             }
         });
         snCol.setPrefWidth(50); snCol.setMaxWidth(60); snCol.setSortable(false);
@@ -459,6 +479,16 @@ public class App extends Application {
         TableColumn<FileItem, String> nameCol = new TableColumn<>("File Name");
         nameCol.setCellValueFactory(d -> d.getValue().fileNameProperty());
         nameCol.setMinWidth(300);
+        nameCol.setCellFactory(col -> new TableCell<FileItem, String>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); }
+                else { 
+                    setText(item);
+                    setStyle("-fx-text-fill: " + (isAlertItem(getTableRow().getItem()) ? "white" : "black") + ";");
+                }
+            }
+        });
 
         TableColumn<FileItem, Integer> pagesCol = new TableColumn<>("Pages");
         pagesCol.setCellValueFactory(d -> d.getValue().pageCountProperty().asObject());
@@ -466,8 +496,11 @@ public class App extends Application {
         pagesCol.setCellFactory(tc -> new TableCell<FileItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
-                else { setText(item.toString()); setAlignment(javafx.geometry.Pos.CENTER); }
+                if (empty || item == null) { setText(null); setStyle(""); }
+                else { 
+                    setText(item.toString()); setAlignment(javafx.geometry.Pos.CENTER); 
+                    setStyle("-fx-text-fill: " + (isAlertItem(getTableRow().getItem()) ? "white" : "black") + ";");
+                }
             }
         });
 
@@ -479,7 +512,8 @@ public class App extends Application {
             {
                 spinner.setPrefWidth(70);
                 spinner.setEditable(true);
-                
+                spinner.getEditor().setStyle("-fx-text-fill: black;");
+
                 // Commit value on focus lost or enter
                 spinner.focusedProperty().addListener((obs, oldVal, newVal) -> {
                     if (!newVal) commitSpinnerValue();
@@ -516,7 +550,9 @@ public class App extends Application {
         styleCol.setPrefWidth(100); styleCol.setMaxWidth(110);
         styleCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet"));
-            { combo.setPrefWidth(90); combo.setOnAction(e -> {
+            { 
+                combo.setStyle("-fx-text-inner-color: black; -fx-text-fill: black;");
+                combo.setPrefWidth(90); combo.setOnAction(e -> {
                 if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setStyle(combo.getValue());
             }); }
             @Override protected void updateItem(String item, boolean empty) {
@@ -535,6 +571,7 @@ public class App extends Application {
             private final HBox container = new HBox(5, combo, statusIndicator);
             
             {
+                combo.setStyle("-fx-text-inner-color: black; -fx-text-fill: black;");
                 combo.setPrefWidth(140);
                 container.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
                 statusIndicator.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;");
@@ -605,7 +642,9 @@ public class App extends Application {
         paperCol.setPrefWidth(80); paperCol.setMaxWidth(90);
         paperCol.setCellFactory(tc -> new TableCell<FileItem, String>() {
             private final ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList("A4", "A3"));
-            { combo.setPrefWidth(70); combo.setOnAction(e -> {
+            { 
+                combo.setStyle("-fx-text-inner-color: black; -fx-text-fill: black;");
+                combo.setPrefWidth(70); combo.setOnAction(e -> {
                 if (getTableRow() != null && getTableRow().getItem() != null) getTableRow().getItem().setPaperSize(combo.getValue());
             }); }
             @Override protected void updateItem(String item, boolean empty) {
@@ -624,10 +663,11 @@ public class App extends Application {
                 if (empty || item == null) { setText(null); setStyle(""); }
                 else {
                     setText(item); setAlignment(javafx.geometry.Pos.CENTER);
-                    if (item.contains("Sent")) setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
-                    else if (item.contains("Finished")) setStyle("-fx-text-fill: blue; -fx-font-weight: bold;");
-                    else if (item.contains("Error")) setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
-                    else setStyle("");
+                    boolean alert = isAlertItem(getTableRow().getItem());
+                    if (item.contains("Sent")) setStyle("-fx-text-fill: " + (alert ? "#81c784" : "green") + "; -fx-font-weight: bold;");
+                    else if (item.contains("Finished")) setStyle("-fx-text-fill: " + (alert ? "#90caf9" : "blue") + "; -fx-font-weight: bold;");
+                    else if (item.contains("Error")) setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
+                    else setStyle("-fx-text-fill: " + (alert ? "white" : "black") + ";");
                 }
             }
         });
@@ -1726,14 +1766,64 @@ public class App extends Application {
         }
     }
 
+    private boolean isAlertItem(FileItem item) {
+        if (item == null) return false;
+        boolean isMap = item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+        boolean isStaple = "Booklet".equals(item.getStyle()) && calculatePP(item) > 1;
+        return isMap || isStaple;
+    }
+
+    private boolean isAlertRoomItem(RoomItem item) {
+        if (item == null) return false;
+        boolean isMap = (item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
+                        (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history"));
+        boolean isStaple = false;
+        if (item.getMatchedFile() != null) {
+            FileItem f = item.getMatchedFile();
+            isStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+        }
+        return isMap || isStaple;
+    }
+
     private void updateRowStyle(TableRow<FileItem> row, String status) {
         FileItem item = row.getItem();
-        boolean isHistory = item != null && item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+        if (item == null) {
+            row.styleProperty().unbind();
+            row.setStyle("");
+            row.opacityProperty().unbind();
+            row.setOpacity(1.0);
+            return;
+        }
 
-        if (status == null) row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "");
-        else if (status.contains("Finished")) row.setStyle("-fx-background-color: #c8e6c9;"); 
-        else if (status.contains("Error")) row.setStyle("-fx-background-color: #ffcdd2;");    
-        else row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "");
+        boolean isMap = item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+        boolean isStaple = "Booklet".equals(item.getStyle()) && calculatePP(item) > 1;
+
+        // Reset bindings
+        row.styleProperty().unbind();
+        row.opacityProperty().unbind();
+        row.setOpacity(1.0);
+
+        if (status != null && status.contains("Finished")) {
+            row.setStyle("-fx-background-color: #c8e6c9; -fx-text-inner-color: black;");
+        } else if (status != null && status.contains("Error")) {
+            row.setStyle("-fx-background-color: #ffcdd2; -fx-text-inner-color: black;");
+        } else {
+            if (isMap && isStaple) {
+                // DUAL Alert: Alternates colors Wine Red <-> Black
+                row.styleProperty().bind(Bindings.when(dualAlertPhase)
+                    .then("-fx-background-color: #800020; -fx-text-inner-color: white;") // Wine Red
+                    .otherwise("-fx-background-color: #212121; -fx-text-inner-color: white;")); // Black
+                row.opacityProperty().bind(globalPulseOpacity);
+            } else if (isMap) {
+                row.setStyle("-fx-background-color: #800020; -fx-text-inner-color: white;");
+                row.opacityProperty().bind(globalPulseOpacity);
+            } else if (isStaple) {
+                row.setStyle("-fx-background-color: #212121; -fx-text-inner-color: white;");
+                row.opacityProperty().bind(globalPulseOpacity);
+            } else {
+                row.setStyle("");
+            }
+        }
     }
 
     private void saveConfigs() {
@@ -1818,21 +1908,17 @@ public class App extends Application {
             saveConfigs();
         });
 
-        Label roomMapAlert = new Label("\uD83D\uDDFA CHECK FOR MAPS");
-        roomMapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        Label roomMapAlert = new Label("\uD83D\uDDFA MAP ALERT");
+        roomMapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #800020; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
         roomMapAlert.setVisible(false);
         roomMapAlert.managedProperty().bind(roomMapAlert.visibleProperty());
-
-        javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomMapAlert);
-        ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
+        roomMapAlert.opacityProperty().bind(globalPulseOpacity);
 
         Label roomStapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
-        roomStapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        roomStapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 2px; -fx-border-radius: 5px;");
         roomStapleAlert.setVisible(false);
         roomStapleAlert.managedProperty().bind(roomStapleAlert.visibleProperty());
-
-        javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomStapleAlert);
-        ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
+        roomStapleAlert.opacityProperty().bind(globalPulseOpacity);
 
         Label roomTotalPP = new Label("Total PP: 0");
         roomTotalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63; -fx-font-size: 16px;");
@@ -1980,14 +2066,14 @@ public class App extends Application {
                 else {
                     label.setText(item); label.setStyle("-fx-font-weight: bold;");
                     RoomItem ri = getTableRow().getItem();
+                    boolean alert = isAlertRoomItem(ri);
                     if (ri != null && ri.getMatchedFile() != null) {
                         FileItem f = ri.getMatchedFile();
-                        boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
                         String name = f.getFileName().toLowerCase();
-                        if (name.startsWith("split_")) { icon.setText("\u2702"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#2196f3") + ";"); }
-                        else if (name.startsWith("remain_")) { icon.setText("\u21BB"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#ff9800") + ";"); }
-                        else { icon.setText("\uD83D\uDCC4"); icon.setStyle("-fx-text-fill: " + (needStaple ? "white" : "#666") + ";"); }
-                        if (needStaple) label.setStyle("-fx-font-weight: bold; -fx-text-fill: white;");
+                        if (name.startsWith("split_")) { icon.setText("\u2702"); icon.setStyle("-fx-text-fill: " + (alert ? "white" : "#2196f3") + ";"); }
+                        else if (name.startsWith("remain_")) { icon.setText("\u21BB"); icon.setStyle("-fx-text-fill: " + (alert ? "white" : "#ff9800") + ";"); }
+                        else { icon.setText("\uD83D\uDCC4"); icon.setStyle("-fx-text-fill: " + (alert ? "white" : "#666") + ";"); }
+                        if (alert) label.setStyle("-fx-font-weight: bold; -fx-text-fill: white;");
                         else label.setStyle("-fx-font-weight: bold; -fx-text-fill: black;");
                     } else { icon.setText("\u2757"); icon.setStyle("-fx-text-fill: #f44336;"); }
                     setGraphic(container);
@@ -2122,24 +2208,47 @@ public class App extends Application {
             // Helper to update row style based on item properties
             Runnable updateRowStyle = () -> {
                 RoomItem item = row.getItem();
-                boolean isHistory = item != null && ((item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
-                                                     (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history")));
+                row.styleProperty().unbind();
+                row.opacityProperty().unbind();
+                row.setOpacity(1.0);
 
-                if (item != null && item.getMatchedFile() != null) {
+                if (item == null) { row.setStyle(""); return; }
+
+                boolean isMap = (item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
+                                (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history"));
+                
+                boolean isStaple = false;
+                if (item.getMatchedFile() != null) {
                     FileItem f = item.getMatchedFile();
-                    boolean needStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
-                    if (needStaple) row.setStyle("-fx-background-color: #2b2b2b;"); // INVERTED for staple needed
-                    else {
-                        String name = f.getFileName().toLowerCase();
-                        if (isHistory) row.setStyle("-fx-background-color: #fff9c4;");
-                        else if (name.startsWith("split_")) row.setStyle("-fx-background-color: #f0f7ff;");
-                        else if (name.startsWith("remain_")) row.setStyle("-fx-background-color: #fffaf0;");
-                        else row.setStyle("");
-                    }
-                } else if (item != null && item.getMatchedFile() == null) {
-                    row.setStyle(isHistory ? "-fx-background-color: #fff9c4;" : "-fx-background-color: #fff9f9;");
+                    isStaple = "Booklet".equals(f.getStyle()) && calculatePP(f) > 1;
+                }
+
+                if (item.statusProperty().get() != null && item.statusProperty().get().contains("Finished")) {
+                    row.setStyle("-fx-background-color: #c8e6c9; -fx-text-inner-color: black;");
+                } else if (item.statusProperty().get() != null && item.statusProperty().get().contains("Error")) {
+                    row.setStyle("-fx-background-color: #ffcdd2; -fx-text-inner-color: black;");
                 } else {
-                    row.setStyle("");
+                    if (isMap && isStaple) {
+                        row.styleProperty().bind(Bindings.when(dualAlertPhase)
+                            .then("-fx-background-color: #800020; -fx-text-inner-color: white;")
+                            .otherwise("-fx-background-color: #212121; -fx-text-inner-color: white;"));
+                        row.opacityProperty().bind(globalPulseOpacity);
+                    } else if (isMap) {
+                        row.setStyle("-fx-background-color: #800020; -fx-text-inner-color: white;");
+                        row.opacityProperty().bind(globalPulseOpacity);
+                    } else if (isStaple) {
+                        row.setStyle("-fx-background-color: #212121; -fx-text-inner-color: white;");
+                        row.opacityProperty().bind(globalPulseOpacity);
+                    } else {
+                        if (item.getMatchedFile() != null) {
+                            String name = item.getMatchedFile().getFileName().toLowerCase();
+                            if (name.startsWith("split_")) row.setStyle("-fx-background-color: #f0f7ff; -fx-text-inner-color: black;");
+                            else if (name.startsWith("remain_")) row.setStyle("-fx-background-color: #fffaf0; -fx-text-inner-color: black;");
+                            else row.setStyle("");
+                        } else {
+                            row.setStyle("-fx-background-color: #fff9f9; -fx-text-inner-color: black;");
+                        }
+                    }
                 }
             };
 
@@ -2325,7 +2434,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.2.8");
+        Label version = new Label("Professional Edition v3.2.9");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
