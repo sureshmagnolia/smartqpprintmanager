@@ -374,7 +374,7 @@ public class App extends Application {
         simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
         simWarning.managedProperty().bind(simAlertHeader.managedProperty());
 
-        Label mapAlert = new Label("CHECK FOR MAPS");
+        Label mapAlert = new Label("\uD83D\uDDFA\uFE0F CHECK FOR MAPS");
         mapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
         mapAlert.setVisible(false);
         mapAlert.managedProperty().bind(mapAlert.visibleProperty());
@@ -382,7 +382,7 @@ public class App extends Application {
         javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), mapAlert);
         ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
 
-        Label stapleAlert = new Label("\uD83D\uDCCC STAPLE ALERT");
+        Label stapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
         stapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
         stapleAlert.setVisible(false);
         stapleAlert.managedProperty().bind(stapleAlert.visibleProperty());
@@ -1930,12 +1930,7 @@ public class App extends Application {
         
         Label subtitle = new Label();
         subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("TOTAL STUDENTS: ", totalQtyBinding.asString()));
-        subtitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #d32f2f; -fx-background-color: #ffecb3; -fx-padding: 5px 15px; -fx-background-radius: 5px;");
-
-        Label jsonTotalLabel = new Label("Verified from JSON Source");
-        jsonTotalLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #7f8c8d;");
-        jsonTotalLabel.visibleProperty().bind(group.totalStudentsProperty().greaterThan(0));
-        jsonTotalLabel.managedProperty().bind(jsonTotalLabel.visibleProperty());
+        subtitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2e7d32; -fx-padding: 5px 0;");
         
         // Attachment logic for count listeners (syncs split files and updates room total)
         java.util.function.Consumer<RoomItem> attachListener = ri -> {
@@ -1959,7 +1954,7 @@ public class App extends Application {
         // Initial calculation to ensure 0 is not shown if items already exist
         recalculateRoomTotal.run();
 
-        VBox headerArea = new VBox(5, title, subtitle, jsonTotalLabel);
+        VBox headerArea = new VBox(2, title, subtitle);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
         headerArea.setPadding(new Insets(10, 0, 10, 0));
 

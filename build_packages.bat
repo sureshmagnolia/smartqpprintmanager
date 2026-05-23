@@ -32,11 +32,11 @@ xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "output\%APPNAME%\bin\chromium\"
 powershell.exe -NoProfile -Command "Compress-Archive -Path 'output\%APPNAME%\*' -DestinationPath '%APPNAME%-Native-V%VERSION%.zip' -Force"
 
 echo Creating EXE Installer...
-jpackage --type exe --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser
+jpackage --type exe --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser --win-upgrade-uuid f1a8c9e5-a6b7-4c8d-9e0f-e62c1a234b5d
 copy "output\%APPNAME%-%VERSION%.exe" "%APPNAME%-V%VERSION%.exe"
 
 echo Creating MSI Installer...
-jpackage --type msi --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser
+jpackage --type msi --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser --win-upgrade-uuid f1a8c9e5-a6b7-4c8d-9e0f-e62c1a234b5d
 copy "output\%APPNAME%-%VERSION%.msi" "%APPNAME%-V%VERSION%.msi"
 
 echo Packaging Complete.
