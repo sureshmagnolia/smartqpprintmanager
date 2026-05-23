@@ -198,7 +198,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.6");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.8");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -374,7 +374,7 @@ public class App extends Application {
         simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
         simWarning.managedProperty().bind(simAlertHeader.managedProperty());
 
-        Label mapAlert = new Label("\uD83D\uDDFA\uFE0F CHECK FOR MAPS");
+        Label mapAlert = new Label("\uD83D\uDDFA CHECK FOR MAPS");
         mapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
         mapAlert.setVisible(false);
         mapAlert.managedProperty().bind(mapAlert.visibleProperty());
@@ -1818,7 +1818,7 @@ public class App extends Application {
             saveConfigs();
         });
 
-        Label roomMapAlert = new Label("CHECK FOR MAPS");
+        Label roomMapAlert = new Label("\uD83D\uDDFA CHECK FOR MAPS");
         roomMapAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #d32f2f; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
         roomMapAlert.setVisible(false);
         roomMapAlert.managedProperty().bind(roomMapAlert.visibleProperty());
@@ -1826,7 +1826,7 @@ public class App extends Application {
         javafx.animation.FadeTransition ft = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomMapAlert);
         ft.setFromValue(1.0); ft.setToValue(0.2); ft.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft.setAutoReverse(true); ft.play();
 
-        Label roomStapleAlert = new Label("\uD83D\uDCCC STAPLE ALERT");
+        Label roomStapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
         roomStapleAlert.setStyle("-fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffffff; -fx-border-width: 2px; -fx-border-radius: 5px;");
         roomStapleAlert.setVisible(false);
         roomStapleAlert.managedProperty().bind(roomStapleAlert.visibleProperty());
@@ -2325,7 +2325,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.2.6");
+        Label version = new Label("Professional Edition v3.2.8");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
