@@ -31,22 +31,47 @@ public class RoomService {
 
     public List<RoomGroup> processRoomWiseJson(JsonNode root, ObservableList<FileItem> fileQueue) {
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
+        int nodeIdCounter = 0;
         if (root.isArray()) {
             for (JsonNode node : root) {
+                int currentNodeId = nodeIdCounter++;
                 String rs = node.path("roomSerial").asText("Unknown");
                 String qp = node.path("qpCode").asText("");
-                RoomGroup g = groups.computeIfAbsent(rs, RoomGroup::new);
-                RoomItem i = new RoomItem(rs, qp, node.path("pdfFileName").asText(""), node.path("count").asInt(0));
+                int count = node.path("count").asInt(0);
+                String course = node.path("courseName").asText("");
                 
-                // Immediate match attempt
+                RoomGroup g = groups.computeIfAbsent(rs, RoomGroup::new);
+                
+                // Track total students per room from JSON nodes
+                int totalField = node.path("totalStudents").asInt(0);
+                if (totalField == 0) totalField = node.path("totalCount").asInt(0);
+                if (totalField == 0) totalField = node.path("roomTotal").asInt(0);
+                
+                if (totalField > 0) {
+                    g.setTotalStudents(totalField);
+                } else {
+                    g.setTotalStudents(g.getTotalStudents() + count);
+                }
+
+                // Match attempt
+                boolean matched = false;
                 for (FileItem fi : fileQueue) {
                     String extracted = extractQPFromFileName(fi.getFileName());
                     if (qp.equalsIgnoreCase(extracted) || fi.getFileName().contains("_" + qp + "_") || fi.getFileName().contains("_" + qp + ".")) {
-                        i.setMatchedFile(fi);
-                        break;
+                        RoomItem ri = new RoomItem(rs, qp, node.path("pdfFileName").asText(""), count, currentNodeId);
+                        ri.setCourseName(course.isEmpty() ? ri.getPdfFileName() : course);
+                        ri.setMatchedFile(fi);
+                        g.getItems().add(ri);
+                        matched = true;
                     }
                 }
-                g.getItems().add(i);
+                
+                // If no file matched, still add the entry as Pending
+                if (!matched) {
+                    RoomItem ri = new RoomItem(rs, qp, node.path("pdfFileName").asText(""), count, currentNodeId);
+                    ri.setCourseName(course.isEmpty() ? ri.getPdfFileName() : course);
+                    g.getItems().add(ri);
+                }
             }
         }
         return new ArrayList<>(groups.values());
@@ -66,16 +91,25 @@ public class RoomService {
                 }
             }
 
-            // 2. Group by QP to process each requirement
-            Map<String, List<RoomItem>> byQp = existingItems.stream()
-                    .collect(Collectors.groupingBy(ri -> ri.getQpCode().toLowerCase()));
+            // 2. Group existing items by sourceNodeId to identify student sets
+            Map<Integer, List<RoomItem>> byNode = existingItems.stream()
+                    .filter(ri -> ri.getSourceNodeId() >= 0)
+                    .collect(Collectors.groupingBy(RoomItem::getSourceNodeId));
+
+            // Also handle items without node IDs (shouldn't happen with new logic but for safety)
+            List<RoomItem> orphans = existingItems.stream()
+                    .filter(ri -> ri.getSourceNodeId() < 0)
+                    .collect(Collectors.toList());
 
             List<RoomItem> toAdd = new ArrayList<>();
             List<RoomItem> toRemove = new ArrayList<>();
 
-            for (Map.Entry<String, List<RoomItem>> entry : byQp.entrySet()) {
-                String qp = entry.getKey();
+            // Process each student set
+            for (Map.Entry<Integer, List<RoomItem>> entry : byNode.entrySet()) {
+                int nid = entry.getKey();
                 List<RoomItem> items = entry.getValue();
+                RoomItem proto = items.get(0);
+                String qp = proto.getQpCode();
                 
                 List<FileItem> matchingFiles = fileQueue.stream()
                         .filter(fi -> {
@@ -87,33 +121,21 @@ public class RoomService {
                         })
                         .collect(Collectors.toList());
 
-                // Prune extra nulls first
-                if (items.size() > 1) {
-                    List<RoomItem> unmatched = items.stream().filter(ri -> ri.getMatchedFile() == null).collect(Collectors.toList());
-                    boolean anyMatched = items.stream().anyMatch(ri -> ri.getMatchedFile() != null);
-                    if (anyMatched) {
-                        toRemove.addAll(unmatched);
-                        items.removeAll(unmatched);
-                    } else if (unmatched.size() > 1) {
-                        List<RoomItem> extras = unmatched.subList(1, unmatched.size());
-                        toRemove.addAll(extras);
-                        items.removeAll(extras);
-                    }
-                }
-
-                // Match files
+                // Match files for this set
                 for (FileItem fi : matchingFiles) {
+                    // Already have an item for this file in this set?
                     if (items.stream().anyMatch(ri -> ri.getMatchedFile() == fi)) continue;
 
+                    // Do we have an unmatched item in this set we can use?
                     Optional<RoomItem> nullSlot = items.stream().filter(ri -> ri.getMatchedFile() == null).findFirst();
                     if (nullSlot.isPresent()) {
                         RoomItem slot = nullSlot.get();
                         slot.setMatchedFile(fi);
                         slot.setStatus("Pending");
                     } else {
-                        RoomItem t = items.get(0);
-                        RoomItem ni = new RoomItem(g.getRoomSerial(), t.getQpCode(), t.getPdfFileName(), t.getCount());
-                        ni.setCourseName(t.getCourseName());
+                        // Create a new split item for this set
+                        RoomItem ni = new RoomItem(g.getRoomSerial(), proto.getQpCode(), proto.getPdfFileName(), proto.getCount(), nid);
+                        ni.setCourseName(proto.getCourseName());
                         ni.setMatchedFile(fi);
                         ni.setStatus("Pending");
                         toAdd.add(ni);
@@ -122,7 +144,19 @@ public class RoomService {
                 }
             }
             
-            if (!toRemove.isEmpty()) g.getItems().removeAll(toRemove);
+            // Re-link orphans (fallback)
+            for (RoomItem i : orphans) {
+                if (i.getMatchedFile() == null) {
+                    for (FileItem fi : fileQueue) {
+                        String extracted = extractQPFromFileName(fi.getFileName());
+                        if (i.getQpCode().equalsIgnoreCase(extracted) || fi.getFileName().contains("_" + i.getQpCode() + "_")) {
+                            i.setMatchedFile(fi);
+                            break;
+                        }
+                    }
+                }
+            }
+            
             if (!toAdd.isEmpty()) g.getItems().addAll(toAdd);
 
             // 3. Reset Group status

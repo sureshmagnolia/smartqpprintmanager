@@ -198,7 +198,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.5");
+        primaryStage.setTitle("Smart QP Print Manager v3.2.6");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -364,6 +364,10 @@ public class App extends Application {
         activePrinters.setStyle("-fx-font-weight: bold; -fx-text-fill: #4CAF50;");
         Label totalPages = new Label("Total Pages: 0");
         totalPages.setStyle("-fx-font-weight: bold; -fx-text-fill: #FF9800;");
+        Label totalCopies = new Label("Total Copies: 0");
+        totalCopies.setStyle("-fx-font-weight: bold; -fx-text-fill: #9C27B0;");
+        Label totalPP = new Label("Total PP: 0");
+        totalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63;");
 
         Label simWarning = new Label("Simulation Mode is ON");
         simWarning.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
@@ -386,10 +390,17 @@ public class App extends Application {
         javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), stapleAlert);
         ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
 
-        fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
+        Runnable updateQueueStats = () -> {
             totalJobs.setText("Total Jobs: " + fileQueue.size());
             totalPages.setText("Total Pages: " + fileQueue.stream().mapToInt(FileItem::getPageCount).sum());
+            totalCopies.setText("Total Copies: " + fileQueue.stream().mapToInt(FileItem::getCopies).sum());
+            totalPP.setText("Total PP: " + fileQueue.stream().mapToInt(item -> calculatePP(item) * item.getCopies()).sum());
+        };
+
+        fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
+            updateQueueStats.run();
         });
+        updateQueueStats.run();
 
         Thread statsThread = new Thread(() -> {
             while(true) {
@@ -413,7 +424,7 @@ public class App extends Application {
 
         HBox alertsBox = new HBox(8, mapAlert, stapleAlert);
         alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
-        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, alertsBox, simWarning);
+        statsDash.getChildren().addAll(totalJobs, activePrinters, totalPages, totalCopies, totalPP, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, alertsBox, simWarning);
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
@@ -1686,7 +1697,7 @@ public class App extends Application {
                             .findFirst().orElse(null);
                         
                         if (proto != null) {
-                            RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount());
+                            RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount(), proto.getSourceNodeId());
                             newItem.setCourseName(proto.getCourseName());
                             newItem.setMatchedFile(f);
                             Platform.runLater(() -> {
@@ -1823,20 +1834,41 @@ public class App extends Application {
         javafx.animation.FadeTransition ft2 = new javafx.animation.FadeTransition(javafx.util.Duration.millis(600), roomStapleAlert);
         ft2.setFromValue(1.0); ft2.setToValue(0.2); ft2.setCycleCount(javafx.animation.Timeline.INDEFINITE); ft2.setAutoReverse(true); ft2.play();
 
+        Label roomTotalPP = new Label("Total PP: 0");
+        roomTotalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63; -fx-font-size: 16px;");
+
         Runnable updateRoomAlerts = () -> {
             boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
             boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
                                   .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
             roomMapAlert.setVisible(hasHistory);
             roomStapleAlert.setVisible(hasStaple);
+
+            int totalPPVal = 0;
+            for (RoomGroup g : roomGroupsList) {
+                for (RoomItem ri : g.getItems()) {
+                    if (ri.getMatchedFile() != null) {
+                        totalPPVal += calculatePP(ri.getMatchedFile()) * ri.getCount();
+                    }
+                }
+            }
+            roomTotalPP.setText("Total PP: " + totalPPVal);
         };
-        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> updateRoomAlerts.run());
+        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
+            updateRoomAlerts.run();
+            while (c.next()) {
+                if (c.wasAdded()) {
+                    c.getAddedSubList().forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c2 -> updateRoomAlerts.run()));
+                }
+            }
+        });
+        roomGroupsList.forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> updateRoomAlerts.run()));
         updateRoomAlerts.run();
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox roomAlertsBox = new HBox(8, roomMapAlert, roomStapleAlert);
+        HBox roomAlertsBox = new HBox(8, roomTotalPP, roomMapAlert, roomStapleAlert);
         roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
         HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, spacer, roomAlertsBox);
@@ -1860,35 +1892,76 @@ public class App extends Application {
             else card.setStyle(defaultStyle);
         });
 
-        // Reactive Total Qty calculation: Unify unique QP codes (max count per QP)
-        javafx.beans.binding.IntegerBinding totalQtyBinding = javafx.beans.binding.Bindings.createIntegerBinding(() -> {
-            Map<String, Integer> uniqueQps = new HashMap<>();
-            for (RoomItem ri : group.getItems()) {
-                String qp = ri.getQpCode();
-                if (qp != null) {
-                    uniqueQps.put(qp, Math.max(uniqueQps.getOrDefault(qp, 0), ri.getCount()));
+        // Helper to recalculate room total from items, avoiding double-counting splits
+        Runnable recalculateRoomTotal = () -> {
+            // Group by sourceNodeId to ensure Main/MCQ splits are counted as one student set
+            // Fallback to QP + Course name for already loaded data where sourceId might be missing
+            java.util.Map<Object, Integer> nodeCounts = new java.util.HashMap<>();
+            for (RoomItem item : group.getItems()) {
+                Object key;
+                int nid = item.getSourceNodeId();
+                if (nid >= 0) {
+                    key = nid;
+                } else {
+                    // Fallback key: Combination of QP and Course name
+                    key = (item.getQpCode() != null ? item.getQpCode() : "") + "|" + 
+                          (item.getCourseName() != null ? item.getCourseName() : "");
                 }
+                
+                // For the same student set (node), we take the count once.
+                // If counts differ (shouldn't happen), we take the max as a safety measure.
+                nodeCounts.put(key, Math.max(nodeCounts.getOrDefault(key, 0), item.getCount()));
             }
-            return uniqueQps.values().stream().mapToInt(Integer::intValue).sum();
-        }, group.getItems());
+            int sum = nodeCounts.values().stream().mapToInt(Integer::intValue).sum();
+            
+            // Only update if it's different to avoid binding loops
+            if (group.getTotalStudents() != sum) {
+                group.setTotalStudents(sum);
+            }
+        };
+
+        // Reactive Total Qty calculation: Strictly use the RoomGroup's totalStudents property
+        javafx.beans.binding.IntegerBinding totalQtyBinding = javafx.beans.binding.Bindings.createIntegerBinding(() -> {
+            return group.getTotalStudents();
+        }, group.totalStudentsProperty());
 
         Label title = new Label("Room: " + group.getRoomSerial());
-        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
-        Label subtitle = new Label();
-        subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("Total Students: ", totalQtyBinding.asString()));
-        subtitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        title.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
         
-        // Listener to refresh binding when individual quantities change
+        Label subtitle = new Label();
+        subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("TOTAL STUDENTS: ", totalQtyBinding.asString()));
+        subtitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #d32f2f; -fx-background-color: #ffecb3; -fx-padding: 5px 15px; -fx-background-radius: 5px;");
+
+        Label jsonTotalLabel = new Label("Verified from JSON Source");
+        jsonTotalLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #7f8c8d;");
+        jsonTotalLabel.visibleProperty().bind(group.totalStudentsProperty().greaterThan(0));
+        jsonTotalLabel.managedProperty().bind(jsonTotalLabel.visibleProperty());
+        
+        // Attachment logic for count listeners (syncs split files and updates room total)
+        java.util.function.Consumer<RoomItem> attachListener = ri -> {
+            ri.countProperty().addListener((obs, old, val) -> {
+                // Update siblings (same split source) to keep Main/MCQ counts in sync
+                group.getItems().stream()
+                     .filter(other -> other != ri && other.getSourceNodeId() == ri.getSourceNodeId() && ri.getSourceNodeId() >= 0)
+                     .forEach(other -> other.setCount(val.intValue()));
+                recalculateRoomTotal.run();
+            });
+        };
+
+        // Attach to existing and future items
+        group.getItems().forEach(attachListener);
         group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
             while (c.next()) {
-                if (c.wasAdded()) c.getAddedSubList().forEach(ri -> ri.countProperty().addListener(o -> totalQtyBinding.invalidate()));
+                if (c.wasAdded()) c.getAddedSubList().forEach(attachListener);
             }
-            totalQtyBinding.invalidate();
         });
-        group.getItems().forEach(ri -> ri.countProperty().addListener(o -> totalQtyBinding.invalidate()));
+        
+        // Initial calculation to ensure 0 is not shown if items already exist
+        recalculateRoomTotal.run();
 
-        VBox headerArea = new VBox(1, title, subtitle);
+        VBox headerArea = new VBox(5, title, subtitle, jsonTotalLabel);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
+        headerArea.setPadding(new Insets(10, 0, 10, 0));
 
         TableView<RoomItem> table = new TableView<>(group.getItems());
         table.setPrefHeight(230);
@@ -2246,38 +2319,90 @@ public class App extends Application {
     }
 
     private javafx.scene.Parent createAboutView() {
-        VBox layout = new VBox(20); layout.setPadding(new Insets(30)); layout.setAlignment(javafx.geometry.Pos.TOP_CENTER);
-        Label title = new Label("Smart QP Print Manager v3.2.5");
-        title.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #2196F3;");
-        Label createdBy = new Label("Created by Magnolia for Examination Management");
-        createdBy.setStyle("-fx-font-size: 16px; -fx-font-weight: normal; -fx-text-fill: #555;");
+        VBox mainLayout = new VBox(0);
+        mainLayout.setStyle("-fx-background-color: #f8f9fa;");
 
-        VBox configInfo = new VBox(5);
-        configInfo.setAlignment(javafx.geometry.Pos.CENTER);
-        Label configLabel = new Label("Configuration Path:");
-        configLabel.setStyle("-fx-font-weight: bold;");
-        TextField pathField = new TextField(configManager.getConfigPath());
-        pathField.setEditable(false);
-        pathField.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-alignment: center;");
-        pathField.setMaxWidth(800);
-        configInfo.getChildren().addAll(configLabel, pathField);
+        // Header Section
+        VBox header = new VBox(10);
+        header.setPadding(new Insets(40, 20, 40, 20));
+        header.setAlignment(javafx.geometry.Pos.CENTER);
+        header.setStyle("-fx-background-color: linear-gradient(to right, #1a237e, #283593);");
 
-        TabPane helpPane = new TabPane(); helpPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE); helpPane.setPrefHeight(400);
+        Label title = new Label("Smart QP Print Manager");
+        title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
+        Label version = new Label("Professional Edition v3.2.6");
+        version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
+        header.getChildren().addAll(title, version);
 
-        String overview = "OVERVIEW:\nA specialized utility for high-volume automated question paper printing.\n\n" +
-            "1. PRINT QUEUE: Add PDFs for general batch printing.\n2. ROOM ROUTER: Automatically group and print papers per room.\n" +
-            "3. PRINTER DASHBOARD: Monitor real-time status.\n4. ACTIVITY LOGS: Audit every action.";
+        // Content Sections
+        VBox content = new VBox(30);
+        content.setPadding(new Insets(30, 50, 50, 50));
+        content.setMaxWidth(1000);
 
-        String roomLogic = "ROOM WISE ROUTING:\n- Requires JSON with 'roomSerial', 'qpCode', and 'count'.\n- Matches qpCode against Print Queue.\n- Split parts (Main/MCQ) appear independently.";
+        content.getChildren().addAll(
+            createManualSection("\uD83D\uDCDD Overview", 
+                "The Smart QP Print Manager is an enterprise-grade solution designed to automate the complex workflow of examination paper printing. " +
+                "It eliminates manual page counting, printer selection, and room-wise sorting, ensuring high accuracy and speed during peak exam periods."),
 
-        helpPane.getTabs().add(new Tab("Overview", new ScrollPane(new Label(overview) {{ setPadding(new Insets(10)); setWrapText(true); }})));
-        helpPane.getTabs().add(new Tab("Room Router", new ScrollPane(new Label(roomLogic) {{ setPadding(new Insets(10)); setWrapText(true); }})));
+            createManualSection("\u2699\uFE0F 1. Core Workflow: The Print Queue",
+                "• Add PDFs: Drag and drop or use the 'Add PDFs' button. The app immediately analyzes each file.\n" +
+                "• Auto-Routing: Based on the page count and content, the app assigns a printer and print style (Simplex/Duplex/Booklet) automatically.\n" +
+                "• Manual Override: You can change the number of copies, printer, or style directly in the table before printing.\n" +
+                "• Batch Printing: Click 'Print All' to send all configured jobs to their respective printers sequentially."),
 
-        layout.getChildren().addAll(title, createdBy, new Separator(), helpPane, new Separator(), configInfo);
-        
-        ScrollPane sp = new ScrollPane(layout);
+            createManualSection("\u2702\uFE0F 2. Smart Split Technology",
+                "This advanced feature detects 'MCQ' or 'SDE' parts within a single PDF and splits them into two independent jobs:\n" +
+                "• Main Part: Usually 3+ pages, routed for Booklet/Duplex printing with a QP Overlay applied to the top-left.\n" +
+                "• MCQ Part: Detected via keywords, typically printed in Simplex or special 5-page modes.\n" +
+                "• Split/Subtract: Use the 'eye' icon (\uD83D\uDC41) to manually split a file or subtract specific pages from an existing job."),
+
+            createManualSection("\uD83D\uDCCB 3. Smart Room-Wise Router",
+                "The most powerful feature for large-scale exams:\n" +
+                "• Upload JSON: Import a seating arrangement file. The app automatically groups files by Room Number.\n" +
+                "• Smart Matching: It matches the QP codes in the JSON with the files in your Print Queue.\n" +
+                "• Dashboard: Each room gets a 'Card' showing all required papers, quantities, and real-time status.\n" +
+                "• One-Click Room Print: Click 'SEND PRINT BATCH' on a room card to print everything for that room, including an optional status cover page."),
+
+            createManualSection("\u2601\uFE0F 4. Examflow Cloud Integration",
+                "Sync your local manager with the Examflow web platform:\n" +
+                "• 1-Click Sync: When you click 'Sync to Print Manager' on the website, this app fetches the data using your College ID.\n" +
+                "• Real-time Fetch: No need for JSON files; data flows directly from the cloud to your local router."),
+
+            createManualSection("\uD83D\uDDA5\uFE0F 5. Printer Monitoring",
+                "• Health Dashboard: Monitor 'Ready', 'Printing', or 'Offline' status of all connected hardware.\n" +
+                "• Error Alerts: Instant notifications for Paper Jams, Low Toner, or Out of Paper scenarios.\n" +
+                "• Simulation Mode: Use 'Settings' to enable Simulation Mode for training or testing without wasting paper."),
+
+            createManualSection("\u2753 FAQ & Troubleshooting",
+                "• Missing Files: Ensure your filenames contain the QP code (e.g., _123456_).\n" +
+                "• Printer Offline: Check physical cables and ensure the printer is turned on. Windows must show it as 'Online'.\n" +
+                "• JSON Format: The JSON must contain 'roomSerial', 'qpCode', and 'count' fields."),
+
+            new Separator(),
+
+            new VBox(10,
+                new Label("System Configuration"),
+                new HBox(10, new Label("Config Path:"), new TextField(configManager.getConfigPath()) {{ setEditable(false); setPrefWidth(600); }})
+            )
+        );
+
+        ScrollPane sp = new ScrollPane(new VBox(header, new StackPane(content) {{ setAlignment(javafx.geometry.Pos.TOP_CENTER); }}));
         sp.setFitToWidth(true);
         return sp;
+    }
+
+    private VBox createManualSection(String title, String body) {
+        VBox section = new VBox(10);
+        Label lblTitle = new Label(title);
+        lblTitle.setStyle("-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
+        
+        Label lblBody = new Label(body);
+        lblBody.setStyle("-fx-font-size: 14px; -fx-text-fill: #333; -fx-line-spacing: 5px;");
+        lblBody.setWrapText(true);
+        lblBody.setMaxWidth(900);
+        
+        section.getChildren().addAll(lblTitle, lblBody);
+        return section;
     }
 
     private void previewRoomItem(RoomItem item) {
@@ -2326,26 +2451,39 @@ public class App extends Application {
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
         Map<String, Integer> qpTotalCounts = new HashMap<>();
         int matchedItems = 0;
+        int nodeIdCounter = 0;
 
         if (root.isArray()) {
             for (JsonNode node : root) {
+                int currentNodeId = nodeIdCounter++;
                 String roomSerial = node.path("roomSerial").asText("Unknown");
                 String qpCode = node.path("qpCode").asText("");
                 String pdfFileName = node.path("pdfFileName").asText("");
                 String courseName = node.path("courseName").asText(pdfFileName);
                 int count = node.path("count").asInt(0);
                 
+                int totalStudentsField = node.path("totalStudents").asInt(0);
+                if (totalStudentsField == 0) totalStudentsField = node.path("totalCount").asInt(0);
+                if (totalStudentsField == 0) totalStudentsField = node.path("roomTotal").asInt(0);
+
+                RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
+                if (totalStudentsField > 0) {
+                    group.setTotalStudents(totalStudentsField);
+                } else {
+                    // Accumulate counts from each JSON entry to get the total room population
+                    group.setTotalStudents(group.getTotalStudents() + count);
+                }
+
                 if (!qpCode.isEmpty()) {
                     qpTotalCounts.put(qpCode, qpTotalCounts.getOrDefault(qpCode, 0) + count);
                 }
-
-                RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
+                
                 boolean matched = false;
                 for (FileItem fileItem : fileQueue) {
                     String fileName = fileItem.getFileName();
                     String extractedQP = extractQPFromFileName(fileName);
                     if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
                         roomItem.setCourseName(courseName);
                         roomItem.setMatchedFile(fileItem);
                         group.getItems().add(roomItem);
@@ -2355,7 +2493,7 @@ public class App extends Application {
                     }
                 }
                 if (!matched) {
-                    RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count);
+                    RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
                     roomItem.setCourseName(courseName);
                     group.getItems().add(roomItem);
                     activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);

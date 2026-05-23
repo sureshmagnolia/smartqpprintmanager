@@ -4,14 +4,23 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import javafx.beans.property.*;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
 
 public class RoomItem {
+    @JsonProperty("roomSerial")
     private String roomSerial;
+    
+    @JsonProperty("qpCode")
     private String qpCode;
+    
+    @JsonProperty("pdfFileName")
     private String pdfFileName;
+    
+    @JsonProperty("courseName")
     private String courseName;
+    
+    @JsonProperty("sourceNodeId")
+    private int sourceNodeId = -1;
+    
     private final IntegerProperty count = new SimpleIntegerProperty();
     private final ObjectProperty<FileItem> matchedFile = new SimpleObjectProperty<>();
     private final StringProperty status = new SimpleStringProperty("Pending");
@@ -23,15 +32,17 @@ public class RoomItem {
             @JsonProperty("roomSerial") String roomSerial,
             @JsonProperty("qpCode") String qpCode,
             @JsonProperty("pdfFileName") String pdfFileName,
-            @JsonProperty("count") int count) {
+            @JsonProperty("count") int count,
+            @JsonProperty("sourceNodeId") int sourceNodeId) {
         this.roomSerial = roomSerial;
         this.qpCode = qpCode;
         this.pdfFileName = pdfFileName;
         this.count.set(count);
+        this.sourceNodeId = sourceNodeId;
     }
 
     public String getRoomSerial() { return roomSerial; }
-    public void setRoomSerial(String roomSerial) { this.roomSerial = roomSerial; }
+    public void setFileRoomSerial(String roomSerial) { this.roomSerial = roomSerial; }
 
     public String getQpCode() { return qpCode; }
     public void setQpCode(String qpCode) { this.qpCode = qpCode; }
@@ -41,6 +52,9 @@ public class RoomItem {
     
     public String getCourseName() { return courseName; }
     public void setCourseName(String courseName) { this.courseName = courseName; }
+
+    public int getSourceNodeId() { return sourceNodeId; }
+    public void setSourceNodeId(int id) { this.sourceNodeId = id; }
     
     @JsonProperty("count")
     public int getCount() { return count.get(); }

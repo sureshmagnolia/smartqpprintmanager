@@ -10,10 +10,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class RoomGroup {
+    @JsonProperty("roomSerial")
     private String roomSerial;
+    
     private final ObservableList<RoomItem> items = FXCollections.observableArrayList();
     private final StringProperty selectedPrinter = new SimpleStringProperty("None");
     private final StringProperty status = new SimpleStringProperty("Ready");
+    private final IntegerProperty totalStudents = new SimpleIntegerProperty(0);
 
     public RoomGroup() {}
 
@@ -24,6 +27,12 @@ public class RoomGroup {
 
     public String getRoomSerial() { return roomSerial; }
     public void setRoomSerial(String roomSerial) { this.roomSerial = roomSerial; }
+
+    @JsonProperty("totalStudents")
+    public int getTotalStudents() { return totalStudents.get(); }
+    public void setTotalStudents(int totalStudents) { this.totalStudents.set(totalStudents); }
+    @JsonIgnore
+    public IntegerProperty totalStudentsProperty() { return totalStudents; }
 
     @JsonProperty("items")
     public List<RoomItem> getItemsList() { return new ArrayList<>(items); }
