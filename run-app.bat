@@ -1,1 +1,1 @@
-java -jar java-print-manager-3.0.2.jar
+java -jar java-print-manager-3.2.6.jar
