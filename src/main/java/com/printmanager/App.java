@@ -379,16 +379,16 @@ public class App extends Application {
         statsDash.setPadding(new Insets(15));
         statsDash.getStyleClass().add("glass-panel");
         
-        Label totalJobs = new Label("Total Jobs: 0");
-        totalJobs.setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+        Label totalQPs = new Label("Total QPs: 0");
+        totalQPs.setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+        Label totalCopies = new Label("Total Copies: 0");
+        totalCopies.setStyle("-fx-font-weight: bold; -fx-text-fill: #9C27B0;");
+        Label printSheets = new Label("Print Sheets: 0");
+        printSheets.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63;");
         Label activePrinters = new Label("Active Printers: 0");
         activePrinters.setStyle("-fx-font-weight: bold; -fx-text-fill: #4CAF50;");
         Label totalPages = new Label("Total Pages: 0");
         totalPages.setStyle("-fx-font-weight: bold; -fx-text-fill: #FF9800;");
-        Label totalCopies = new Label("Total Copies: 0");
-        totalCopies.setStyle("-fx-font-weight: bold; -fx-text-fill: #9C27B0;");
-        Label totalPP = new Label("Total PP: 0");
-        totalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63;");
 
         Label simWarning = new Label("Simulation Mode is ON");
         simWarning.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
@@ -408,10 +408,21 @@ public class App extends Application {
         stapleAlert.opacityProperty().bind(globalPulseOpacity);
 
         Runnable updateQueueStats = () -> {
-            totalJobs.setText("Total Jobs: " + fileQueue.size());
+            long uniqueQPs = fileQueue.stream()
+                .map(item -> {
+                    String name = item.getFileName();
+                    if (name == null) return "";
+                    String qp = extractQPFromFileName(name);
+                    if (qp != null) return qp;
+                    return name.replaceFirst("^(Split_|Remain_)+", "");
+                })
+                .filter(name -> !name.isEmpty())
+                .distinct()
+                .count();
+            totalQPs.setText("Total QPs: " + uniqueQPs);
             totalPages.setText("Total Pages: " + fileQueue.stream().mapToInt(FileItem::getPageCount).sum());
             totalCopies.setText("Total Copies: " + fileQueue.stream().mapToInt(FileItem::getCopies).sum());
-            totalPP.setText("Total PP: " + fileQueue.stream().mapToInt(item -> calculatePP(item) * item.getCopies()).sum());
+            printSheets.setText("Print Sheets: " + fileQueue.stream().mapToInt(item -> calculatePP(item) * item.getCopies()).sum());
         };
 
         fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
@@ -441,7 +452,8 @@ public class App extends Application {
 
         HBox alertsBox = new HBox(8, mapAlert, stapleAlert);
         alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
-        statsDash.getChildren().addAll(totalPP, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, totalJobs, activePrinters, totalPages, totalCopies, alertsBox, simWarning);
+        statsDash.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        statsDash.getChildren().addAll(totalQPs, totalCopies, printSheets, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, activePrinters, totalPages, alertsBox, simWarning);
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
@@ -468,8 +480,9 @@ public class App extends Application {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty) { setText(null); setStyle(""); }
-                else { 
+                else {
                     setText(String.valueOf(getIndex() + 1));
+                    setAlignment(javafx.geometry.Pos.CENTER);
                     setStyle("-fx-text-fill: " + (isAlertItem(getTableRow().getItem()) ? "white" : "black") + ";");
                 }
             }
@@ -483,13 +496,13 @@ public class App extends Application {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setStyle(""); }
-                else { 
+                else {
                     setText(item);
+                    setAlignment(javafx.geometry.Pos.CENTER_LEFT);
                     setStyle("-fx-text-fill: " + (isAlertItem(getTableRow().getItem()) ? "white" : "black") + ";");
                 }
             }
         });
-
         TableColumn<FileItem, Integer> pagesCol = new TableColumn<>("Pages");
         pagesCol.setCellValueFactory(d -> d.getValue().pageCountProperty().asObject());
         pagesCol.setPrefWidth(60); pagesCol.setMaxWidth(70);
