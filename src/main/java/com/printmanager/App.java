@@ -219,7 +219,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.2.9");
+        primaryStage.setTitle("Smart QP Print Manager v3.3.0");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -450,9 +450,16 @@ public class App extends Application {
         statsThread.setDaemon(true);
         statsThread.start();
 
-        HBox alertsBox = new HBox(8, mapAlert, stapleAlert);
+        totalQPs.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        totalCopies.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        printSheets.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        activePrinters.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        totalPages.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        
+        HBox alertsBox = new HBox(12, mapAlert, stapleAlert);
         alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
         statsDash.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        statsDash.setPadding(new Insets(10, 20, 10, 20));
         statsDash.getChildren().addAll(totalQPs, totalCopies, printSheets, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, activePrinters, totalPages, alertsBox, simWarning);
 
         TextField searchField = new TextField();
@@ -2447,7 +2454,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.2.9");
+        Label version = new Label("Professional Edition v3.3.0");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
