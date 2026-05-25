@@ -3230,6 +3230,13 @@ public class App extends Application {
                                 "          } " +
                                 "          return {qp: q, paper: p, time: t}; " +
                                 "        })(); " +
+                                "        var tText = (function() { " +
+                                "          var rows = document.querySelectorAll('table tr'); " +
+                                "          for (var i = 0; i < rows.length; i++) { " +
+                                "            if (!rows[i].querySelector('th') && rows[i].cells[cols.time]) return rows[i].cells[cols.time].innerText.trim(); " +
+                                "          } " +
+                                "          return ''; " +
+                                "        })(); " +
                                 "        if (raw && (window._lastDate !== raw || window._lastTime !== tText)) { " +
                                 "          window._lastDate = raw; " +
                                 "          window._lastTime = tText; " +
