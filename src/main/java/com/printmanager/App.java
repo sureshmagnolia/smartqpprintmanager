@@ -219,7 +219,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.3.0");
+        primaryStage.setTitle("Smart QP Print Manager v3.4.0");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -236,7 +236,10 @@ public class App extends Application {
             // Re-initialize Room Router view content to force UI refresh with loaded data
             roomTab.setContent(createRoomRouterView(primaryStage));
 
-            fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> saveConfigs());
+            fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
+                relinkRoomItems();
+                saveConfigs();
+            });
             roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
                 saveConfigs();
                 while (c.next()) {
@@ -1528,6 +1531,7 @@ public class App extends Application {
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
                 int countUpdated = 0;
+                Set<FileItem> matchedFiles = new HashSet<>();
                 if (root.isArray()) {
                     for (JsonNode node : root) {
                         String qpCode = node.path("qpCode").asText("");
@@ -1542,6 +1546,7 @@ public class App extends Application {
                                     Platform.runLater(() -> item.setCopies(finalCount));
                                     countUpdated++;
                                     matched = true;
+                                    matchedFiles.add(item);
                                     activityLogger.info("Updated " + fileName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
                                 }
                             }
@@ -1549,6 +1554,14 @@ public class App extends Application {
                         }
                     }
                 }
+                
+                // Alert for files in queue that have no routing in JSON
+                for (FileItem item : fileQueue) {
+                    if (!matchedFiles.contains(item)) {
+                        activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
+                    }
+                }
+
                 final int finalUpdated = countUpdated;
                 Platform.runLater(() -> {
                     updateStatus("Finished: Updated " + finalUpdated + " files.");
@@ -1770,8 +1783,14 @@ public class App extends Application {
                 }
             }
             
-            // Re-link existing items in case matchedFile was null
+            // Re-link existing items and INVALIDATE matches if file removed from queue
             for (RoomItem i : g.getItems()) {
+                FileItem currentMatch = i.getMatchedFile();
+                if (currentMatch != null && !fileQueue.contains(currentMatch)) {
+                    i.setMatchedFile(null);
+                    i.setStatus("PND"); // Reset to Pending
+                }
+
                 if (i.getMatchedFile() == null) {
                     for (FileItem qItem : fileQueue) {
                         String qName = qItem.getFileName();
@@ -1781,6 +1800,14 @@ public class App extends Application {
                             break;
                         }
                     }
+                }
+            }
+
+            // Reset status if it was "Partial Error" or "File Not Found" but all items are now matched
+            if ("Partial Error".equals(g.getStatus()) || "File Not Found".equals(g.getStatus())) {
+                boolean allMatched = g.getItems().stream().allMatch(ri -> ri.getMatchedFile() != null);
+                if (allMatched) {
+                    Platform.runLater(() -> g.setStatus("Ready"));
                 }
             }
         }
@@ -2454,7 +2481,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.3.0");
+        Label version = new Label("Professional Edition v3.4.0");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
@@ -2574,6 +2601,7 @@ public class App extends Application {
     private void processRoomWiseJson(JsonNode root, String sourceName) {
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
         Map<String, Integer> qpTotalCounts = new HashMap<>();
+        Set<FileItem> matchedFiles = new HashSet<>();
         int matchedItems = 0;
         int nodeIdCounter = 0;
 
@@ -2613,6 +2641,7 @@ public class App extends Application {
                         group.getItems().add(roomItem);
                         matched = true;
                         matchedItems++;
+                        matchedFiles.add(fileItem);
                         activityLogger.info("Room " + roomSerial + ": Matched QP " + qpCode + " (" + fileName + ")");
                     }
                 }
@@ -2622,6 +2651,13 @@ public class App extends Application {
                     group.getItems().add(roomItem);
                     activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);
                 }
+            }
+        }
+
+        // Alert for files in queue that have no routing in JSON
+        for (FileItem item : fileQueue) {
+            if (!matchedFiles.contains(item)) {
+                activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
             }
         }
 
@@ -2710,14 +2746,26 @@ public class App extends Application {
 
                 // Print QP items
                 for (RoomItem roomItem : group.getItems()) {
-                    if (roomItem.getMatchedFile() == null) { 
-                        Platform.runLater(() -> roomItem.setStatus("File Not Found"));
+                    FileItem fileItem = roomItem.getMatchedFile();
+                    
+                    if (fileItem == null || !fileQueue.contains(fileItem)) { 
+                        Platform.runLater(() -> {
+                            roomItem.setMatchedFile(null); // Explicitly clear if it's gone from queue
+                            roomItem.setStatus("Missing in Queue");
+                        });
+                        activityLogger.error("Room " + group.getRoomSerial() + ": QP " + roomItem.getQpCode() + " is MISSING in Print Queue.");
                         allSuccess = false;
                         continue; 
                     }
                     
+                    if (fileItem.getFile() == null || !fileItem.getFile().exists()) {
+                        Platform.runLater(() -> roomItem.setStatus("File Not Found"));
+                        activityLogger.error("Room " + group.getRoomSerial() + ": PDF File missing on disk for " + fileItem.getFileName());
+                        allSuccess = false;
+                        continue;
+                    }
+
                     roomItem.setStatus("Printing...");
-                    FileItem fileItem = roomItem.getMatchedFile();
                     FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), printer, fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
                     jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
                     

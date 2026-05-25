@@ -41,6 +41,7 @@ public class ActivityLogger {
     }
 
     public void info(String message) { log(message, "INFO"); }
+    public void warn(String message) { log(message, "WARN"); }
     public void error(String message) { log(message, "ERROR"); }
     public void success(String message) { log(message, "SUCCESS"); }
 }
