@@ -2,6 +2,7 @@ package com.printmanager;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 
 public class Launcher {
@@ -30,6 +31,7 @@ public class Launcher {
 
         JPanel panel = new JPanel() {
             private float angle = 0;
+            private float breathe = 0;
 
             @Override
             protected void paintComponent(Graphics g) {
@@ -46,17 +48,57 @@ public class Launcher {
                 g2d.setPaint(gp);
                 g2d.fillRect(0, 0, getWidth(), getHeight());
 
-                // Draw spinning loading circle
+                // Center the graphics context for the flower
                 g2d.translate(getWidth() / 2, 100);
-                g2d.rotate(Math.toRadians(angle));
-                g2d.setStroke(new BasicStroke(5, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g2d.setColor(new Color(255, 255, 255, 150));
-                g2d.drawArc(-30, -30, 60, 60, 0, 360);
-                g2d.setColor(Color.WHITE);
-                g2d.drawArc(-30, -30, 60, 60, 0, 100);
 
-                angle += 8;
+                // Breathing & Slow Rotation Effect for the Magnolia
+                float scale = 1.0f + 0.08f * (float)Math.sin(Math.toRadians(breathe));
+                g2d.scale(scale, scale);
+                g2d.rotate(Math.toRadians(angle));
+
+                // Magnolia Petal path definition
+                Path2D.Float petal = new Path2D.Float();
+                petal.moveTo(0, 0); // Base of the petal
+                petal.curveTo(18, -15, 22, -45, 0, -55); // Right arc up to the tip
+                petal.curveTo(-22, -45, -18, -15, 0, 0); // Left arc down to the base
+
+                // Draw the Magnolia Flower (8 overlapping petals)
+                int numPetals = 8;
+                for (int i = 0; i < numPetals; i++) {
+                    // Outer Petal Fill (White)
+                    g2d.setColor(new Color(255, 255, 255, 220));
+                    g2d.fill(petal);
+                    
+                    // Subtle Petal Outline/Shadow
+                    g2d.setColor(new Color(200, 220, 240, 150));
+                    g2d.setStroke(new BasicStroke(1.5f));
+                    g2d.draw(petal);
+                    
+                    g2d.rotate(Math.toRadians(360.0 / numPetals));
+                }
+
+                // Inner layered smaller petals for depth
+                g2d.scale(0.6, 0.6);
+                g2d.rotate(Math.toRadians(22.5)); // Offset slightly
+                for (int i = 0; i < numPetals; i++) {
+                    g2d.setColor(new Color(255, 250, 250, 240));
+                    g2d.fill(petal);
+                    g2d.setColor(new Color(200, 220, 240, 100));
+                    g2d.draw(petal);
+                    g2d.rotate(Math.toRadians(360.0 / numPetals));
+                }
+
+                // Magnolia Center Carpel (Golden/Yellow gradient)
+                GradientPaint centerGradient = new GradientPaint(-10, -10, new Color(255, 223, 0), 10, 10, new Color(212, 175, 55));
+                g2d.setPaint(centerGradient);
+                g2d.fillOval(-12, -12, 24, 24);
+
+                // Update animation variables
+                angle += 1.5; // Slow rotation
+                breathe += 5.0; // Breathing speed
+                
                 if (angle >= 360) angle = 0;
+                if (breathe >= 360) breathe = 0;
 
                 g2d.dispose();
             }
@@ -94,7 +136,7 @@ public class Launcher {
             "Loading... Almost there... Probably..."
         };
 
-        Timer timer = new Timer(50, e -> {
+        Timer timer = new Timer(40, e -> {
             panel.repaint();
         });
         timer.start();
