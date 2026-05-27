@@ -2134,7 +2134,7 @@ public class App extends Application {
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
                 FileItem f = ri.getMatchedFile();
                 return f != null ? f.getStyle() : "-";
-            }, ri.matchedFileProperty(), (ri.getMatchedFile() != null ? ri.getMatchedFile().styleProperty() : null));
+            }, ri.matchedFileProperty());
         });
         styleCol.setPrefWidth(35);
         styleCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
@@ -2161,7 +2161,7 @@ public class App extends Application {
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
                 FileItem f = ri.getMatchedFile();
                 return (f == null) ? "-" : String.valueOf(calculatePP(f));
-            }, ri.matchedFileProperty(), (ri.getMatchedFile() != null ? ri.getMatchedFile().pageCountProperty() : null), (ri.getMatchedFile() != null ? ri.getMatchedFile().styleProperty() : null));
+            }, ri.matchedFileProperty());
         });
         ppCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
@@ -2481,7 +2481,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.4.0");
+        Label version = new Label("Professional Edition v3.4.1");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
@@ -3080,32 +3080,41 @@ public class App extends Application {
                                     "    var cols = (function() { " +
                                     "      var hr = Array.from(document.querySelectorAll('table tr')).find(function(r){return r.querySelector('th');}) || document.querySelector('table tr'); " +
                                     "      var hs = hr ? Array.from(hr.querySelectorAll('th, td')).map(function(h){return h.innerText.toLowerCase().trim();}) : []; " +
-                                    "      var q = 0, p = 1, t = 2; " +
+                                    "      var q = 0, p = 1, t = 2, sy = -1; " +
                                     "      for(var col=0; col<hs.length; col++) { " +
                                     "        var txt = hs[col]; " +
                                     "        if(txt.indexOf('qp') !== -1 || txt.indexOf('code') !== -1) q = col; " +
                                     "        else if(txt.indexOf('paper') !== -1 || txt.indexOf('subject') !== -1 || txt.indexOf('title') !== -1) p = col; " +
                                     "        else if(txt.indexOf('time') !== -1) t = col; " +
+                                    "        else if(txt.indexOf('syllabus') !== -1 || txt.indexOf('year') !== -1) sy = col; " +
                                     "      } " +
-                                    "      return {qp: q, paper: p, time: t}; " +
+                                    "      return {qp: q, paper: p, time: t, syllabus: sy}; " +
                                     "    })(); " +
                                     "    rows.forEach(function(row) { " +
                                     "      var cells = row.querySelectorAll('td'); " +
                                     "      if (cells.length >= 2) { " +
-                                    "        var val0 = cells[0].innerText.trim(); " +
-                                    "        var val1 = cells[1].innerText.trim(); " +
-                                    "        if (/^\\d+$/.test(val0)) { " +
-                                    "          results.push(prefix + val0 + '\\t' + val1); " +
-                                    "        } else if (/^\\d+$/.test(val1) && cells.length >= 3) { " +
-                                    "          results.push(prefix + val1 + '\\t' + cells[2].innerText.trim()); " +
-                                    "        } else if (row.cells[cols.qp] && /^\\d+$/.test(row.cells[cols.qp].innerText.trim())) { " +
-                                    "          var qpVal = row.cells[cols.qp].innerText.trim(); " +
-                                    "          var sVal = row.cells[cols.paper] ? row.cells[cols.paper].innerText.trim() : ''; " +
-                                    "          results.push(prefix + qpVal + '\\t' + sVal); " +
+                                    "        var qpVal = ''; var pVal = ''; var syVal = ''; " +
+                                    "        if (row.cells[cols.qp] && /^\\d+$/.test(row.cells[cols.qp].innerText.trim())) { " +
+                                    "          qpVal = row.cells[cols.qp].innerText.trim(); " +
+                                    "          pVal = row.cells[cols.paper] ? row.cells[cols.paper].innerText.trim() : ''; " +
+                                    "          syVal = (cols.syllabus !== -1 && row.cells[cols.syllabus]) ? row.cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
+                                    "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
+                                    "          results.push(prefix + qpVal + '\\t' + pVal); " +
+                                    "        } else if (/^\\d+$/.test(cells[0].innerText.trim())) { " +
+                                    "          qpVal = cells[0].innerText.trim(); " +
+                                    "          pVal = cells[1].innerText.trim(); " +
+                                    "          syVal = (cols.syllabus !== -1 && cells.length > cols.syllabus) ? cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
+                                    "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
+                                    "          results.push(prefix + qpVal + '\\t' + pVal); " +
+                                    "        } else if (/^\\d+$/.test(cells[1].innerText.trim()) && cells.length >= 3) { " +
+                                    "          qpVal = cells[1].innerText.trim(); " +
+                                    "          pVal = cells[2].innerText.trim(); " +
+                                    "          syVal = (cols.syllabus !== -1 && cells.length > cols.syllabus) ? cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
+                                    "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
+                                    "          results.push(prefix + qpVal + '\\t' + pVal); " +
                                     "        } " +
                                     "      } " +
-                                    "    }); " +
-                                    "    if (results.length > 0) { window.cefQuery({request: 'portal_data_relay:' + results.join('\\n')}); } " +
+                                    "    }); " +                                    "    if (results.length > 0) { window.cefQuery({request: 'portal_data_relay:' + results.join('\\n')}); } " +
                                     "    else { window.cefQuery({request: 'portal_error:NO DATA FOUND'}); } " +
                                     "  } catch(e) { window.cefQuery({request: 'portal_error:SCRAPE FAILED'}); } " +
                                     "})();";
