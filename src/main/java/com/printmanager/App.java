@@ -219,7 +219,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.4.0");
+        primaryStage.setTitle("Smart QP Print Manager v3.4.1");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -230,6 +230,12 @@ public class App extends Application {
         primaryStage.setScene(scene);
         primaryStage.setMaximized(true);
         primaryStage.show();
+
+        // Hide splash screen if it exists
+        if (Launcher.splash != null) {
+            Launcher.splash.dispose();
+            Launcher.splash = null;
+        }
 
         // Setup auto-save listeners AFTER UI is ready and initial load is complete
         Platform.runLater(() -> {
