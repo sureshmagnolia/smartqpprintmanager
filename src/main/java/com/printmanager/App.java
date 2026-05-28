@@ -1,6 +1,7 @@
 package com.printmanager;
 
 import com.printmanager.model.*;
+import com.printmanager.ai.*;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
@@ -105,7 +106,16 @@ public class App extends Application {
     private Button printAllBtn;
     private final javafx.collections.ObservableMap<String, String> printerStatusCache = FXCollections.observableHashMap();
     private final HBox simAlertHeader = new HBox();
-    private final CheckBox printCoverPageCbox = new CheckBox("Print Room Status Cover Page?");
+    private final CheckBox printCoverPageCbox = new CheckBox("Print Cover Page");
+    private final ToggleButton aiRoutingBtn = new ToggleButton("AI Engine");
+    private final AIRoutingAgent aiRoutingAgent = new AIRoutingAgent();
+
+    private final Label roomMapAlert = new Label("\uD83D\uDDFA Maps!");
+    private final Label roomStapleAlert = new Label("\uD83D\uDCCE Staple!");
+    private final Label roomTotalPP = new Label("Total PP: 0");
+
+    private final Label globalMapAlert = new Label("\uD83D\uDDFA Maps!");
+    private final Label globalStapleAlert = new Label("\uD83D\uDCCE Staple!");
 
     private CefApp cefApp;
     private CefClient cefClient;
@@ -219,7 +229,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager v3.4.2");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V5.1");
         
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
@@ -404,17 +414,15 @@ public class App extends Application {
         simWarning.visibleProperty().bind(simAlertHeader.visibleProperty());
         simWarning.managedProperty().bind(simAlertHeader.managedProperty());
 
-        Label mapAlert = new Label("\uD83D\uDDFA MAP ALERT");
-        mapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #800020; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
-        mapAlert.setVisible(false);
-        mapAlert.managedProperty().bind(mapAlert.visibleProperty());
-        mapAlert.opacityProperty().bind(globalPulseOpacity);
+        globalMapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #800020; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        globalMapAlert.setVisible(false);
+        globalMapAlert.managedProperty().bind(globalMapAlert.visibleProperty());
+        globalMapAlert.opacityProperty().bind(globalPulseOpacity);
 
-        Label stapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
-        stapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 2px; -fx-border-radius: 5px;");
-        stapleAlert.setVisible(false);
-        stapleAlert.managedProperty().bind(stapleAlert.visibleProperty());
-        stapleAlert.opacityProperty().bind(globalPulseOpacity);
+        globalStapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        globalStapleAlert.setVisible(false);
+        globalStapleAlert.managedProperty().bind(globalStapleAlert.visibleProperty());
+        globalStapleAlert.opacityProperty().bind(globalPulseOpacity);
 
         Runnable updateQueueStats = () -> {
             long uniqueQPs = fileQueue.stream()
@@ -432,26 +440,46 @@ public class App extends Application {
             totalPages.setText("Total Pages: " + fileQueue.stream().mapToInt(FileItem::getPageCount).sum());
             totalCopies.setText("Total Copies: " + fileQueue.stream().mapToInt(FileItem::getCopies).sum());
             printSheets.setText("Print Sheets: " + fileQueue.stream().mapToInt(item -> calculatePP(item) * item.getCopies()).sum());
+
+            refreshGlobalAlerts();
         };
 
         fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
-            updateQueueStats.run();
+            while (c.next()) {
+                if (c.wasAdded()) {
+                    c.getAddedSubList().forEach(item -> {
+                        item.styleProperty().addListener((obs, old, nv) -> refreshGlobalAlerts());
+                        item.pageCountProperty().addListener((obs, old, nv) -> refreshGlobalAlerts());
+                        item.copiesProperty().addListener((obs, old, nv) -> updateQueueStats.run());
+                    });
+                }
+                updateQueueStats.run();
+                refreshGlobalAlerts();
+            }
         });
+
+        // Initialize listeners for existing items
+        fileQueue.forEach(item -> {
+            item.styleProperty().addListener((obs, old, nv) -> refreshGlobalAlerts());
+            item.pageCountProperty().addListener((obs, old, nv) -> refreshGlobalAlerts());
+            item.copiesProperty().addListener((obs, old, nv) -> updateQueueStats.run());
+        });
+
         updateQueueStats.run();
+
+        // Immediate Ribbon Update Listener
+        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
+            refreshGlobalAlerts();
+        });
 
         Thread statsThread = new Thread(() -> {
             while(true) {
                 try {
                     long active = printerStatusCache.values().stream().filter(s -> "Ready".equalsIgnoreCase(s) || "Printing".equalsIgnoreCase(s)).count();
-                    boolean hasHistory = fileQueue.stream().anyMatch(f -> f.getFileName() != null && f.getFileName().toLowerCase().contains("history")) ||
-                                         roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
-                    boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
-                                         .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
                     Platform.runLater(() -> {
                         activePrinters.setText("Active Printers: " + active);
-                        mapAlert.setVisible(hasHistory);
-                        stapleAlert.setVisible(hasStaple);
                     });
+                    refreshGlobalAlerts();
                     Thread.sleep(5000);
                 } catch (Exception e) { break; }
             }
@@ -464,9 +492,8 @@ public class App extends Application {
         printSheets.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
         activePrinters.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
         totalPages.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
-        
-        HBox alertsBox = new HBox(12, mapAlert, stapleAlert);
-        alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        HBox alertsBox = new HBox(12, globalMapAlert, globalStapleAlert);        alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
         statsDash.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         statsDash.setPadding(new Insets(10, 20, 10, 20));
         statsDash.getChildren().addAll(totalQPs, totalCopies, printSheets, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, activePrinters, totalPages, alertsBox, simWarning);
@@ -788,9 +815,13 @@ public class App extends Application {
         addBtn.setTooltip(new Tooltip("Add PDF files to the print queue"));
         addBtn.setOnAction(e -> {
             FileChooser fc = new FileChooser();
+            initFileChooser(fc, "Add PDFs");
             fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF Files", "*.pdf"));
             List<File> files = fc.showOpenMultipleDialog(stage);
-            if (files != null) files.forEach(this::processFile);
+            if (files != null && !files.isEmpty()) {
+                updateLastDirectory(files.get(0));
+                files.forEach(this::processFile);
+            }
         });
 
         Button printBtn = new Button("Print All");
@@ -807,8 +838,20 @@ public class App extends Application {
 
         Button clearBtn = new Button("Clear All");
         clearBtn.setId("clear-btn");
-        clearBtn.setTooltip(new Tooltip("Remove all files from the queue"));
-        clearBtn.setOnAction(e -> fileQueue.clear());
+        clearBtn.setTooltip(new Tooltip("Remove all files from the queue and clear all room blocks"));
+        clearBtn.setOnAction(e -> {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Clear All Queue & Rooms");
+            alert.setHeaderText("Are you sure you want to clear the entire print queue and all room blocks?");
+            alert.setContentText("This will remove all PDF files and clear all room cards. This action cannot be undone.");
+            alert.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.OK) {
+                    fileQueue.clear();
+                    roomGroupsList.clear();
+                    saveConfigs();
+                }
+            });
+        });
 
         Button loadJsonBtn = new Button("Upload JSON");
         loadJsonBtn.setId("load-json-btn");
@@ -1215,10 +1258,12 @@ public class App extends Application {
     }
     private void saveFileAs(FileItem item) {
         FileChooser fc = new FileChooser();
-        fc.setTitle("Save PDF"); fc.setInitialFileName(item.getFileName());
+        initFileChooser(fc, "Save PDF");
+        fc.setInitialFileName(item.getFileName());
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF", "*.pdf"));
         File t = fc.showSaveDialog(null);
         if (t != null) {
+            updateLastDirectory(t);
             analysisExecutor.submit(() -> {
                 try {
                     File pf = item.getFile(); List<File> temps = new ArrayList<>();
@@ -1525,10 +1570,11 @@ public class App extends Application {
 
     private void loadJsonAndUpdateCopies(Stage stage) {
         FileChooser fc = new FileChooser();
-        fc.setTitle("Select QP Print Job JSON");
+        initFileChooser(fc, "Select QP Print Job JSON");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
+        updateLastDirectory(file);
         
         activityLogger.info("Fetching data from JSON: " + file.getName());
         analysisExecutor.submit(() -> {
@@ -1544,16 +1590,33 @@ public class App extends Application {
                         int count = node.path("count").asInt(1);
                         if (!qpCode.isEmpty()) {
                             boolean matched = false;
-                            for (FileItem item : fileQueue) {
-                                String fileName = item.getFileName();
-                                String extractedQP = extractQPFromFileName(fileName);
-                                if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                            
+                            if (config.isAiRoutingEnabled()) {
+                                // Use AI Agent for high-precision matching
+                                RoomItem tempRoom = new RoomItem("", qpCode, "", count, -1);
+                                List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(tempRoom, fileQueue);
+                                for (MatchResult res : aiResults) {
+                                    FileItem item = res.getMatchedFile();
                                     final int finalCount = count;
                                     Platform.runLater(() -> item.setCopies(finalCount));
                                     countUpdated++;
                                     matched = true;
                                     matchedFiles.add(item);
-                                    activityLogger.info("Updated " + fileName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
+                                    activityLogger.info("Updated " + item.getFileName() + " copies to " + finalCount + " (AI Matched QP: " + qpCode + ")");
+                                }
+                            } else {
+                                // Legacy matching
+                                for (FileItem item : fileQueue) {
+                                    String fileName = item.getFileName();
+                                    String extractedQP = extractQPFromFileName(fileName);
+                                    if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                                        final int finalCount = count;
+                                        Platform.runLater(() -> item.setCopies(finalCount));
+                                        countUpdated++;
+                                        matched = true;
+                                        matchedFiles.add(item);
+                                        activityLogger.info("Updated " + fileName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
+                                    }
                                 }
                             }
                             if (!matched) activityLogger.error("No file found in queue for QP Code: " + qpCode);
@@ -1683,14 +1746,27 @@ public class App extends Application {
             String qpCode = entry.getKey();
             int totalCount = entry.getValue();
             
-            for (FileItem item : fileQueue) {
-                String fileName = item.getFileName();
-                String extractedQP = extractQPFromFileName(fileName);
-                if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+            if (config.isAiRoutingEnabled()) {
+                // Use a temporary RoomItem to leverage the AI Agent's logic
+                RoomItem tempRoom = new RoomItem("", qpCode, "", totalCount, -1);
+                List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(tempRoom, fileQueue);
+                for (MatchResult res : aiResults) {
+                    FileItem item = res.getMatchedFile();
                     final int finalCount = totalCount;
                     Platform.runLater(() -> item.setCopies(finalCount));
                     countUpdated++;
-                    activityLogger.info("Synced " + fileName + ": set copies to " + totalCount + " (Matched QP: " + qpCode + ")");
+                    activityLogger.info("Synced " + item.getFileName() + ": set copies to " + totalCount + " (AI Matched QP: " + qpCode + ")");
+                }
+            } else {
+                for (FileItem item : fileQueue) {
+                    String fileName = item.getFileName();
+                    String extractedQP = extractQPFromFileName(fileName);
+                    if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                        final int finalCount = totalCount;
+                        Platform.runLater(() -> item.setCopies(finalCount));
+                        countUpdated++;
+                        activityLogger.info("Synced " + fileName + ": set copies to " + totalCount + " (Matched QP: " + qpCode + ")");
+                    }
                 }
             }
         }
@@ -1749,71 +1825,74 @@ public class App extends Application {
         logger.info("Relinking & Syncing Room Items (Queue Size: {})", fileQueue.size());
         
         for (RoomGroup g : roomGroupsList) {
-            // Identify all unique QP codes currently in this room
-            Set<String> qpCodes = g.getItems().stream()
+            // 1. Identify unique QP needs in this room
+            Set<String> neededQPs = g.getItems().stream()
                 .map(RoomItem::getQpCode)
                 .filter(Objects::nonNull)
+                .filter(qp -> !qp.isEmpty())
                 .collect(Collectors.toSet());
             
-            for (String qp : qpCodes) {
-                // Find all matching files in queue for this QP
-                List<FileItem> matches = fileQueue.stream()
-                    .filter(f -> {
-                        String extracted = extractQPFromFileName(f.getFileName());
-                        return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
-                    })
-                    .collect(Collectors.toList());
-                
-                // For each match, ensure a RoomItem exists in this group
-                for (FileItem f : matches) {
-                    boolean exists = g.getItems().stream()
-                        .anyMatch(ri -> ri.getMatchedFile() == f);
+            for (String qp : neededQPs) {
+                List<FileItem> matches = new ArrayList<>();
+
+                if (config.isAiRoutingEnabled()) {
+                    // --- AI PATH: Match once per QP to find all parts ---
+                    // Use the first item as a template for metadata matching
+                    RoomItem template = g.getItems().stream()
+                        .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
+                        .findFirst().orElse(null);
                     
-                    if (!exists) {
-                        // Create a new RoomItem by copying from an existing one with same QP
+                    if (template != null) {
+                        List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(template, fileQueue);
+                        for (MatchResult res : aiResults) matches.add(res.getMatchedFile());
+                    }
+                } else {
+                    // --- LEGACY PATH ---
+                    matches = fileQueue.stream()
+                        .filter(f -> {
+                            String extracted = extractQPFromFileName(f.getFileName());
+                            return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
+                        })
+                        .collect(Collectors.toList());
+                }
+                
+                // 2. Ensure exactly one RoomItem exists for each matched file
+                for (FileItem f : matches) {
+                    // Unique link check: Does this room already have THIS file linked to THIS subject?
+                    boolean linkExists = g.getItems().stream()
+                        .anyMatch(ri -> ri.getMatchedFile() == f && qp.equalsIgnoreCase(ri.getQpCode()));
+                    
+                    if (!linkExists) {
                         RoomItem proto = g.getItems().stream()
-                            .filter(ri -> ri.getQpCode().equalsIgnoreCase(qp))
+                            .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
                             .findFirst().orElse(null);
                         
                         if (proto != null) {
-                            RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount(), proto.getSourceNodeId());
-                            newItem.setCourseName(proto.getCourseName());
-                            newItem.setMatchedFile(f);
-                            Platform.runLater(() -> {
-                                if (g.getItems().stream().noneMatch(ri -> ri.getMatchedFile() == f)) {
-                                    g.getItems().add(newItem);
-                                }
-                            });
+                            if (proto.getMatchedFile() == null) {
+                                // Reuse the existing PND item for the first match
+                                proto.setPdfFileName(f.getFileName());
+                                proto.setMatchedFile(f);
+                                proto.setStatus("Ready");
+                            } else {
+                                // Clone for subsequent matches (like splits)
+                                RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount(), proto.getSourceNodeId());
+                                newItem.setCourseName(proto.getCourseName());
+                                newItem.setStream(proto.getStream());
+                                newItem.setMatchedFile(f);
+                                newItem.setStatus("Ready");
+                                g.getItems().add(newItem);
+                            }
                         }
                     }
                 }
             }
             
-            // Re-link existing items and INVALIDATE matches if file removed from queue
+            // 3. Clean up items whose files were removed from queue
             for (RoomItem i : g.getItems()) {
                 FileItem currentMatch = i.getMatchedFile();
                 if (currentMatch != null && !fileQueue.contains(currentMatch)) {
                     i.setMatchedFile(null);
-                    i.setStatus("PND"); // Reset to Pending
-                }
-
-                if (i.getMatchedFile() == null) {
-                    for (FileItem qItem : fileQueue) {
-                        String qName = qItem.getFileName();
-                        String extractedQP = extractQPFromFileName(qName);
-                        if (i.getQpCode().equalsIgnoreCase(extractedQP) || qName.contains("_" + i.getQpCode() + "_") || qName.contains("_" + i.getQpCode() + ".")) {
-                            i.setMatchedFile(qItem);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Reset status if it was "Partial Error" or "File Not Found" but all items are now matched
-            if ("Partial Error".equals(g.getStatus()) || "File Not Found".equals(g.getStatus())) {
-                boolean allMatched = g.getItems().stream().allMatch(ri -> ri.getMatchedFile() != null);
-                if (allMatched) {
-                    Platform.runLater(() -> g.setStatus("Ready"));
+                    i.setStatus("PND");
                 }
             }
         }
@@ -1898,17 +1977,17 @@ public class App extends Application {
     }
 
     private VBox createRoomRouterView(Stage stage) {
-        Button uploadBtn = new Button("Upload Room Wise JSON");
-        uploadBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
-        uploadBtn.setPrefWidth(250);
+        Button uploadBtn = new Button("Upload Room JSON");
+        uploadBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+        uploadBtn.setPrefWidth(180);
         uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
 
-        Button clearBlocksBtn = new Button("Clear All Blocks");
-        clearBlocksBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10 20; -fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
-        clearBlocksBtn.setPrefWidth(200);
+        Button clearBlocksBtn = new Button("Clear All");
+        clearBlocksBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
+        clearBlocksBtn.setPrefWidth(100);
         clearBlocksBtn.setOnAction(e -> {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Clear All Blocks");
+            alert.setTitle("Clear All");
             alert.setHeaderText("Are you sure you want to clear all room blocks?");
             alert.setContentText("This action cannot be undone.");
             alert.showAndWait().ifPresent(response -> {
@@ -1920,12 +1999,12 @@ public class App extends Application {
         });
 
         TextField roomSearch = new TextField();
-        roomSearch.setPromptText("Filter rooms or QP codes...");
-        roomSearch.setPrefWidth(300);
-        roomSearch.setStyle("-fx-font-size: 14px; -fx-padding: 10;");
+        roomSearch.setPromptText("Filter rooms or QPs...");
+        roomSearch.setPrefWidth(220);
+        roomSearch.setStyle("-fx-font-size: 13px; -fx-padding: 8;");
         
         Button clearRoomSearchBtn = new Button("Clear");
-        clearRoomSearchBtn.setStyle("-fx-font-size: 14px; -fx-padding: 10;");
+        clearRoomSearchBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8;");
         clearRoomSearchBtn.setOnAction(e -> roomSearch.clear());
         HBox roomSearchBox = new HBox(5, roomSearch, clearRoomSearchBtn);
         roomSearchBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
@@ -1961,60 +2040,60 @@ public class App extends Application {
             saveConfigs();
         });
 
-        Label roomMapAlert = new Label("\uD83D\uDDFA MAP ALERT");
-        roomMapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #800020; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        aiRoutingBtn.setSelected(config.isAiRoutingEnabled());
+        Runnable updateAiBtnStyle = () -> {
+            if (aiRoutingBtn.isSelected()) {
+                aiRoutingBtn.setGraphic(new Label("\u2705 🤖")); // Tick + Robot
+                aiRoutingBtn.setStyle("-fx-background-color: #e8f5e9; -fx-text-fill: #2e7d32; -fx-font-weight: bold; -fx-border-color: #2e7d32; -fx-border-radius: 3; -fx-font-size: 13px;");
+            } else {
+                aiRoutingBtn.setGraphic(new Label("\u26AA 🤖")); // Empty circle + Robot
+                aiRoutingBtn.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+            }
+        };
+        updateAiBtnStyle.run();
+
+        aiRoutingBtn.setOnAction(e -> {
+            config.setAiRoutingEnabled(aiRoutingBtn.isSelected());
+            updateAiBtnStyle.run();
+            saveConfigs();
+            activityLogger.info("AI Engine: " + (aiRoutingBtn.isSelected() ? "ENABLED" : "DISABLED"));
+        });
+
+        roomMapAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-color: #800020; -fx-padding: 5px 10px; -fx-background-radius: 5px; -fx-border-color: #ffeb3b; -fx-border-width: 1px; -fx-border-radius: 5px;");
         roomMapAlert.setVisible(false);
         roomMapAlert.managedProperty().bind(roomMapAlert.visibleProperty());
         roomMapAlert.opacityProperty().bind(globalPulseOpacity);
 
-        Label roomStapleAlert = new Label("\uD83D\uDCCE STAPLE ALERT");
-        roomStapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: #212121; -fx-padding: 6px 12px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 2px; -fx-border-radius: 5px;");
+        roomStapleAlert.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-color: #212121; -fx-padding: 5px 10px; -fx-background-radius: 5px; -fx-border-color: white; -fx-border-width: 1px; -fx-border-radius: 5px;");
         roomStapleAlert.setVisible(false);
         roomStapleAlert.managedProperty().bind(roomStapleAlert.visibleProperty());
         roomStapleAlert.opacityProperty().bind(globalPulseOpacity);
 
-        Label roomTotalPP = new Label("Total PP: 0");
-        roomTotalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63; -fx-font-size: 16px;");
+        roomTotalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63; -fx-font-size: 14px;");
 
-        Runnable updateRoomAlerts = () -> {
-            boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
-            boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
-                                  .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
-            roomMapAlert.setVisible(hasHistory);
-            roomStapleAlert.setVisible(hasStaple);
-
-            int totalPPVal = 0;
-            for (RoomGroup g : roomGroupsList) {
-                for (RoomItem ri : g.getItems()) {
-                    if (ri.getMatchedFile() != null) {
-                        totalPPVal += calculatePP(ri.getMatchedFile()) * ri.getCount();
-                    }
-                }
-            }
-            roomTotalPP.setText("Total PP: " + totalPPVal);
-        };
         roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
-            updateRoomAlerts.run();
+            updateRoomAlerts();
             while (c.next()) {
                 if (c.wasAdded()) {
-                    c.getAddedSubList().forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c2 -> updateRoomAlerts.run()));
+                    c.getAddedSubList().forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c2 -> updateRoomAlerts()));
                 }
             }
         });
-        roomGroupsList.forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> updateRoomAlerts.run()));
-        updateRoomAlerts.run();
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        roomGroupsList.forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> updateRoomAlerts()));
+        updateRoomAlerts();
 
         HBox roomAlertsBox = new HBox(8, roomTotalPP, roomMapAlert, roomStapleAlert);
         roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
-        HBox header = new HBox(20, uploadBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, spacer, roomAlertsBox);
-        header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        VBox layout = new VBox(20, header, scrollPane);
-        layout.setPadding(new Insets(20));
+        HBox header = new HBox(12, uploadBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, aiRoutingBtn, spacer, roomAlertsBox);
+        header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        header.setPadding(new Insets(0, 5, 0, 5));
+
+        VBox layout = new VBox(15, header, scrollPane);
+        layout.setPadding(new Insets(15));
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         return layout;
     }
@@ -2034,32 +2113,28 @@ public class App extends Application {
         // Helper to recalculate room total from items, avoiding double-counting splits
         Runnable recalculateRoomTotal = () -> {
             // Group by sourceNodeId to ensure Main/MCQ splits are counted as one student set
-            // Fallback to QP + Course name for already loaded data where sourceId might be missing
-            java.util.Map<Object, Integer> nodeCounts = new java.util.HashMap<>();
+            java.util.Map<Integer, Integer> nodeCounts = new java.util.HashMap<>();
             for (RoomItem item : group.getItems()) {
-                Object key;
                 int nid = item.getSourceNodeId();
                 if (nid >= 0) {
-                    key = nid;
+                    nodeCounts.put(nid, Math.max(nodeCounts.getOrDefault(nid, 0), item.getCount()));
                 } else {
-                    // Fallback key: Combination of QP and Course name
-                    key = (item.getQpCode() != null ? item.getQpCode() : "") + "|" + 
-                          (item.getCourseName() != null ? item.getCourseName() : "");
+                    // Legacy/Manual entry aggregation
+                    String key = (item.getQpCode() != null ? item.getQpCode() : "") + "|" + (item.getCourseName() != null ? item.getCourseName() : "");
+                    nodeCounts.put(key.hashCode(), Math.max(nodeCounts.getOrDefault(key.hashCode(), 0), item.getCount()));
                 }
-                
-                // For the same student set (node), we take the count once.
-                // If counts differ (shouldn't happen), we take the max as a safety measure.
-                nodeCounts.put(key, Math.max(nodeCounts.getOrDefault(key, 0), item.getCount()));
             }
             int sum = nodeCounts.values().stream().mapToInt(Integer::intValue).sum();
             
-            // Only update if it's different to avoid binding loops
             if (group.getTotalStudents() != sum) {
-                group.setTotalStudents(sum);
+                Platform.runLater(() -> group.setTotalStudents(sum));
             }
         };
 
-        // Reactive Total Qty calculation: Strictly use the RoomGroup's totalStudents property
+        // Attach recalculate trigger to items list
+        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> recalculateRoomTotal.run());
+        recalculateRoomTotal.run();
+
         javafx.beans.binding.IntegerBinding totalQtyBinding = javafx.beans.binding.Bindings.createIntegerBinding(() -> {
             return group.getTotalStudents();
         }, group.totalStudentsProperty());
@@ -2200,7 +2275,7 @@ public class App extends Application {
 
         TableColumn<RoomItem, String> statusCol = new TableColumn<>("S"); // Stat
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
-        statusCol.setPrefWidth(55);
+        statusCol.setPrefWidth(65);
         statusCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -2218,11 +2293,16 @@ public class App extends Application {
         });
 
         TableColumn<RoomItem, Void> actionCol = new TableColumn<>("");
-        actionCol.setPrefWidth(35);
+        actionCol.setPrefWidth(75);
         actionCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
-            private final Button btn = new Button("\u270F"); // Pencil Icon (Reliable)
+            private final Button btn = new Button("\u270F"); // Pencil Icon
+            private final Button aiBtn = new Button("\uD83E\uDDB1"); // Robot Icon
+            private final HBox container = new HBox(8, btn, aiBtn);
             {
                 btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #2196f3; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
+                aiBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #9c27b0; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
+                container.setAlignment(javafx.geometry.Pos.CENTER);
+                
                 btn.setOnAction(e -> {
                     RoomItem item = getTableRow().getItem();
                     if (item != null) {
@@ -2240,6 +2320,13 @@ public class App extends Application {
                         });
                     }
                 });
+
+                aiBtn.setOnAction(e -> {
+                    RoomItem item = getTableRow().getItem();
+                    if (item != null && item.getMatchedFile() != null) {
+                        showAiLogs(item.getMatchedFile());
+                    }
+                });
             }
             @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
@@ -2248,7 +2335,12 @@ public class App extends Application {
                     RoomItem ri = getTableRow().getItem();
                     boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
                     btn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + (needStaple ? "white" : "#2196f3") + "; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
-                    setGraphic(btn);
+                    
+                    boolean hasLogs = ri != null && ri.getMatchedFile() != null && !ri.getMatchedFile().getAiLogs().isEmpty();
+                    aiBtn.setVisible(hasLogs);
+                    aiBtn.setManaged(hasLogs);
+                    
+                    setGraphic(container);
                 }
             }
         });
@@ -2487,7 +2579,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition v3.4.1");
+        Label version = new Label("Professional Edition AI Engine V5.1");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
@@ -2562,9 +2654,96 @@ public class App extends Application {
         return section;
     }
 
+    private void updateRoomAlerts() {
+        Platform.runLater(() -> {
+            boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+            boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
+                                  .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
+            roomMapAlert.setVisible(hasHistory);
+            roomStapleAlert.setVisible(hasStaple);
+
+            int totalPPVal = 0;
+            for (RoomGroup g : roomGroupsList) {
+                for (RoomItem ri : g.getItems()) {
+                    if (ri.getMatchedFile() != null) {
+                        totalPPVal += calculatePP(ri.getMatchedFile()) * ri.getCount();
+                    }
+                }
+            }
+            roomTotalPP.setText("Total PP: " + totalPPVal);
+        });
+    }
+
+    private void refreshGlobalAlerts() {
+        Platform.runLater(() -> {
+            boolean hasHistory = fileQueue.stream().anyMatch(f -> f.getFileName() != null && f.getFileName().toLowerCase().contains("history")) ||
+                                 roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+            
+            boolean hasStaple = fileQueue.stream().anyMatch(f -> "Booklet".equals(f.getStyle()) && calculatePP(f) > 1) ||
+                                 roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
+
+            globalMapAlert.setVisible(hasHistory);
+            globalStapleAlert.setVisible(hasStaple);
+            
+            roomMapAlert.setVisible(hasHistory);
+            roomStapleAlert.setVisible(hasStaple);
+        });
+    }
+
     private void previewRoomItem(RoomItem item) {
         if (item.getMatchedFile() == null) { updateStatus("No matched file to preview."); return; }
         previewFile(item.getMatchedFile(), true, true);
+    }
+
+    private boolean isSDEStream(String stream) {
+        if (stream == null) return false;
+        String s = stream.toUpperCase();
+        return s.contains("SDE") || s.contains("EDE") || s.contains("DISTANCE") || s.contains("EXTERNAL");
+    }
+
+    private String extractCourseCodeFromText(String text) {
+        if (text == null) return "";
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\(([A-Z0-9().-]+)\\)");
+        java.util.regex.Matcher m = p.matcher(text);
+        if (m.find()) return m.group(1).toUpperCase();
+        return "";
+    }
+
+    private void showAiLogs(FileItem item) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("AI Routing Logs");
+        alert.setHeaderText("AI Matching Reasoning for: " + item.getFileName());
+        
+        TextArea textArea = new TextArea(item.getAiLogs());
+        textArea.setEditable(false);
+        textArea.setWrapText(true);
+        textArea.setPrefHeight(400);
+        textArea.setPrefWidth(600);
+        textArea.setStyle("-fx-font-family: 'Consolas', 'Monospace'; -fx-font-size: 12px;");
+        
+        VBox content = new VBox(10, new Label("Step-by-step logical evaluation:"), textArea);
+        alert.getDialogPane().setContent(content);
+        alert.showAndWait();
+    }
+
+    private void initFileChooser(FileChooser fc, String title) {
+        fc.setTitle(title);
+        if (config.getLastDirectory() != null && !config.getLastDirectory().isEmpty()) {
+            File lastDir = new File(config.getLastDirectory());
+            if (lastDir.exists() && lastDir.isDirectory()) {
+                fc.setInitialDirectory(lastDir);
+            }
+        }
+    }
+
+    private void updateLastDirectory(File file) {
+        if (file != null) {
+            File dir = file.getParentFile();
+            if (dir != null && dir.exists()) {
+                config.setLastDirectory(dir.getAbsolutePath());
+                saveConfigs();
+            }
+        }
     }
 
     private void printSingleRoomItem(RoomItem roomItem, String selectedPrinter) {
@@ -2583,10 +2762,13 @@ public class App extends Application {
 
     private void loadRoomWiseJson(Stage stage) {
         FileChooser fc = new FileChooser();
-        fc.setTitle("Select Room JSON");
+        initFileChooser(fc, "Select Room JSON");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
         File file = fc.showOpenDialog(stage);
-        if (file != null) processRoomWiseJsonFile(file);
+        if (file != null) {
+            updateLastDirectory(file);
+            processRoomWiseJsonFile(file);
+        }
     }
 
     private void processRoomWiseJsonFile(File file) {
@@ -2612,6 +2794,8 @@ public class App extends Application {
         int nodeIdCounter = 0;
 
         if (root.isArray()) {
+            Set<FileItem> assignedInThisRoom = new java.util.HashSet<>();
+
             for (JsonNode node : root) {
                 int currentNodeId = nodeIdCounter++;
                 String roomSerial = node.path("roomSerial").asText("Unknown");
@@ -2623,6 +2807,8 @@ public class App extends Application {
                 int totalStudentsField = node.path("totalStudents").asInt(0);
                 if (totalStudentsField == 0) totalStudentsField = node.path("totalCount").asInt(0);
                 if (totalStudentsField == 0) totalStudentsField = node.path("roomTotal").asInt(0);
+
+                String stream = node.path("stream").asText("Regular");
 
                 RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
                 if (totalStudentsField > 0) {
@@ -2636,70 +2822,147 @@ public class App extends Application {
                     qpTotalCounts.put(qpCode, qpTotalCounts.getOrDefault(qpCode, 0) + count);
                 }
                 
+                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
+                roomItem.setCourseName(courseName);
+                roomItem.setStream(stream);
+
+                // 1. AI TRAINING: Learn mapping if JSON has QP codes
+                if (qpCode != null && !qpCode.isEmpty()) {
+                    String learnedCC = extractCourseCodeFromText(courseName);
+                    KnowledgeBase.train(courseName, learnedCC, qpCode);
+                }
+
                 boolean matched = false;
-                for (FileItem fileItem : fileQueue) {
-                    String fileName = fileItem.getFileName();
-                    String extractedQP = extractQPFromFileName(fileName);
-                    if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                        RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
-                        roomItem.setCourseName(courseName);
-                        roomItem.setMatchedFile(fileItem);
-                        group.getItems().add(roomItem);
+                if (config.isAiRoutingEnabled()) {
+                    // --- AI ROUTING PATH (V6.5: Multi-Match & Enrich) ---
+                    List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(roomItem, fileQueue);
+                    
+                    // Filter: If split products (Split_, MCQ_, Main_, Remain_) are found, exclude the original unsplit file
+                    boolean hasSplits = aiResults.stream().anyMatch(res -> {
+                        String name = res.getMatchedFile().getFileName();
+                        return name.startsWith("Split_") || name.startsWith("MCQ_") || 
+                               name.startsWith("Main_") || name.startsWith("Remain_") ||
+                               (res.getMatchedFile().getOverlayText() != null && !res.getMatchedFile().getOverlayText().isEmpty());
+                    });
+                    
+                    if (hasSplits) {
+                        aiResults.removeIf(res -> {
+                            String name = res.getMatchedFile().getFileName();
+                            boolean isProduct = name.startsWith("Split_") || name.startsWith("MCQ_") || 
+                                              name.startsWith("Main_") || name.startsWith("Remain_") ||
+                                              (res.getMatchedFile().getOverlayText() != null && !res.getMatchedFile().getOverlayText().isEmpty());
+                            return !isProduct;
+                        });
+                    }
+
+                    boolean firstMatch = true;
+                    for (MatchResult res : aiResults) {
+                        FileItem fi = res.getMatchedFile();
+                        RoomItem partItem;
+                        
+                        if (firstMatch) {
+                            partItem = roomItem; // Reuse the original instance for the first match
+                            firstMatch = false;
+                        } else {
+                            // Clone for subsequent matches (e.g. MCQ / Splits)
+                            partItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
+                            partItem.setCourseName(courseName);
+                            partItem.setStream(stream);
+                        }
+                        
+                        // SELF-HEAL: If JSON was missing the QP code, fetch it from AI logs
+                        if (partItem.getQpCode() == null || partItem.getQpCode().isEmpty()) {
+                            java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?i)identifies as QP: (\\w+)");
+                            java.util.regex.Matcher m = p.matcher(fi.getAiLogs());
+                            if (m.find()) partItem.setQpCode(m.group(1));
+                        }
+
+                        partItem.setMatchedFile(fi);
+                        partItem.setStatus("Ready");
+                        group.getItems().add(partItem);
                         matched = true;
                         matchedItems++;
-                        matchedFiles.add(fileItem);
-                        activityLogger.info("Room " + roomSerial + ": Matched QP " + qpCode + " (" + fileName + ")");
+                        matchedFiles.add(fi);
+                        activityLogger.info("Room " + roomSerial + ": AI Matched [" + fi.getFileName() + "]");
+                    }
+                } else {
+                    // --- LEGACY ROUTING PATH (V6.5: Multi-Match Support) ---
+                    boolean firstMatch = true;
+                    for (FileItem fileItem : fileQueue) {
+                        String fileName = fileItem.getFileName();
+                        String extractedQP = extractQPFromFileName(fileName);
+                        if (qpCode != null && !qpCode.isEmpty() && (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + "."))) {
+                            RoomItem partItem;
+                            if (firstMatch) {
+                                partItem = roomItem;
+                                firstMatch = false;
+                            } else {
+                                partItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
+                                partItem.setCourseName(courseName);
+                                partItem.setStream(stream);
+                            }
+                            partItem.setMatchedFile(fileItem);
+                            partItem.setStatus("Ready");
+                            group.getItems().add(partItem);
+                            matched = true;
+                            matchedItems++;
+                            matchedFiles.add(fileItem);
+                            activityLogger.info("Room " + roomSerial + ": Matched " + fileName);
+                        }
                     }
                 }
+
+                // Only add template if NO matches were found (to show PND)
                 if (!matched) {
-                    RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
-                    roomItem.setCourseName(courseName);
+                    roomItem.setStatus("Pending");
                     group.getItems().add(roomItem);
-                    activityLogger.error("Room " + roomSerial + ": File NOT FOUND for QP " + qpCode);
+                    activityLogger.error("Room " + roomSerial + ": File NOT FOUND for " + courseName);
                 }
             }
         }
 
-        // Alert for files in queue that have no routing in JSON
-        for (FileItem item : fileQueue) {
-            if (!matchedFiles.contains(item)) {
-                activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
-            }
-        }
-
-        // Sync total counts back to Print Queue
-        for (Map.Entry<String, Integer> entry : qpTotalCounts.entrySet()) {
-            String qpCode = entry.getKey();
-            int totalCount = entry.getValue();
-            for (FileItem item : fileQueue) {
-                String fileName = item.getFileName();
-                String extractedQP = extractQPFromFileName(fileName);
-                if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                    final int finalCount = totalCount;
-                    Platform.runLater(() -> item.setCopies(finalCount));
-                }
-            }
-        }
-
+        // --- FINAL REFRESH ---
         final int finalMatched = matchedItems;
         final int finalGroupSize = groups.size();
         Platform.runLater(() -> {
             roomGroupsList.setAll(groups.values());
-            updateStatus("Loaded " + finalGroupSize + " rooms from " + sourceName);
-            activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched and queue copies updated.");
+            refreshGlobalAlerts();
+            activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
         });
     }
 
-    private void setupRoomGroupListeners(RoomGroup g) {
-        g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
+    private void setupRoomGroupListeners(RoomGroup group) {
+        // Helper to recalculate room total from items, avoiding double-counting splits
+        Runnable recalculateRoomTotal = () -> {
+            // Group by node or key to ensure Main/MCQ splits are counted as one student set
+            java.util.Map<Object, Integer> nodeCounts = new java.util.HashMap<>();
+            for (RoomItem item : group.getItems()) {
+                Object key;
+                int nid = item.getSourceNodeId();
+                if (nid >= 0) {
+                    key = nid;
+                } else {
+                    // Manual/Testing key: Unique per Subject + Stream
+                    key = (item.getCourseName() != null ? item.getCourseName() : "") + "|" + (item.getStream() != null ? item.getStream() : "");
+                }
+                nodeCounts.put(key, Math.max(nodeCounts.getOrDefault(key, 0), item.getCount()));
+            }
+            int sum = nodeCounts.values().stream().mapToInt(Integer::intValue).sum();
+            if (group.getTotalStudents() != sum) {
+                Platform.runLater(() -> group.setTotalStudents(sum));
+            }
+        };
+
+        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
             saveConfigs();
+            recalculateRoomTotal.run();
             while (c.next()) {
                 if (c.wasAdded()) {
                     c.getAddedSubList().forEach(this::attachRoomItemListeners);
                 }
             }
         });
-        g.getItems().forEach(this::attachRoomItemListeners);
+        recalculateRoomTotal.run();
     }
 
     private void attachRoomItemListeners(RoomItem i) {

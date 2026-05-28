@@ -1,5 +1,5 @@
 @echo off
-set VERSION=3.4.2
+set VERSION=5.1
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;%PATH%
 

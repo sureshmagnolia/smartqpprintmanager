@@ -17,7 +17,9 @@ public class Config {
     private String currentExamDate = "";
     private String currentExamSession = "";
     private String baseDownloadPath = "";
+    private String lastDirectory = "";
     private boolean printCoverPage = true;
+    private boolean aiRoutingEnabled = false;
 
     public Config() {
         // Initialize with default MCQ rule if none exist
@@ -37,6 +39,9 @@ public class Config {
 
     public boolean isPrintCoverPage() { return printCoverPage; }
     public void setPrintCoverPage(boolean printCoverPage) { this.printCoverPage = printCoverPage; }
+
+    public boolean isAiRoutingEnabled() { return aiRoutingEnabled; }
+    public void setAiRoutingEnabled(boolean aiRoutingEnabled) { this.aiRoutingEnabled = aiRoutingEnabled; }
 
     public String getCollegeId() { return collegeId; }
     public void setCollegeId(String collegeId) { this.collegeId = collegeId; }
@@ -67,4 +72,7 @@ public class Config {
 
     public String getBaseDownloadPath() { return baseDownloadPath; }
     public void setBaseDownloadPath(String baseDownloadPath) { this.baseDownloadPath = baseDownloadPath; }
+
+    public String getLastDirectory() { return lastDirectory; }
+    public void setLastDirectory(String lastDirectory) { this.lastDirectory = lastDirectory; }
 }

@@ -1,54 +1,30 @@
-# Smart QP Print Manager v2.5.2
+# Smart QP Print Manager - AI Engine V5.1
 
-A standalone Java-based print manager that automatically routes PDF files to specific printers based on their page count.
+Advanced PDF management and printing automation tool for college examination departments.
 
-## Features
-- **Smart Room-Wise Router (v2.5.1):** Route files to printers based on room-wise seating summaries. Supports parallel printing to 10+ printers.
-- **Automatic Routing:** Define rules to send 1-page files to one printer, 2-page files to another, etc.
-- **Duplex Support:** Enable duplex printing for specific page ranges.
-- **Bulk Printing:** Upload multiple PDFs at once and print them all with one click.
-- **Persistent Settings:** Your rules are saved automatically in `config.json`.
+## Key Features
+- **AI Routing Engine:** Automatically matches PDF question papers to examination halls using advanced subject and QP code recognition.
+- **Smart Roomwise Router:** Visual grid for managing exam halls, total page counts, and printing status.
+- **PDF Splitting:** Automatically detects and splits Main and MCQ parts within a single PDF based on keywords.
+- **Booklet Mode:** Automatic booklet generation for 5-page MCQ papers.
+- **Persistent Memory:** Remembers last-used directories and application settings.
 
-## Requirements
+## System Requirements
 - Java 17 or higher (if running from JAR)
 - No requirements for Portable version (includes JRE)
 
 ## How to Run
 ### Portable Version (Recommended)
-1. Extract `SmartPrintManager-Portable-V2.1.zip`.
-2. Run `SmartPrintManager.exe`.
+1. Extract `Smart QP Print Manager-Portable-V5.1.zip`.
+2. Run `Smart QP Print Manager.exe`.
 
-### From Source
-1. Open a terminal in this directory.
-2. Run the following command:
-   ```bash
-   mvn javafx:run
-   ```
+### From JAR
+1. Ensure Java 17+ is installed.
+2. Run `java -jar java-print-manager-5.1.jar`.
 
-## How to Package as a Standalone JAR
-1. Run the build command:
-   ```bash
-   mvn clean package
-   ```
-2. The standalone JAR will be created in the `target/` directory as `java-print-manager-2.5.1.jar`.
-3. Run it using:
-   ```bash
-   java -jar target/java-print-manager-2.5.1.jar
-   ```
+## Configuration
+- `config.json`: Stores user rules, printer mappings, and AI settings.
+- `appstate.json`: Stores current print queue and room routing data.
 
-## Roadmap & Enhancements
-Check out [TODO.md](TODO.md) for planned features designed for mass printing environments (Subject detection, separator pages, etc.).
-
-## Setup Instructions
-1. **Fetch Printers:** The app automatically detects all printers installed on your Windows machine.
-2. **Define Rules:**
-   - Go to the **Settings** tab.
-   - Enter the page range (e.g., Min: 1, Max: 1).
-   - Select the target printer from the dropdown.
-   - Check "Duplex" if desired.
-   - Click "Add Rule".
-3. **Print:**
-   - Go to the **Print Queue** tab.
-   - Click "Add PDFs" to select your files.
-   - The app will automatically assign each file to a printer based on your rules.
-   - Click "Print All" to start the process.
+## License
+Professional Edition - Proprietary
