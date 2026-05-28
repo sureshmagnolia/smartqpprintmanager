@@ -2292,17 +2292,12 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, Void> actionCol = new TableColumn<>("");
-        actionCol.setPrefWidth(75);
-        actionCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
-            private final Button btn = new Button("\u270F"); // Pencil Icon
-            private final Button aiBtn = new Button("\uD83E\uDDB1"); // Robot Icon
-            private final HBox container = new HBox(8, btn, aiBtn);
+        TableColumn<RoomItem, Void> editCol = new TableColumn<>("E");
+        editCol.setPrefWidth(35);
+        editCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
+            private final Button btn = new Button("E"); // Edit
             {
                 btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #2196f3; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
-                aiBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #9c27b0; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
-                container.setAlignment(javafx.geometry.Pos.CENTER);
-                
                 btn.setOnAction(e -> {
                     RoomItem item = getTableRow().getItem();
                     if (item != null) {
@@ -2320,7 +2315,26 @@ public class App extends Application {
                         });
                     }
                 });
+            }
+            @Override protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) { setGraphic(null); setStyle(""); }
+                else {
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    btn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + (needStaple ? "white" : "#2196f3") + "; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
+                    setGraphic(btn);
+                    setAlignment(javafx.geometry.Pos.CENTER);
+                }
+            }
+        });
 
+        TableColumn<RoomItem, Void> logCol = new TableColumn<>("L");
+        logCol.setPrefWidth(35);
+        logCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
+            private final Button aiBtn = new Button("L"); // Logs
+            {
+                aiBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #9c27b0; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
                 aiBtn.setOnAction(e -> {
                     RoomItem item = getTableRow().getItem();
                     if (item != null && item.getMatchedFile() != null) {
@@ -2333,19 +2347,16 @@ public class App extends Application {
                 if (empty) { setGraphic(null); setStyle(""); }
                 else {
                     RoomItem ri = getTableRow().getItem();
-                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
-                    btn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + (needStaple ? "white" : "#2196f3") + "; -fx-font-size: 14px; -fx-padding: 0; -fx-cursor: hand;");
-                    
-                    boolean hasLogs = ri != null && ri.getMatchedFile() != null && !ri.getMatchedFile().getAiLogs().isEmpty();
+                    boolean hasLogs = ri != null && ri.getMatchedFile() != null && ri.getMatchedFile().getAiLogs() != null && !ri.getMatchedFile().getAiLogs().trim().isEmpty();
                     aiBtn.setVisible(hasLogs);
                     aiBtn.setManaged(hasLogs);
-                    
-                    setGraphic(container);
+                    setGraphic(aiBtn);
+                    setAlignment(javafx.geometry.Pos.CENTER);
                 }
             }
         });
 
-        table.getColumns().addAll(qpCol, styleCol, ppCol, countCol, statusCol, actionCol);
+        table.getColumns().addAll(qpCol, styleCol, ppCol, countCol, statusCol, editCol, logCol);
 
         table.setRowFactory(tv -> {
             TableRow<RoomItem> row = new TableRow<RoomItem>();
@@ -2427,6 +2438,12 @@ public class App extends Application {
         printerCombo.setPromptText("Assign Printer");
         printerCombo.setMaxWidth(Double.MAX_VALUE);
         printerCombo.setStyle("-fx-font-size: 13px;");
+        HBox.setHgrow(printerCombo, Priority.ALWAYS);
+        
+        Label printerLabel = new Label("Printer:");
+        printerLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #555;");
+        HBox printerBox = new HBox(10, printerLabel, printerCombo);
+        printerBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
         printerCombo.setCellFactory(lv -> new ListCell<String>() {
             @Override protected void updateItem(String item, boolean empty) {
@@ -2563,7 +2580,7 @@ public class App extends Application {
         btnWatcher.setDaemon(true);
         btnWatcher.start();
 
-        card.getChildren().addAll(headerArea, table, printerCombo, printerIndicator, sendBtn, roomStatus);
+        card.getChildren().addAll(headerArea, table, printerBox, printerIndicator, sendBtn, roomStatus);
         return card;
     }
 
@@ -2928,6 +2945,7 @@ public class App extends Application {
             roomGroupsList.setAll(groups.values());
             refreshGlobalAlerts();
             activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
+            updateStatus("Ready");
         });
     }
 
