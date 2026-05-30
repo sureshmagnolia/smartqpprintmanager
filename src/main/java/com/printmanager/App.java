@@ -1033,10 +1033,12 @@ public class App extends Application {
 
     private void processFile(File file) {
         if (!file.getName().toLowerCase().endsWith(".pdf")) return;
-        
+
         // Remove existing entries for the same file path to allow "refresh/replace" behavior
         Platform.runLater(() -> {
             fileQueue.removeIf(item -> item.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath()));
+            pendingAnalysisTasks.set(pendingAnalysisTasks.get() + 1);
+            globalProgressVisible.set(true);
         });
 
         analysisExecutor.submit(() -> {
@@ -1058,7 +1060,7 @@ public class App extends Application {
                     }
                     int total = pdfService.getPageCount(file);
                     int afterCountWithKeyword = total - pageIdx + 1;
-                    
+
                     // Logic refinement: Use configurable thresholds (e.g., "5,9")
                     boolean shouldSkip = false;
                     String thresholds = matched.getSkipThresholds();
@@ -1071,7 +1073,7 @@ public class App extends Application {
                             }
                         }
                     }
-                    
+
                     int startPage = shouldSkip ? pageIdx + 1 : pageIdx;
                     if (startPage <= total) {
                         File a = pdfService.splitPages(file, startPage, total);
@@ -1080,9 +1082,17 @@ public class App extends Application {
                 } else {
                     addFileToQueue(file, null, null, null);
                 }
-            } catch (Exception e) { 
-                logger.error("Error processing file: " + file.getName(), e); 
+            } catch (Exception e) {
+                logger.error("Error processing file: " + file.getName(), e);
                 activityLogger.error("Failed to analyze: " + file.getName());
+            } finally {
+                Platform.runLater(() -> {
+                    pendingAnalysisTasks.set(pendingAnalysisTasks.get() - 1);
+                    if (pendingAnalysisTasks.get() == 0) {
+                        globalProgressVisible.set(false);
+                        updateStatus("Ready. " + fileQueue.size() + " files loaded.");
+                    }
+                });
             }
         });
     }
@@ -1113,13 +1123,41 @@ public class App extends Application {
                 }
             }
         } else {
-            // Main Part: Apply QP Overlay if keyword suggests MCQ/SDE
-            if (rule.getKeyword().toUpperCase().contains("MCQ") || rule.getKeyword().toUpperCase().contains("SDE")) {
-                String qp = extractQPFromFileName(originalName);
-                if (qp != null) {
+            // Main Part: Apply QP Overlay if enabled in Smart Split Rule
+            if (rule.isApplyQpOverlay()) {
+                String qp = null;
+                try {
+                    com.printmanager.ai.PDFDecrypter decrypter = new com.printmanager.ai.PDFDecrypter();
+                    com.printmanager.ai.PDFDecrypter.PDFMetadata meta = decrypter.extractMetadata(file);
+                    qp = meta.qpCode;
+                } catch (Exception ignored) {}
+                
+                if (qp == null || qp.trim().isEmpty()) {
+                    qp = extractQPFromFileName(originalName);
+                }
+
+                if (qp != null && !qp.trim().isEmpty()) {
+                    qp = qp.trim().toUpperCase();
+                    // Normalize QP by removing existing 'D' prefix if we're going to re-add it or use portal prefix
+                    String baseQP = qp.replaceAll("^D", "");
+                    String prefixFromPortal = config.getPortalQpPrefix() != null ? config.getPortalQpPrefix().trim() : "";
+                    
+                    // Priority: If filename has a prefix (like 'D'), keep it. Else use portal prefix.
+                    String finalPrefix = "";
+                    if (qp.startsWith("D")) finalPrefix = "D";
+                    else if (!prefixFromPortal.isEmpty()) finalPrefix = prefixFromPortal;
+                    
+                    String finalQP = finalPrefix + baseQP;
+
+                    // Add 'A' suffix if enabled
+                    if (rule.isAddASuffix() && !finalQP.endsWith("A")) {
+                        finalQP = finalQP + "A";
+                    }
+
                     try {
-                        File overlaid = printService.applyTopLeftOverlay(file, qp);
+                        File overlaid = printService.applyTopLeftOverlay(file, finalQP);
                         f = overlaid;
+                        activityLogger.info("Applied Top-Left QP Overlay: " + finalQP);
                     } catch (Exception e) {
                         logger.error("Failed to apply QP overlay", e);
                     }
@@ -1141,14 +1179,18 @@ public class App extends Application {
     }
 
     private void addFileToQueue(File file, String manualStyle, String manualOverlay, String customName) {
+        Platform.runLater(() -> {
+            pendingAnalysisTasks.set(pendingAnalysisTasks.get() + 1);
+            globalProgressVisible.set(true);
+        });
         analysisExecutor.submit(() -> {
             try {
                 int p = pdfService.getPageCount(file);
                 String c = pdfService.getText(file);
                 PrintRule rule = findMatchingRule(p, c);
-                
+
                 String pr = (rule != null) ? rule.getPrinterName() : "None";
-                
+
                 // Smart Printer Fallback: If rule printer is None/Missing, use System Default
                 List<String> available = printService.getAvailablePrinters();
                 if ("None".equals(pr) || "Default Printer".equalsIgnoreCase(pr) || !available.contains(pr)) {
@@ -1169,6 +1211,15 @@ public class App extends Application {
                     fileQueue.add(item);
                 });
             } catch (Exception e) { logger.error("Add error", e); }
+            finally {
+                Platform.runLater(() -> {
+                    pendingAnalysisTasks.set(pendingAnalysisTasks.get() - 1);
+                    if (pendingAnalysisTasks.get() == 0) {
+                        globalProgressVisible.set(false);
+                        updateStatus("Ready. " + fileQueue.size() + " files loaded.");
+                    }
+                });
+            }
         });
     }
 
@@ -1452,6 +1503,8 @@ public class App extends Application {
         TextField ssPreA = new TextField(); ssPreA.setPromptText("Prefix After"); ssPreA.setPrefWidth(120);
         
         TextField ssOverlay = new TextField(); ssOverlay.setPromptText("Overlay Text (e.g. MCQ)"); ssOverlay.setPrefWidth(120);
+        CheckBox ssQpOverlay = new CheckBox("Apply QP Overlay on Main"); ssQpOverlay.setSelected(true);
+        CheckBox ssAddSuffix = new CheckBox("Add 'A' Suffix"); ssAddSuffix.setSelected(true);
         TextField ssSkipThr = new TextField(); ssSkipThr.setPromptText("Skip if after pages are (e.g. 5,9)"); ssSkipThr.setPrefWidth(180);
         
         ComboBox<String> ssB1 = new ComboBox<>(FXCollections.observableArrayList("Simplex", "Duplex", "Booklet")); 
@@ -1467,6 +1520,7 @@ public class App extends Application {
             new HBox(15, new Label("Active:"), ssEn, new Label("Target Keyword:"), ssKw),
             new HBox(15, new Label("Page Skip Logic:"), new Label("Skip Keyword Page only if 'After' part has exactly these page counts (comma separated):"), ssSkipThr),
             new HBox(15, new Label("Name Prefix:"), new Label("Before:"), ssPreB, new Label("After:"), ssPreA, new Label("After Overlay:"), ssOverlay),
+            new HBox(15, ssQpOverlay, ssAddSuffix),
             new VBox(5, 
                 new Label("Style Mapping for 'Before' Split:"),
                 new HBox(10, new Label("If 1 Page:"), ssB1, new Label("If 2 Pages:"), ssB2, new Label("If 3+ Pages:"), ssB3)
@@ -1849,16 +1903,49 @@ public class App extends Application {
                     
                     if (template != null) {
                         List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(template, fileQueue);
-                        for (MatchResult res : aiResults) matches.add(res.getMatchedFile());
+
+                        // NEW: Stream Preference Filter (V6.4)
+                        double maxScore = aiResults.stream().mapToDouble(MatchResult::getConfidenceScore).max().orElse(0.0);
+                        if (maxScore > 0) {
+                            aiResults.removeIf(r -> r.getConfidenceScore() < maxScore);
+                        }
+
+                        // NEW: Decisive Single-Match Rule (V6.5)
+                        boolean hasSplits = aiResults.stream().anyMatch(res -> {
+                            String name = res.getMatchedFile().getFileName();
+                            return name.startsWith("Split_") || name.startsWith("MCQ_") || 
+                                   name.startsWith("Main_") || name.startsWith("Remain_") ||
+                                   (res.getMatchedFile().getOverlayText() != null && !res.getMatchedFile().getOverlayText().isEmpty());
+                        });
+                        
+                        if (!hasSplits && aiResults.size() > 1) {
+                            aiResults.sort((a, b) -> Double.compare(b.getConfidenceScore(), a.getConfidenceScore()));
+                            MatchResult best = aiResults.get(0);
+                            aiResults.clear();
+                            aiResults.add(best);
+                        }
+
+                        Set<String> seenNames = new HashSet<>();
+                        for (MatchResult res : aiResults) {
+                            FileItem fi = res.getMatchedFile();
+                            String nameKey = fi.getFileName().toLowerCase();
+                            if (!seenNames.contains(nameKey)) {
+                                matches.add(fi);
+                                seenNames.add(nameKey);
+                            }
+                        }
                     }
                 } else {
-                    // --- LEGACY PATH ---
-                    matches = fileQueue.stream()
+                    // --- LEGACY PATH (Decisive) ---
+                    List<FileItem> legacyMatches = fileQueue.stream()
                         .filter(f -> {
                             String extracted = extractQPFromFileName(f.getFileName());
                             return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
                         })
                         .collect(Collectors.toList());
+                    if (!legacyMatches.isEmpty()) {
+                        matches.add(legacyMatches.get(0)); // Only take one
+                    }
                 }
                 
                 // 2. Ensure exactly one RoomItem exists for each matched file
@@ -1866,23 +1953,28 @@ public class App extends Application {
                     // Unique link check: Does this room already have THIS file linked to THIS subject?
                     boolean linkExists = g.getItems().stream()
                         .anyMatch(ri -> ri.getMatchedFile() == f && qp.equalsIgnoreCase(ri.getQpCode()));
-                    
+
                     if (!linkExists) {
+                        // Find a Pending item to heal
                         RoomItem proto = g.getItems().stream()
-                            .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
+                            .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()) && ri.getMatchedFile() == null)
                             .findFirst().orElse(null);
-                        
+
                         if (proto != null) {
-                            if (proto.getMatchedFile() == null) {
-                                // Reuse the existing PND item for the first match
-                                proto.setPdfFileName(f.getFileName());
-                                proto.setMatchedFile(f);
-                                proto.setStatus("Ready");
-                            } else {
-                                // Clone for subsequent matches (like splits)
-                                RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), proto.getCount(), proto.getSourceNodeId());
-                                newItem.setCourseName(proto.getCourseName());
-                                newItem.setStream(proto.getStream());
+                            // Reuse the existing PND item for the first match
+                            proto.setPdfFileName(f.getFileName());
+                            proto.setMatchedFile(f);
+                            proto.setStatus("Ready");
+                        } else {
+                            // Clone for subsequent matches (like splits)
+                            RoomItem baseItem = g.getItems().stream()
+                                .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
+                                .findFirst().orElse(null);
+
+                            if (baseItem != null) {
+                                RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), baseItem.getCount(), baseItem.getSourceNodeId());
+                                newItem.setCourseName(baseItem.getCourseName());
+                                newItem.setStream(baseItem.getStream());
                                 newItem.setMatchedFile(f);
                                 newItem.setStatus("Ready");
                                 g.getItems().add(newItem);
@@ -1986,6 +2078,11 @@ public class App extends Application {
         uploadBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
         uploadBtn.setPrefWidth(180);
         uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
+
+        Button addRoomBtn = new Button("Manually Add Room");
+        addRoomBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+        addRoomBtn.setPrefWidth(180);
+        addRoomBtn.setOnAction(e -> showManualRoomDialog());
 
         Button clearBlocksBtn = new Button("Clear All");
         clearBlocksBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
@@ -2093,7 +2190,7 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox header = new HBox(12, uploadBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, aiRoutingBtn, spacer, roomAlertsBox);
+        HBox header = new HBox(12, uploadBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, aiRoutingBtn, spacer, roomAlertsBox);
         header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         header.setPadding(new Insets(0, 5, 0, 5));
 
@@ -2150,7 +2247,7 @@ public class App extends Application {
         Label subtitle = new Label();
         subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("TOTAL STUDENTS: ", totalQtyBinding.asString()));
         subtitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2e7d32; -fx-padding: 5px 0;");
-        
+
         // Attachment logic for count listeners (syncs split files and updates room total)
         java.util.function.Consumer<RoomItem> attachListener = ri -> {
             ri.countProperty().addListener((obs, old, val) -> {
@@ -2169,11 +2266,18 @@ public class App extends Application {
                 if (c.wasAdded()) c.getAddedSubList().forEach(attachListener);
             }
         });
-        
+
         // Initial calculation to ensure 0 is not shown if items already exist
         recalculateRoomTotal.run();
 
-        VBox headerArea = new VBox(2, title, subtitle);
+        Button addPaperBtn = new Button("+ Add Paper");
+        addPaperBtn.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 3 8; -fx-background-radius: 4;");
+        addPaperBtn.setOnAction(e -> showManualFilePicker(group));
+
+        HBox titleBox = new HBox(15, title, addPaperBtn);
+        titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        VBox headerArea = new VBox(2, titleBox, subtitle);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
         headerArea.setPadding(new Insets(10, 0, 10, 0));
 
@@ -2361,7 +2465,35 @@ public class App extends Application {
             }
         });
 
-        table.getColumns().addAll(qpCol, styleCol, ppCol, countCol, statusCol, editCol, logCol);
+        TableColumn<RoomItem, Void> delCol = new TableColumn<>("X");
+        delCol.setPrefWidth(35);
+        delCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
+            private final Button btn = new Button("\u2715"); // X
+            {
+                btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #f44336; -fx-font-weight: bold; -fx-padding: 0; -fx-cursor: hand;");
+                btn.setOnAction(e -> {
+                    RoomItem item = getTableRow().getItem();
+                    if (item != null) {
+                        group.getItems().remove(item);
+                        activityLogger.warn("Manually removed entry from Room " + group.getRoomSerial());
+                        saveConfigs();
+                    }
+                });
+            }
+            @Override protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) { setGraphic(null); setStyle(""); }
+                else {
+                    RoomItem ri = getTableRow().getItem();
+                    boolean needStaple = ri != null && ri.getMatchedFile() != null && "Booklet".equals(ri.getMatchedFile().getStyle()) && calculatePP(ri.getMatchedFile()) > 1;
+                    btn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + (needStaple ? "white" : "#f44336") + "; -fx-font-weight: bold; -fx-padding: 0; -fx-cursor: hand;");
+                    setGraphic(btn);
+                    setAlignment(javafx.geometry.Pos.CENTER);
+                }
+            }
+        });
+
+        table.getColumns().addAll(qpCol, styleCol, ppCol, countCol, statusCol, editCol, logCol, delCol);
 
         table.setRowFactory(tv -> {
             TableRow<RoomItem> row = new TableRow<RoomItem>();
@@ -2585,7 +2717,11 @@ public class App extends Application {
         btnWatcher.setDaemon(true);
         btnWatcher.start();
 
-        card.getChildren().addAll(headerArea, table, printerBox, printerIndicator, sendBtn, roomStatus);
+        HBox actions = new HBox(8, sendBtn);
+        HBox.setHgrow(sendBtn, Priority.ALWAYS);
+        actions.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        card.getChildren().addAll(headerArea, table, printerBox, printerIndicator, actions, roomStatus);
         return card;
     }
 
@@ -2811,7 +2947,9 @@ public class App extends Application {
     private void processRoomWiseJson(JsonNode root, String sourceName) {
         // PASS 1: CONSOLIDATION
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
+        for (RoomGroup g : roomGroupsList) groups.put(g.getRoomSerial(), g);
         Map<String, Map<String, RoomItem>> consolidationMap = new LinkedHashMap<>();
+        Set<String> processedGroups = new HashSet<>();
         int nodeIdCounter = 0;
 
         if (root.isArray()) {
@@ -2824,6 +2962,12 @@ public class App extends Application {
                 String stream = node.path("stream").asText("Regular").trim();
 
                 RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
+                
+                // CRITICAL FIX: Clear existing items on reload to prevent duplicates
+                if (!processedGroups.contains(roomSerial)) {
+                    group.getItems().clear();
+                    processedGroups.add(roomSerial);
+                }
                 
                 if (qpCode.isEmpty() && !pdfFileName.isEmpty()) {
                     qpCode = extractQPFromFileName(pdfFileName);
@@ -2890,12 +3034,33 @@ public class App extends Application {
                         });
                     }
 
-                    // Deduplicate AI results by physical file path
+                    // Filter: Keep only the best scores (Ties allowed if they are products)
+                    double maxScore = aiResults.stream().mapToDouble(MatchResult::getConfidenceScore).max().orElse(0.0);
+                    if (maxScore > 0) {
+                        aiResults.removeIf(res -> res.getConfidenceScore() < maxScore);
+                    }
+
+                    // Deduplicate AI results by physical file path AND filename property
                     List<MatchResult> uniqueAi = new ArrayList<>();
-                    Set<String> seenAi = new HashSet<>();
+                    Set<String> seenPaths = new HashSet<>();
+                    Set<String> seenNames = new HashSet<>();
                     for (MatchResult res : aiResults) {
                         String pathKey = res.getMatchedFile().getFile().getAbsolutePath().toLowerCase();
-                        if (!seenAi.contains(pathKey)) { uniqueAi.add(res); seenAi.add(pathKey); }
+                        String nameKey = res.getMatchedFile().getFileName().toLowerCase();
+                        if (!seenPaths.contains(pathKey) && !seenNames.contains(nameKey)) {
+                            uniqueAi.add(res); 
+                            seenPaths.add(pathKey);
+                            seenNames.add(nameKey);
+                        }
+                    }
+
+                    // NEW: Decisive Single-Match Rule (V6.5)
+                    // If no split components are detected, we MUST only have one match per room item.
+                    if (!hasSplits && uniqueAi.size() > 1) {
+                        // Keep only the first one (already filtered by maxScore)
+                        MatchResult best = uniqueAi.get(0);
+                        uniqueAi.clear();
+                        uniqueAi.add(best);
                     }
 
                     boolean firstMatch = true;
@@ -3023,7 +3188,7 @@ public class App extends Application {
 
         TextField roomNo = new TextField(); roomNo.setPromptText("e.g. 101 or Lab A");
         TextField totalStd = new TextField(); totalStd.setPromptText("Total Students");
-        
+
         VBox content = new VBox(10, new Label("Room Number/Serial:"), roomNo, new Label("Total Student Count:"), totalStd);
         content.setPadding(new Insets(10));
         dialog.getDialogPane().setContent(content);
@@ -3048,13 +3213,13 @@ public class App extends Application {
         Dialog<RoomItem> dialog = new Dialog<>();
         dialog.setTitle("Manual Add: Room " + group.getRoomSerial());
         dialog.setHeaderText("Select a file from the Print Queue to add to this room:");
-        
+
         ButtonType addButtonType = new ButtonType("Add to Room", ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(addButtonType, ButtonType.CANCEL);
 
         TextField search = new TextField();
         search.setPromptText("Search by filename or QP...");
-        
+
         FilteredList<FileItem> filtered = new FilteredList<>(fileQueue, p -> true);
         search.textProperty().addListener((obs, old, val) -> {
             filtered.setPredicate(item -> {
@@ -3076,7 +3241,7 @@ public class App extends Application {
 
         Spinner<Integer> qty = new Spinner<>(1, 999, group.getTotalStudents() > 0 ? group.getTotalStudents() : 1);
         qty.setEditable(true);
-        
+
         VBox content = new VBox(10, new Label("Filter Queue:"), search, list, new Label("Set Copy Count for this room:"), qty);
         content.setPadding(new Insets(10));
         dialog.getDialogPane().setContent(content);

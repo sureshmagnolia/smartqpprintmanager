@@ -64,13 +64,13 @@
   "portalUsername" : "",
   "portalPassword" : "",
   "portalQpPassword" : "",
-  "portalQpPrefix" : "",
+  "portalQpPrefix" : "D",
   "lastSessionName" : "",
   "collegeName" : "Your Institution Name",
   "currentExamDate" : "",
   "currentExamSession" : "",
   "baseDownloadPath" : "C:\\",
-  "lastDirectory" : "",
+  "lastDirectory" : "C:\\Users\\sures\\OneDrive\\Documents\\Downloads\\QPArchive\\13.05.26FN\\Done",
   "printCoverPage" : true,
   "aiRoutingEnabled" : true
 }

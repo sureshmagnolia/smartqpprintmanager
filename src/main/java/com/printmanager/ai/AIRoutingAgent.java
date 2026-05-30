@@ -104,6 +104,10 @@ public class AIRoutingAgent {
         String baseInternalQP = internalQP.replaceAll("^D", "").replaceAll("[A-Z]$", "");
         String baseFilenameQP = filenameQP.replaceAll("^D", "").replaceAll("[A-Z]$", "");
 
+        String normJsonQP = jsonQP.replaceAll("^D", "").replaceAll("\\s+", "");
+        String normInternalQP = internalQP.replaceAll("^D", "").replaceAll("\\s+", "");
+        String normFilenameQP = filenameQP.replaceAll("^D", "").replaceAll("\\s+", "");
+
         boolean isStrongBaseQP = false;
         if (!baseJsonQP.isEmpty() && (baseJsonQP.equals(baseInternalQP) || baseJsonQP.equals(baseFilenameQP))) {
             isStrongBaseQP = true;
@@ -120,29 +124,31 @@ public class AIRoutingAgent {
                             jsonStream.toUpperCase().contains("EXTERNAL"))) || 
                             roomName.contains(" SDE") || roomName.contains("(SDE)") || 
                             roomName.contains("DISTANCE") || roomName.contains("EXTERNAL");
+// PDF stream detection:
+// A PDF is SDE if its filename contains SDE/DISTANCE markers OR if it has 'A' suffix / 'D' prefix 
+// UNLESS it is explicitly marked as Regular (REG_ prefix).
+boolean pdfIsExt = metadata.stream.equalsIgnoreCase("SDE");
+String fn = fileItem.getFileName().toUpperCase();
+if (fn.contains("REG_") || fn.contains("_REG_") || fn.contains(" REG ")) {
+    pdfIsExt = false;
+} else if (fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") ||
+        internalQP.endsWith("A") || filenameQP.endsWith("A") ||
+        internalQP.startsWith("D") || filenameQP.startsWith("D")) {
+    pdfIsExt = true;
+}
 
-        // PDF stream detection:
-        // A PDF is SDE if its filename contains SDE/DISTANCE markers OR if it has 'A' suffix / 'D' prefix 
-        // UNLESS it is explicitly marked as Regular (REG_ prefix).
-        boolean pdfIsExt = metadata.stream.equalsIgnoreCase("SDE");
-        String fn = fileItem.getFileName().toUpperCase();
-        if (!fn.contains("REG_")) {
-            if (fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") ||
-                internalQP.endsWith("A") || filenameQP.endsWith("A") ||
-                internalQP.startsWith("D") || filenameQP.startsWith("D")) {
-                pdfIsExt = true;
-            }
-        }
-        
-        // Exact match bypass ONLY if the QP code came directly from JSON
-        boolean isExactQP = qpFromJSON && (jsonQP.equals(internalQP) || jsonQP.equals(filenameQP));
+// Exact match bypass ONLY if the QP code came directly from JSON
+boolean isExactQP = qpFromJSON && (normJsonQP.equals(normInternalQP) || normJsonQP.equals(normFilenameQP));
 
-        // REJECTION RULE: If streams mismatch and we don't have an EXACT match from JSON, REJECT.
-        if (jsonIsExt != pdfIsExt && !isExactQP) {
-            result.addLog("REJECT: Stream Mismatch (Room:" + (jsonIsExt?"EXT":"REG") + " vs PDF:" + (pdfIsExt?"EXT":"REG") + ")");
-            return 0.0;
-        }
+// REJECTION RULE: If streams mismatch and we don't have an EXACT match from JSON, REJECT.
+if (jsonIsExt != pdfIsExt && !isExactQP) {
+    result.addLog("REJECT: Stream Mismatch (Room:" + (jsonIsExt?"EXT":"REG") + " vs PDF:" + (pdfIsExt?"EXT":"REG") + ")");
+    return 0.0;
+}
 
+// Stream Tie-Breaker: Give a significant bonus if the filename literally contains the stream word
+if (jsonIsExt && (fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") || fn.contains("EXTER"))) score += 0.05;
+if (!jsonIsExt && (fn.contains("REG") || fn.contains("NORMAL"))) score += 0.05;
         // --- LAYER 1: SPLIT PROTECTION (MIMIC LEGACY) ---
         // If the room is Regular, it should NOT take papers that are purely MCQ or purely SDE-specialized
         // UNLESS it's the Main part of a split.
@@ -156,13 +162,13 @@ public class AIRoutingAgent {
         // --- LAYER 2: QP CODE MATCH ---
         if (!baseJsonQP.isEmpty()) {
             if (isExactQP) {
-                score += 1.0;
+                score += 0.95;
+                if (jsonIsExt == pdfIsExt) score += 0.05;
                 result.addLog("MATCH: Exact QP Code Match (" + jsonQP + ")");
             } else if (isStrongBaseQP) {
-                score += 0.95;
+                score += 0.90;
+                if (jsonIsExt == pdfIsExt) score += 0.1;
                 result.addLog("MATCH: Base QP Code Equality (" + baseJsonQP + ")");
-                // Give a slight boost if the streams perfectly matched naturally or via the 'A' suffix rule
-                if (jsonIsExt == pdfIsExt) score += 0.05; 
             } else if (baseJsonQP.startsWith(baseInternalQP) && !baseInternalQP.isEmpty()) {
                 score += 0.85; 
                 result.addLog("MATCH: QP Prefix (" + baseInternalQP + " in " + baseJsonQP + ")");
@@ -194,10 +200,10 @@ public class AIRoutingAgent {
             String normRoomCC = roomCC.replaceAll("[^A-Z0-9]", "");
             String normPDFCC = metadata.courseCode.replaceAll("[^A-Z0-9]", "");
             if (normRoomCC.equals(normPDFCC)) {
-                score += 0.9;
+                score += 0.4; // Reduced contribution to allow stream preference to dominate
                 result.addLog("MATCH: Course Code Identity (" + normPDFCC + ")");
             } else if (normRoomCC.contains(normPDFCC) || normPDFCC.contains(normRoomCC)) {
-                score += 0.85;
+                score += 0.35;
                 result.addLog("MATCH: Course Code Inclusion (" + normPDFCC + " ~ " + normRoomCC + ")");
             }
         }
