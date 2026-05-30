@@ -6,20 +6,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import javafx.beans.property.*;
 
 public class RoomItem {
-    @JsonProperty("roomSerial")
-    private String roomSerial;
-    
-    @JsonProperty("qpCode")
-    private String qpCode;
-    
-    @JsonProperty("pdfFileName")
-    private String pdfFileName;
-    
-    @JsonProperty("courseName")
-    private String courseName;
-    
-    @JsonProperty("sourceNodeId")
-    private int sourceNodeId = -1;
+    private final StringProperty roomSerial = new SimpleStringProperty();
+    private final StringProperty qpCode = new SimpleStringProperty();
+    private final StringProperty pdfFileName = new SimpleStringProperty();
+    private final StringProperty courseName = new SimpleStringProperty();
+    private final StringProperty stream = new SimpleStringProperty();
+    private final IntegerProperty sourceNodeId = new SimpleIntegerProperty(-1);
     
     private final IntegerProperty count = new SimpleIntegerProperty();
     private final ObjectProperty<FileItem> matchedFile = new SimpleObjectProperty<>();
@@ -34,27 +26,48 @@ public class RoomItem {
             @JsonProperty("pdfFileName") String pdfFileName,
             @JsonProperty("count") int count,
             @JsonProperty("sourceNodeId") int sourceNodeId) {
-        this.roomSerial = roomSerial;
-        this.qpCode = qpCode;
-        this.pdfFileName = pdfFileName;
+        this.roomSerial.set(roomSerial);
+        this.qpCode.set(qpCode);
+        this.pdfFileName.set(pdfFileName);
         this.count.set(count);
-        this.sourceNodeId = sourceNodeId;
+        this.sourceNodeId.set(sourceNodeId);
     }
 
-    public String getRoomSerial() { return roomSerial; }
-    public void setFileRoomSerial(String roomSerial) { this.roomSerial = roomSerial; }
+    @JsonProperty("roomSerial")
+    public String getRoomSerial() { return roomSerial.get(); }
+    public void setFileRoomSerial(String roomSerial) { this.roomSerial.set(roomSerial); }
+    @JsonIgnore
+    public StringProperty roomSerialProperty() { return roomSerial; }
 
-    public String getQpCode() { return qpCode; }
-    public void setQpCode(String qpCode) { this.qpCode = qpCode; }
+    @JsonProperty("qpCode")
+    public String getQpCode() { return qpCode.get(); }
+    public void setQpCode(String qpCode) { this.qpCode.set(qpCode); }
+    @JsonIgnore
+    public StringProperty qpCodeProperty() { return qpCode; }
 
-    public String getPdfFileName() { return pdfFileName; }
-    public void setPdfFileName(String pdfFileName) { this.pdfFileName = pdfFileName; }
+    @JsonProperty("pdfFileName")
+    public String getPdfFileName() { return pdfFileName.get(); }
+    public void setPdfFileName(String pdfFileName) { this.pdfFileName.set(pdfFileName); }
+    @JsonIgnore
+    public StringProperty pdfFileNameProperty() { return pdfFileName; }
     
-    public String getCourseName() { return courseName; }
-    public void setCourseName(String courseName) { this.courseName = courseName; }
+    @JsonProperty("courseName")
+    public String getCourseName() { return courseName.get(); }
+    public void setCourseName(String courseName) { this.courseName.set(courseName); }
+    @JsonIgnore
+    public StringProperty courseNameProperty() { return courseName; }
 
-    public int getSourceNodeId() { return sourceNodeId; }
-    public void setSourceNodeId(int id) { this.sourceNodeId = id; }
+    @JsonProperty("stream")
+    public String getStream() { return stream.get(); }
+    public void setStream(String stream) { this.stream.set(stream); }
+    @JsonIgnore
+    public StringProperty streamProperty() { return stream; }
+
+    @JsonProperty("sourceNodeId")
+    public int getSourceNodeId() { return sourceNodeId.get(); }
+    public void setSourceNodeId(int id) { this.sourceNodeId.set(id); }
+    @JsonIgnore
+    public IntegerProperty sourceNodeIdProperty() { return sourceNodeId; }
     
     @JsonProperty("count")
     public int getCount() { return count.get(); }
@@ -77,13 +90,16 @@ public class RoomItem {
     @JsonIgnore
     public String getDisplayName() {
         FileItem matched = matchedFile.get();
+        String qp = qpCode.get();
+        if (qp == null || qp.isEmpty()) qp = "NO QP";
+        
         if (matched != null) {
             String fname = matched.getFileName().toLowerCase();
-            if (fname.contains("mcq")) return qpCode + " (MCQ)";
-            if (fname.contains("main")) return qpCode + " (Main)";
-            if (fname.startsWith("split_")) return qpCode + " (Split)";
-            if (fname.startsWith("remain_")) return qpCode + " (Remain)";
+            if (fname.contains("mcq")) return qp + " (MCQ)";
+            if (fname.contains("main")) return qp + " (Main)";
+            if (fname.startsWith("split_")) return qp + " (Split)";
+            if (fname.startsWith("remain_")) return qp + " (Remain)";
         }
-        return qpCode;
+        return qp;
     }
 }

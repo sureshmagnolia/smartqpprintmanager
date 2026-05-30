@@ -127,6 +127,11 @@ public class App extends Application {
     private final TextField sessionNameField = new TextField();
     private final TextField downloadPathField = new TextField();
 
+    // Global Progress & Feedback
+    private final DoubleProperty globalProgress = new SimpleDoubleProperty(0.0);
+    private final BooleanProperty globalProgressVisible = new SimpleBooleanProperty(false);
+    private final IntegerProperty pendingAnalysisTasks = new SimpleIntegerProperty(0);
+
     // Global Synchronization Engine
     private final DoubleProperty globalPulseOpacity = new SimpleDoubleProperty(1.0);
     private final BooleanProperty dualAlertPhase = new SimpleBooleanProperty(true); // true = Red, false = Black
@@ -2596,7 +2601,7 @@ public class App extends Application {
 
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition AI Engine V5.1");
+        Label version = new Label("Professional Edition AI Engine V5.2");
         version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
         header.getChildren().addAll(title, version);
 
@@ -2804,57 +2809,70 @@ public class App extends Application {
     }
 
     private void processRoomWiseJson(JsonNode root, String sourceName) {
+        // PASS 1: CONSOLIDATION
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
-        Map<String, Integer> qpTotalCounts = new HashMap<>();
-        Set<FileItem> matchedFiles = new HashSet<>();
-        int matchedItems = 0;
+        Map<String, Map<String, RoomItem>> consolidationMap = new LinkedHashMap<>();
         int nodeIdCounter = 0;
 
         if (root.isArray()) {
-            Set<FileItem> assignedInThisRoom = new java.util.HashSet<>();
-
             for (JsonNode node : root) {
-                int currentNodeId = nodeIdCounter++;
-                String roomSerial = node.path("roomSerial").asText("Unknown");
-                String qpCode = node.path("qpCode").asText("");
+                String roomSerial = node.path("roomSerial").asText("Unknown").trim();
+                String qpCode = node.path("qpCode").asText("").trim();
                 String pdfFileName = node.path("pdfFileName").asText("");
-                String courseName = node.path("courseName").asText(pdfFileName);
+                String courseName = node.path("courseName").asText(pdfFileName).trim();
                 int count = node.path("count").asInt(0);
-                
-                int totalStudentsField = node.path("totalStudents").asInt(0);
-                if (totalStudentsField == 0) totalStudentsField = node.path("totalCount").asInt(0);
-                if (totalStudentsField == 0) totalStudentsField = node.path("roomTotal").asInt(0);
-
-                String stream = node.path("stream").asText("Regular");
+                String stream = node.path("stream").asText("Regular").trim();
 
                 RoomGroup group = groups.computeIfAbsent(roomSerial, RoomGroup::new);
-                if (totalStudentsField > 0) {
-                    group.setTotalStudents(totalStudentsField);
-                } else {
-                    // Accumulate counts from each JSON entry to get the total room population
-                    group.setTotalStudents(group.getTotalStudents() + count);
-                }
-
-                if (!qpCode.isEmpty()) {
-                    qpTotalCounts.put(qpCode, qpTotalCounts.getOrDefault(qpCode, 0) + count);
-                }
                 
-                RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
-                roomItem.setCourseName(courseName);
-                roomItem.setStream(stream);
-
-                // 1. AI TRAINING: Learn mapping if JSON has QP codes
-                if (qpCode != null && !qpCode.isEmpty()) {
-                    String learnedCC = extractCourseCodeFromText(courseName);
-                    KnowledgeBase.train(courseName, learnedCC, qpCode);
+                if (qpCode.isEmpty() && !pdfFileName.isEmpty()) {
+                    qpCode = extractQPFromFileName(pdfFileName);
                 }
+
+                String groupSubKey = qpCode.isEmpty() ? courseName.toUpperCase() : qpCode.toUpperCase();
+                String qpKey = groupSubKey + "|" + stream.toUpperCase();
+                
+                Map<String, RoomItem> qpMap = consolidationMap.computeIfAbsent(roomSerial, k -> new LinkedHashMap<>());
+                if (qpMap.containsKey(qpKey)) {
+                    RoomItem existing = qpMap.get(qpKey);
+                    existing.setCount(existing.getCount() + count);
+                    if (!courseName.isEmpty() && !existing.getCourseName().contains(courseName)) {
+                        existing.setCourseName(existing.getCourseName() + ", " + courseName);
+                    }
+                } else {
+                    RoomItem roomItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, nodeIdCounter++);
+                    roomItem.setCourseName(courseName);
+                    roomItem.setStream(stream);
+                    qpMap.put(qpKey, roomItem);
+                }
+            }
+        }
+
+        // PASS 2: MATCHING
+        int matchedItems = 0;
+        List<Map.Entry<String, Map<String, RoomItem>>> roomEntries = new ArrayList<>(consolidationMap.entrySet());
+        int totalRooms = roomEntries.size();
+        Platform.runLater(() -> { globalProgress.set(0.0); globalProgressVisible.set(true); });
+
+        for (int i = 0; i < totalRooms; i++) {
+            Map.Entry<String, Map<String, RoomItem>> roomEntry = roomEntries.get(i);
+            String roomSerial = roomEntry.getKey();
+            RoomGroup group = groups.get(roomSerial);
+            
+            final int currentRoomIdx = i + 1;
+            final double prog = (double) currentRoomIdx / (totalRooms > 0 ? totalRooms : 1);
+            updateStatus("Processing Room " + currentRoomIdx + " of " + totalRooms + "...");
+            Platform.runLater(() -> globalProgress.set(prog));
+
+            for (RoomItem roomItem : roomEntry.getValue().values()) {
+                String courseName = roomItem.getCourseName();
+                int count = roomItem.getCount();
 
                 boolean matched = false;
                 if (config.isAiRoutingEnabled()) {
-                    // --- AI ROUTING PATH (V6.5: Multi-Match & Enrich) ---
                     List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(roomItem, fileQueue);
                     
-                    // Filter: If split products (Split_, MCQ_, Main_, Remain_) are found, exclude the original unsplit file
+                    // Filter splits
                     boolean hasSplits = aiResults.stream().anyMatch(res -> {
                         String name = res.getMatchedFile().getFileName();
                         return name.startsWith("Split_") || name.startsWith("MCQ_") || 
@@ -2872,64 +2890,75 @@ public class App extends Application {
                         });
                     }
 
-                    boolean firstMatch = true;
+                    // Deduplicate AI results by physical file path
+                    List<MatchResult> uniqueAi = new ArrayList<>();
+                    Set<String> seenAi = new HashSet<>();
                     for (MatchResult res : aiResults) {
+                        String pathKey = res.getMatchedFile().getFile().getAbsolutePath().toLowerCase();
+                        if (!seenAi.contains(pathKey)) { uniqueAi.add(res); seenAi.add(pathKey); }
+                    }
+
+                    boolean firstMatch = true;
+                    for (MatchResult res : uniqueAi) {
                         FileItem fi = res.getMatchedFile();
                         RoomItem partItem;
-                        
                         if (firstMatch) {
-                            partItem = roomItem; // Reuse the original instance for the first match
+                            partItem = roomItem;
                             firstMatch = false;
                         } else {
-                            // Clone for subsequent matches (e.g. MCQ / Splits)
-                            partItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
+                            partItem = new RoomItem(roomSerial, roomItem.getQpCode(), roomItem.getPdfFileName(), count, roomItem.getSourceNodeId());
                             partItem.setCourseName(courseName);
-                            partItem.setStream(stream);
+                            partItem.setStream(roomItem.getStream());
                         }
                         
-                        // SELF-HEAL: If JSON was missing the QP code, fetch it from AI logs
+                        partItem.setMatchedFile(fi);
+                        partItem.setStatus("Ready");
+                        
+                        // Auto-Fill missing QP code from file
                         if (partItem.getQpCode() == null || partItem.getQpCode().isEmpty()) {
-                            java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?i)identifies as QP: (\\w+)");
-                            java.util.regex.Matcher m = p.matcher(fi.getAiLogs());
-                            if (m.find()) partItem.setQpCode(m.group(1));
+                            String fqp = extractQPFromFileName(fi.getFileName());
+                            if (fqp != null && !fqp.isEmpty()) partItem.setQpCode(fqp);
                         }
 
-                        partItem.setMatchedFile(fi);
+                        group.getItems().add(partItem);
+                        matched = true;
+                        matchedItems++;
+                        activityLogger.info("Room " + roomSerial + ": AI Matched [" + fi.getFileName() + "] for " + count + " students");
+                    }
+                } else {
+                    // LEGACY PATH
+                    List<FileItem> legacyMatches = new ArrayList<>();
+                    Set<String> seenLegacy = new HashSet<>();
+                    for (FileItem fi : fileQueue) {
+                        String fn = fi.getFileName();
+                        String eqp = extractQPFromFileName(fn);
+                        String qpCode = roomItem.getQpCode();
+                        if (!qpCode.isEmpty() && (qpCode.equalsIgnoreCase(eqp) || fn.contains("_" + qpCode + "_") || fn.contains("_" + qpCode + "."))) {
+                            String pathKey = fi.getFile().getAbsolutePath().toLowerCase();
+                            if (!seenLegacy.contains(pathKey)) { legacyMatches.add(fi); seenLegacy.add(pathKey); }
+                        }
+                    }
+
+                    boolean firstMatch = true;
+                    for (FileItem fileItem : legacyMatches) {
+                        RoomItem partItem;
+                        if (firstMatch) {
+                            partItem = roomItem;
+                            firstMatch = false;
+                        } else {
+                            partItem = new RoomItem(roomSerial, roomItem.getQpCode(), roomItem.getPdfFileName(), count, roomItem.getSourceNodeId());
+                            partItem.setCourseName(courseName);
+                            partItem.setStream(roomItem.getStream());
+                        }
+                        partItem.setMatchedFile(fileItem);
                         partItem.setStatus("Ready");
                         group.getItems().add(partItem);
                         matched = true;
                         matchedItems++;
-                        matchedFiles.add(fi);
-                        activityLogger.info("Room " + roomSerial + ": AI Matched [" + fi.getFileName() + "]");
-                    }
-                } else {
-                    // --- LEGACY ROUTING PATH (V6.5: Multi-Match Support) ---
-                    boolean firstMatch = true;
-                    for (FileItem fileItem : fileQueue) {
-                        String fileName = fileItem.getFileName();
-                        String extractedQP = extractQPFromFileName(fileName);
-                        if (qpCode != null && !qpCode.isEmpty() && (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + "."))) {
-                            RoomItem partItem;
-                            if (firstMatch) {
-                                partItem = roomItem;
-                                firstMatch = false;
-                            } else {
-                                partItem = new RoomItem(roomSerial, qpCode, pdfFileName, count, currentNodeId);
-                                partItem.setCourseName(courseName);
-                                partItem.setStream(stream);
-                            }
-                            partItem.setMatchedFile(fileItem);
-                            partItem.setStatus("Ready");
-                            group.getItems().add(partItem);
-                            matched = true;
-                            matchedItems++;
-                            matchedFiles.add(fileItem);
-                            activityLogger.info("Room " + roomSerial + ": Matched " + fileName);
-                        }
+                        activityLogger.info("Room " + roomSerial + ": Matched " + fileItem.getFileName() + " (" + count + ")");
                     }
                 }
 
-                // Only add template if NO matches were found (to show PND)
                 if (!matched) {
                     roomItem.setStatus("Pending");
                     group.getItems().add(roomItem);
@@ -2938,14 +2967,15 @@ public class App extends Application {
             }
         }
 
-        // --- FINAL REFRESH ---
+        // --- FINAL UI REFRESH ---
         final int finalMatched = matchedItems;
         final int finalGroupSize = groups.size();
         Platform.runLater(() -> {
             roomGroupsList.setAll(groups.values());
             refreshGlobalAlerts();
-            activityLogger.success("Room Routing setup complete. " + finalGroupSize + " rooms created, " + finalMatched + " files matched.");
-            updateStatus("Ready");
+            activityLogger.success("Room Routing complete: " + finalGroupSize + " rooms, " + finalMatched + " matched.");
+            updateStatus("Ready. " + finalGroupSize + " rooms loaded.");
+            globalProgressVisible.set(false);
         });
     }
 
@@ -2981,6 +3011,100 @@ public class App extends Application {
             }
         });
         recalculateRoomTotal.run();
+    }
+
+    private void showManualRoomDialog() {
+        Dialog<RoomGroup> dialog = new Dialog<>();
+        dialog.setTitle("Manually Add Room");
+        dialog.setHeaderText("Enter Room details to create a new card:");
+
+        ButtonType createType = new ButtonType("Create Room", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(createType, ButtonType.CANCEL);
+
+        TextField roomNo = new TextField(); roomNo.setPromptText("e.g. 101 or Lab A");
+        TextField totalStd = new TextField(); totalStd.setPromptText("Total Students");
+        
+        VBox content = new VBox(10, new Label("Room Number/Serial:"), roomNo, new Label("Total Student Count:"), totalStd);
+        content.setPadding(new Insets(10));
+        dialog.getDialogPane().setContent(content);
+
+        dialog.setResultConverter(bt -> {
+            if (bt == createType && !roomNo.getText().isEmpty()) {
+                RoomGroup g = new RoomGroup(roomNo.getText());
+                try { g.setTotalStudents(Integer.parseInt(totalStd.getText())); } catch (Exception e) {}
+                return g;
+            }
+            return null;
+        });
+
+        dialog.showAndWait().ifPresent(g -> {
+            roomGroupsList.add(g);
+            saveConfigs();
+            activityLogger.success("Manually created Room " + g.getRoomSerial());
+        });
+    }
+
+    private void showManualFilePicker(RoomGroup group) {
+        Dialog<RoomItem> dialog = new Dialog<>();
+        dialog.setTitle("Manual Add: Room " + group.getRoomSerial());
+        dialog.setHeaderText("Select a file from the Print Queue to add to this room:");
+        
+        ButtonType addButtonType = new ButtonType("Add to Room", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(addButtonType, ButtonType.CANCEL);
+
+        TextField search = new TextField();
+        search.setPromptText("Search by filename or QP...");
+        
+        FilteredList<FileItem> filtered = new FilteredList<>(fileQueue, p -> true);
+        search.textProperty().addListener((obs, old, val) -> {
+            filtered.setPredicate(item -> {
+                if (val == null || val.isEmpty()) return true;
+                String low = val.toLowerCase();
+                return item.getFileName().toLowerCase().contains(low);
+            });
+        });
+
+        ListView<FileItem> list = new ListView<>(filtered);
+        list.setPrefHeight(250);
+        list.setCellFactory(lv -> new ListCell<FileItem>() {
+            @Override protected void updateItem(FileItem item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) setText(null);
+                else setText(item.getFileName() + " (" + item.getPageCount() + " pages)");
+            }
+        });
+
+        Spinner<Integer> qty = new Spinner<>(1, 999, group.getTotalStudents() > 0 ? group.getTotalStudents() : 1);
+        qty.setEditable(true);
+        
+        VBox content = new VBox(10, new Label("Filter Queue:"), search, list, new Label("Set Copy Count for this room:"), qty);
+        content.setPadding(new Insets(10));
+        dialog.getDialogPane().setContent(content);
+
+        final Button okBtn = (Button) dialog.getDialogPane().lookupButton(addButtonType);
+        okBtn.setDisable(true);
+        list.getSelectionModel().selectedItemProperty().addListener((obs, old, nv) -> okBtn.setDisable(nv == null));
+
+        dialog.setResultConverter(bt -> {
+            if (bt == addButtonType) {
+                FileItem sel = list.getSelectionModel().getSelectedItem();
+                if (sel != null) {
+                    String qp = extractQPFromFileName(sel.getFileName());
+                    RoomItem ri = new RoomItem(group.getRoomSerial(), qp, sel.getFileName(), qty.getValue(), -1);
+                    ri.setMatchedFile(sel);
+                    ri.setCourseName("MANUAL: " + sel.getFileName());
+                    ri.setStatus("Ready");
+                    return ri;
+                }
+            }
+            return null;
+        });
+
+        dialog.showAndWait().ifPresent(newItem -> {
+            group.getItems().add(newItem);
+            activityLogger.success("Manually added " + newItem.getPdfFileName() + " to Room " + group.getRoomSerial());
+            saveConfigs();
+        });
     }
 
     private void attachRoomItemListeners(RoomItem i) {

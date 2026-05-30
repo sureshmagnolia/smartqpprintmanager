@@ -1,0 +1,2 @@
+Main-Class: com.printmanager.Launcher
+Class-Path: .

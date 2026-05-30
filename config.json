@@ -56,17 +56,21 @@
     "afterOverlayText" : "MCQ",
     "skipThresholds" : "5,9",
     "skipKeywordPage" : true,
-    "afterStyle6Plus" : "Booklet"
+    "afterStyle6Plus" : "Booklet",
+    "applyQpOverlay" : true,
+    "addASuffix" : true
   } ],
   "collegeId" : "",
-  "portalUsername" : "SMS121933",
-  "portalPassword" : "Csno1972#",
-  "portalQpPassword" : "23AFAE",
-  "portalQpPrefix" : "D",
-  "lastSessionName" : "25-05-2026 | 10:00 AM",
+  "portalUsername" : "",
+  "portalPassword" : "",
+  "portalQpPassword" : "",
+  "portalQpPrefix" : "",
+  "lastSessionName" : "",
   "collegeName" : "Your Institution Name",
   "currentExamDate" : "",
   "currentExamSession" : "",
-  "baseDownloadPath" : "D:\\",
-  "printCoverPage" : true
+  "baseDownloadPath" : "C:\\",
+  "lastDirectory" : "",
+  "printCoverPage" : true,
+  "aiRoutingEnabled" : true
 }

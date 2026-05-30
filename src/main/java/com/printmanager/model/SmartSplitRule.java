@@ -24,9 +24,18 @@ public class SmartSplitRule {
     private boolean skipKeywordPage = true;
     private String afterStyle6Plus = "Booklet";
 
+    // User-configurable labeling settings
+    private boolean applyQpOverlay = true;
+    private boolean addASuffix = true;
+
     public SmartSplitRule() {}
 
     // Getters and Setters
+    public boolean isApplyQpOverlay() { return applyQpOverlay; }
+    public void setApplyQpOverlay(boolean applyQpOverlay) { this.applyQpOverlay = applyQpOverlay; }
+    public boolean isAddASuffix() { return addASuffix; }
+    public void setAddASuffix(boolean addASuffix) { this.addASuffix = addASuffix; }
+    
     public String getAfterOverlayText() { return afterOverlayText; }
     public void setAfterOverlayText(String afterOverlayText) { this.afterOverlayText = afterOverlayText; }
     public String getSkipThresholds() { return skipThresholds; }

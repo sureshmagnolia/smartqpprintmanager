@@ -19,6 +19,7 @@ public class FileItem {
     private IntegerProperty copies = new SimpleIntegerProperty();
     private StringProperty paperSize = new SimpleStringProperty(); // "A4", "A3"
     private StringProperty overlayText = new SimpleStringProperty();
+    private StringProperty aiLogs = new SimpleStringProperty("");
 
     private String content;
 
@@ -77,6 +78,9 @@ public class FileItem {
 
     public File getFile() { return file; }
     public void setFile(File file) { this.file = file; if (file != null) this.fileName.set(file.getName()); }
+
+    @JsonIgnore
+    public String getFilePath() { return file != null ? file.getAbsolutePath() : ""; }
 
     @JsonProperty("fileName")
     public String getFileName() { return fileName.get(); }
@@ -146,4 +150,10 @@ public class FileItem {
     public void setOverlayText(String text) { this.overlayText.set(text); }
     @JsonIgnore
     public StringProperty overlayTextProperty() { return overlayText; }
+
+    @JsonIgnore
+    public String getAiLogs() { return aiLogs.get(); }
+    public void setAiLogs(String logs) { this.aiLogs.set(logs); }
+    @JsonIgnore
+    public StringProperty aiLogsProperty() { return aiLogs; }
 }

@@ -4,7 +4,7 @@
   <groupId>com.printmanager</groupId>
   <artifactId>java-print-manager</artifactId>
   <name>Smart QP Print Manager</name>
-  <version>3.4.0</version>
+  <version>5.1</version>
   <build>
     <resources>
       <resource>
