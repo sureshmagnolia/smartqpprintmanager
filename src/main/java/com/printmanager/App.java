@@ -2747,7 +2747,24 @@ public class App extends Application {
         btnWatcher.setDaemon(true);
         btnWatcher.start();
 
-        HBox actions = new HBox(8, sendBtn);
+        Button delRoomBtn = new Button("\uD83D\uDDD1"); // Trash Bin icon
+        delRoomBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #f44336; -fx-font-size: 18px; -fx-cursor: hand; -fx-padding: 0 0 0 10;");
+        delRoomBtn.setTooltip(new Tooltip("Delete Room Card"));
+        delRoomBtn.setOnAction(e -> {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Delete Room");
+            alert.setHeaderText("Remove Room Card: " + group.getRoomSerial());
+            alert.setContentText("Are you sure you want to delete this room card and all its papers?");
+            alert.showAndWait().ifPresent(res -> {
+                if (res == ButtonType.OK) {
+                    roomGroupsList.remove(group);
+                    saveConfigs();
+                    activityLogger.warn("Deleted Room Card: " + group.getRoomSerial());
+                }
+            });
+        });
+
+        HBox actions = new HBox(8, sendBtn, delRoomBtn);
         HBox.setHgrow(sendBtn, Priority.ALWAYS);
         actions.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
