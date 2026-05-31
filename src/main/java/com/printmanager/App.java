@@ -236,6 +236,12 @@ public class App extends Application {
         
         primaryStage.setTitle("Smart QP Print Manager - AI Engine V5.1");
         
+        // Ensure deep cleanup on exit
+        primaryStage.setOnCloseRequest(e -> {
+            saveConfigs();
+            killAllProcesses();
+        });
+        
         try {
             primaryStage.getIcons().add(new Image(getClass().getResourceAsStream("/icon.png")));
         } catch (Exception e) {
@@ -321,33 +327,46 @@ public class App extends Application {
     public void stop() {
         try {
             saveConfigs();
+            activityLogger.info("Application stopping. Initiating deep cleanup...");
+            
+            // 1. Shutdown all thread pools
             analysisExecutor.shutdownNow();
             printQueueExecutor.shutdownNow();
             roomPrintExecutor.shutdownNow();
             
+            // 2. Dispose of JCEF
             if (cefApp != null) {
-                // Ensure cookies are flushed before disposal
-                cefApp.dispose();
-                Thread.sleep(500); 
+                try {
+                    cefApp.dispose();
+                } catch (Exception e) {
+                    logger.warn("CefApp disposal error", e);
+                }
             }
             
-            activityLogger.info("Application stopping. Cleaning up all background instances...");
-            
-            // 1. Kill the standard helper name
+            // 3. Kill all possible helper processes (JCEF and stray instances)
+            // We target jcef_helper specifically and then our own process tree
             Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T");
             
-            // 2. Kill any processes named after the app itself (which helper processes often inherit)
-            // We use a small delay to ensure this process has finished its own cleanup first
+            // 4. Final aggressive cleanup for the entire process group
+            // This ensures no child processes (like PDF renderers or health monitors) survive
             new Thread(() -> {
                 try {
-                    Thread.sleep(500);
+                    Thread.sleep(1000);
+                    // Kill any java process that might be hanging from this run
+                    // This is a safety net for when running via Maven or IDE
+                    Runtime.getRuntime().exec("taskkill /F /IM java.exe /FI \"WINDOWTITLE eq Smart QP Print Manager*\" /T");
+                    Runtime.getRuntime().exec("taskkill /F /IM javaw.exe /FI \"WINDOWTITLE eq Smart QP Print Manager*\" /T");
+                    
+                    // Kill the executable if it exists
                     Runtime.getRuntime().exec("taskkill /F /IM \"Smart QP Print Manager.exe\" /T");
                 } catch (Exception e) {}
+                System.exit(0);
             }).start();
             
             activityLogger.info("Application stopped");
         } catch (Exception e) {
             logger.error("Error during shutdown cleanup", e);
+            System.exit(0);
         }
     }
 
@@ -498,10 +517,15 @@ public class App extends Application {
         activePrinters.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
         totalPages.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
 
-        HBox alertsBox = new HBox(12, globalMapAlert, globalStapleAlert);        alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        HBox alertsBox = new HBox(12, globalMapAlert, globalStapleAlert);
+        alertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        Label ribbonBranding = new Label("Product of Magnolia Creations");
+        ribbonBranding.setStyle("-fx-text-fill: rgba(0, 0, 0, 0.4); -fx-font-size: 11px; -fx-font-style: italic; -fx-padding: 0 10 0 0;");
+
         statsDash.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         statsDash.setPadding(new Insets(10, 20, 10, 20));
-        statsDash.getChildren().addAll(totalQPs, totalCopies, printSheets, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, activePrinters, totalPages, alertsBox, simWarning);
+        statsDash.getChildren().addAll(totalQPs, totalCopies, printSheets, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, activePrinters, totalPages, alertsBox, ribbonBranding, simWarning);
 
         TextField searchField = new TextField();
         searchField.setPromptText("Search files...");
@@ -2795,77 +2819,204 @@ public class App extends Application {
         return card;
     }
 
+    private void killAllProcesses() {
+        try {
+            activityLogger.info("Executing ultimate process purge...");
+            
+            // 1. Dispose CEF App correctly
+            if (cefApp != null) {
+                try { cefApp.dispose(); } catch (Exception e) {}
+            }
+            
+            // 2. Kill Chromium helpers
+            Runtime.getRuntime().exec("taskkill /F /IM jcef_helper.exe /T");
+            
+            // 3. Force kill this Java instance and all others with the same window title
+            // This is the most reliable way to clear stale "ghost" windows
+            new Thread(() -> {
+                try {
+                    Thread.sleep(800);
+                    // Kill by window title (case sensitive to match primaryStage.setTitle)
+                    String targetTitle = "Smart QP Print Manager - AI Engine V5.1";
+                    Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
+                    
+                    // Kill the executable and generic javaw if they persist
+                    Runtime.getRuntime().exec("taskkill /F /IM \"Smart QP Print Manager.exe\" /T");
+                    Runtime.getRuntime().exec("taskkill /F /IM javaw.exe /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
+                    
+                    Thread.sleep(200);
+                    System.exit(0);
+                } catch (Exception e) {
+                    System.exit(0);
+                }
+            }).start();
+            
+        } catch (Exception e) {
+            System.exit(0);
+        }
+    }
+
     private javafx.scene.Parent createAboutView() {
         VBox mainLayout = new VBox(0);
-        mainLayout.setStyle("-fx-background-color: #f8f9fa;");
+        mainLayout.setStyle("-fx-background-color: #ffffff;");
 
-        // Header Section
-        VBox header = new VBox(10);
-        header.setPadding(new Insets(40, 20, 40, 20));
+        // --- PREMIUM GRADIENT HEADER ---
+        VBox header = new VBox(25);
+        header.setPadding(new Insets(80, 20, 80, 20));
         header.setAlignment(javafx.geometry.Pos.CENTER);
-        header.setStyle("-fx-background-color: linear-gradient(to right, #1a237e, #283593);");
+        header.setStyle("-fx-background-color: linear-gradient(to bottom right, #0d1b2a, #1b263b, #415a77);");
 
         Label title = new Label("Smart QP Print Manager");
-        title.setStyle("-fx-font-size: 36px; -fx-font-weight: bold; -fx-text-fill: white;");
-        Label version = new Label("Professional Edition AI Engine V5.2");
-        version.setStyle("-fx-font-size: 18px; -fx-text-fill: #e8eaf6;");
-        header.getChildren().addAll(title, version);
+        title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
+        
+        Label version = new Label("AI-Powered Examination Logistics • v5.2 Enterprise");
+        version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
+        
+        Label branding = new Label("A Premium Product of Magnolia Creations");
+        branding.setStyle("-fx-font-size: 20px; -fx-font-style: italic; -fx-text-fill: rgba(255, 255, 255, 0.9); -fx-padding: 20 0 0 0;");
+        
+        header.getChildren().addAll(title, version, branding);
 
-        // Content Sections
-        VBox content = new VBox(30);
-        content.setPadding(new Insets(30, 50, 50, 50));
-        content.setMaxWidth(1000);
+        // --- SCROLLABLE CONTENT AREA ---
+        VBox content = new VBox(60);
+        content.setPadding(new Insets(60, 80, 80, 80));
+        content.setMaxWidth(1300);
+        content.setAlignment(javafx.geometry.Pos.TOP_CENTER);
 
-        content.getChildren().addAll(
-            createManualSection("\uD83D\uDCDD Overview", 
-                "The Smart QP Print Manager is an enterprise-grade solution designed to automate the complex workflow of examination paper printing. " +
-                "It eliminates manual page counting, printer selection, and room-wise sorting, ensuring high accuracy and speed during peak exam periods."),
+        // --- 1. MISSION STATEMENT ---
+        VBox mission = new VBox(15);
+        mission.setAlignment(javafx.geometry.Pos.CENTER);
+        Label missionTitle = new Label("Precision Printing for High-Stakes Exams");
+        missionTitle.setStyle("-fx-font-size: 32px; -fx-font-weight: bold; -fx-text-fill: #1b263b;");
+        Label missionText = new Label("Smart QP Print Manager is designed specifically for University Examination Departments. " +
+                                     "It eliminates the chaos of manual counting, sorting, and routing, allowing you to focus on the exam instead of the printer.");
+        missionText.setWrapText(true);
+        missionText.setMaxWidth(900);
+        missionText.setStyle("-fx-font-size: 18px; -fx-text-fill: #455a64; -fx-text-alignment: center; -fx-line-spacing: 5;");
+        mission.getChildren().addAll(missionTitle, missionText);
 
-            createManualSection("\u2699\uFE0F 1. Core Workflow: The Print Queue",
-                "• Add PDFs: Drag and drop or use the 'Add PDFs' button. The app immediately analyzes each file.\n" +
-                "• Auto-Routing: Based on the page count and content, the app assigns a printer and print style (Simplex/Duplex/Booklet) automatically.\n" +
-                "• Manual Override: You can change the number of copies, printer, or style directly in the table before printing.\n" +
-                "• Batch Printing: Click 'Print All' to send all configured jobs to their respective printers sequentially."),
-
-            createManualSection("\u2702\uFE0F 2. Smart Split Technology",
-                "This advanced feature detects 'MCQ' or 'SDE' parts within a single PDF and splits them into two independent jobs:\n" +
-                "• Main Part: Usually 3+ pages, routed for Booklet/Duplex printing with a QP Overlay applied to the top-left.\n" +
-                "• MCQ Part: Detected via keywords, typically printed in Simplex or special 5-page modes.\n" +
-                "• Split/Subtract: Use the 'eye' icon (\uD83D\uDC41) to manually split a file or subtract specific pages from an existing job."),
-
-            createManualSection("\uD83D\uDCCB 3. Smart Room-Wise Router",
-                "The most powerful feature for large-scale exams:\n" +
-                "• Upload JSON: Import a seating arrangement file. The app automatically groups files by Room Number.\n" +
-                "• Smart Matching: It matches the QP codes in the JSON with the files in your Print Queue.\n" +
-                "• Dashboard: Each room gets a 'Card' showing all required papers, quantities, and real-time status.\n" +
-                "• One-Click Room Print: Click 'SEND PRINT BATCH' on a room card to print everything for that room, including an optional status cover page."),
-
-            createManualSection("\u2601\uFE0F 4. Examflow Cloud Integration",
-                "Sync your local manager with the Examflow web platform:\n" +
-                "• 1-Click Sync: When you click 'Sync to Print Manager' on the website, this app fetches the data using your College ID.\n" +
-                "• Real-time Fetch: No need for JSON files; data flows directly from the cloud to your local router."),
-
-            createManualSection("\uD83D\uDDA5\uFE0F 5. Printer Monitoring",
-                "• Health Dashboard: Monitor 'Ready', 'Printing', or 'Offline' status of all connected hardware.\n" +
-                "• Error Alerts: Instant notifications for Paper Jams, Low Toner, or Out of Paper scenarios.\n" +
-                "• Simulation Mode: Use 'Settings' to enable Simulation Mode for training or testing without wasting paper."),
-
-            createManualSection("\u2753 FAQ & Troubleshooting",
-                "• Missing Files: Ensure your filenames contain the QP code (e.g., _123456_).\n" +
-                "• Printer Offline: Check physical cables and ensure the printer is turned on. Windows must show it as 'Online'.\n" +
-                "• JSON Format: The JSON must contain 'roomSerial', 'qpCode', and 'count' fields."),
-
-            new Separator(),
-
-            new VBox(10,
-                new Label("System Configuration"),
-                new HBox(10, new Label("Config Path:"), new TextField(configManager.getConfigPath()) {{ setEditable(false); setPrefWidth(600); }})
-            )
+        // --- 2. THE THREE-STEP WORKFLOW ---
+        HBox steps = new HBox(40);
+        steps.setAlignment(javafx.geometry.Pos.CENTER);
+        steps.getChildren().addAll(
+            createStepCard("Step 1: INPUT", "Drag your PDF files into the Queue. The AI immediately analyzes page counts, detects MCQ parts, and identifies unique Paper Codes hidden in the files.", "#e3f2fd", "#1565c0"),
+            createStepCard("Step 2: SYNC", "Connect to Examflow Cloud or upload a seating JSON. The system instantly maps every student to their specific paper across hundreds of exam rooms.", "#f1f8e9", "#2e7d32"),
+            createStepCard("Step 3: EXECUTE", "One click to print. The manager chooses the best printer, applies the correct style (Booklet/Duplex), and even stamps the Paper Code for you.", "#fff3e0", "#e65100")
         );
+
+        // --- 3. DETAILED FEATURE BREAKDOWN ---
+        VBox featureDetailSection = new VBox(40);
+        Label detailTitle = new Label("Deep-Dive: How the Intelligence Works");
+        detailTitle.setStyle("-fx-font-size: 28px; -fx-font-weight: bold; -fx-text-fill: #1b263b;");
+        
+        javafx.scene.layout.GridPane detailGrid = new javafx.scene.layout.GridPane();
+        detailGrid.setHgap(60);
+        detailGrid.setVgap(50);
+        detailGrid.setAlignment(javafx.geometry.Pos.CENTER);
+        
+        detailGrid.add(createDetailItem("Advanced MCQ & SDE Detection", 
+            "The engine scans the internal text of every PDF. If it finds 'MCQ' or 'SDE' keywords, it automatically 'Subtracts' those pages into a separate job. " +
+            "This ensures that Main Papers and MCQ parts are printed with the correct settings (e.g., Booklet for Main, Simplex for MCQ) automatically."), 0, 0);
+            
+        detailGrid.add(createDetailItem("The 'Temp-First' Safety Vault", 
+            "We prioritize your data integrity. Every operation—splitting, page removal, or adding Paper Code stamps—is performed on a temporary copy. " +
+            "Your original master PDFs in your Downloads or Archive folders remain 100% untouched and original."), 1, 0);
+
+        detailGrid.add(createDetailItem("Aggressive QP Pattern Matching", 
+            "Our AI uses multi-layer regex logic to find Paper Codes. Even if the code is missing from the JSON or hidden in a complex filename (like 'EDE_22.05.26_143812_Sub'), " +
+            "the system will find the 5-8 digit code and link it correctly."), 0, 1);
+
+        detailGrid.add(createDetailItem("Examflow Cloud Integration", 
+            "Skip the manual JSON files! Sync your app with the Examflow platform using your College ID. " +
+            "The app fetches real-time student counts and room assignments directly from our servers with one click."), 1, 1);
+
+        detailGrid.add(createDetailItem("Dynamic QR & Text Overlays", 
+            "The system can automatically 'Stamp' the Paper Code on the top-left of every page. " +
+            "This ensures that even if papers get mixed up, your staff can identify which subject the paper belongs to instantly."), 0, 2);
+
+        detailGrid.add(createDetailItem("Hardware Health Dashboard", 
+            "Integrated with Windows Print Services to monitor 'Live' hardware status. " +
+            "The dashboard alerts you to low toner, paper jams, or offline status BEFORE you start a large batch print job."), 1, 2);
+
+        featureDetailSection.getChildren().addAll(new Separator(), detailTitle, detailGrid);
+
+        // --- 4. TROUBLESHOOTING & FAQ ---
+        VBox faqSection = new VBox(25);
+        faqSection.setPadding(new Insets(40, 60, 40, 60));
+        faqSection.setStyle("-fx-background-color: #f8f9fa; -fx-background-radius: 20;");
+        
+        Label faqTitle = new Label("Common Questions & Troubleshooting");
+        faqTitle.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #37474f;");
+        
+        VBox faqItems = new VBox(20);
+        faqItems.getChildren().addAll(
+            createFaqRow("Q: Why is a room card showing 'Pending' (Red Icon)?", "A: This means the Paper Code requested in the JSON/Cloud wasn't found in your Print Queue. Add the PDF file, and it will auto-link."),
+            createFaqRow("Q: Can I change the printer for just one room?", "A: Yes! Use the 'Assign Printer' dropdown on each individual Room Card to override the default system settings."),
+            createFaqRow("Q: What is 'Simulation Mode'?", "A: Accessible in Settings, this allows you to test the entire workflow (splitting, routing, cloud sync) without actually using any paper or ink."),
+            createFaqRow("Q: How do I clean up the temporary files?", "A: Simply click 'Clear All' or close the application. The system will automatically purge the 'Safety Vault' to save disk space.")
+        );
+        
+        faqSection.getChildren().addAll(faqTitle, faqItems);
+
+        // --- 5. SYSTEM INFO FOOTER ---
+        VBox footer = new VBox(15);
+        footer.setAlignment(javafx.geometry.Pos.CENTER);
+        footer.setPadding(new Insets(60, 0, 40, 0));
+        
+        Label copyright = new Label("© 2026 Magnolia Creations. All Rights Reserved.");
+        copyright.setStyle("-fx-font-size: 14px; -fx-text-fill: #90a4ae;");
+        
+        HBox configInfo = new HBox(10, new Label("Configuration Storage:"), new TextField(configManager.getConfigPath()) {{ setEditable(false); setPrefWidth(500); setStyle("-fx-background-color: #eceff1; -fx-text-fill: #546e7a; -fx-font-size: 11px;"); }});
+        configInfo.setAlignment(javafx.geometry.Pos.CENTER);
+        
+        footer.getChildren().addAll(new Separator(), configInfo, copyright);
+
+        content.getChildren().addAll(mission, steps, featureDetailSection, faqSection, footer);
 
         ScrollPane sp = new ScrollPane(new VBox(header, new StackPane(content) {{ setAlignment(javafx.geometry.Pos.TOP_CENTER); }}));
         sp.setFitToWidth(true);
+        sp.setStyle("-fx-background-color: transparent; -fx-background: #ffffff;");
         return sp;
+    }
+
+    private VBox createStepCard(String step, String desc, String bgColor, String accentColor) {
+        VBox card = new VBox(20);
+        card.setPadding(new Insets(35));
+        card.setPrefWidth(350);
+        card.setStyle("-fx-background-color: " + bgColor + "; -fx-background-radius: 25; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.15), 15, 0, 0, 10); -fx-border-color: " + accentColor + "; -fx-border-width: 1; -fx-border-radius: 25;");
+        
+        Label lblStep = new Label(step);
+        lblStep.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: " + accentColor + ";");
+        
+        Label lblDesc = new Label(desc);
+        lblDesc.setWrapText(true);
+        lblDesc.setStyle("-fx-font-size: 16px; -fx-text-fill: #263238; -fx-line-spacing: 4;");
+        
+        card.getChildren().addAll(lblStep, lblDesc);
+        return card;
+    }
+
+    private VBox createDetailItem(String title, String desc) {
+        VBox box = new VBox(12);
+        Label lblTitle = new Label("★ " + title);
+        lblTitle.setStyle("-fx-font-size: 19px; -fx-font-weight: bold; -fx-text-fill: #1b263b;");
+        Label lblDesc = new Label(desc);
+        lblDesc.setWrapText(true);
+        lblDesc.setStyle("-fx-font-size: 15px; -fx-text-fill: #546e7a; -fx-line-spacing: 3;");
+        box.getChildren().addAll(lblTitle, lblDesc);
+        box.setPrefWidth(500);
+        return box;
+    }
+
+    private VBox createFaqRow(String q, String a) {
+        VBox row = new VBox(5);
+        Label lblQ = new Label(q);
+        lblQ.setStyle("-fx-font-weight: bold; -fx-text-fill: #1565c0; -fx-font-size: 15px;");
+        Label lblA = new Label(a);
+        lblA.setWrapText(true);
+        lblA.setStyle("-fx-text-fill: #455a64; -fx-font-size: 14px;");
+        row.getChildren().addAll(lblQ, lblA);
+        return row;
     }
 
     private VBox createManualSection(String title, String body) {
