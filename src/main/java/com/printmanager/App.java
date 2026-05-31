@@ -1102,6 +1102,21 @@ public class App extends Application {
         String style = "Simplex"; String overlay = ""; File f = file;
         String prefix = isAfter ? rule.getAfterPrefix() : rule.getBeforePrefix();
 
+        // NEW: If keyword contains SDE/DISTANCE markers, ensure the prefix reflects this 
+        // to help the AI Routing Agent identify the stream, especially for the 'Main' part 
+        // which may not have the keyword text on its first page.
+        String kw = rule.getKeyword().toUpperCase();
+        boolean isSdeRule = kw.contains("SDE") || kw.contains("DISTANCE") || kw.contains("EDE") || kw.contains("EXTERNAL");
+        
+        if (isSdeRule) {
+            String upperPrefix = prefix.toUpperCase();
+            String upperOriginal = originalName.toUpperCase();
+            if (!upperPrefix.contains("SDE") && !upperOriginal.contains("SDE") &&
+                !upperPrefix.contains("DISTANCE") && !upperOriginal.contains("DISTANCE")) {
+                prefix = "SDE_" + prefix;
+            }
+        }
+
         if (isAfter) {
             if (pages == 1) style = rule.getAfterStyle1();
             else if (pages == 2) style = rule.getAfterStyle2();
@@ -1172,7 +1187,22 @@ public class App extends Application {
         final String finalPrefix = prefix;
         Platform.runLater(() -> {
             FileItem item = new FileItem(ff, fp, "", "None", false, false, "Left", 1, "A4", fo);
-            item.setFileName(finalPrefix + originalName);
+            String finalName = finalPrefix + originalName;
+            
+            // If this is an SDE rule and we are applying an 'A' suffix (default for SDE),
+            // ensure the filename also reflects this so the AI Routing Agent identifies it as SDE.
+            if (isSdeRule && rule.isAddASuffix()) {
+                String qpInName = extractQPFromFileName(finalName).toUpperCase();
+                if (!qpInName.isEmpty() && !qpInName.endsWith("A")) {
+                    if (finalName.toLowerCase().endsWith(".pdf")) {
+                        finalName = finalName.substring(0, finalName.length() - 4) + "A.pdf";
+                    } else {
+                        finalName += "A";
+                    }
+                }
+            }
+            
+            item.setFileName(finalName);
             item.setStyle(fs);
             fileQueue.add(item);
         });

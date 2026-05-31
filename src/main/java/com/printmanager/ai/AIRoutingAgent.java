@@ -129,21 +129,33 @@ public class AIRoutingAgent {
 // UNLESS it is explicitly marked as Regular (REG_ prefix).
 boolean pdfIsExt = metadata.stream.equalsIgnoreCase("SDE");
 String fn = fileItem.getFileName().toUpperCase();
+boolean hasSdeMarker = fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") || fn.contains("EXTERNAL");
+boolean hasASuffix = internalQP.endsWith("A") || filenameQP.endsWith("A");
+boolean hasDPrefix = internalQP.startsWith("D") || filenameQP.startsWith("D");
+
 if (fn.contains("REG_") || fn.contains("_REG_") || fn.contains(" REG ")) {
     pdfIsExt = false;
-} else if (fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") ||
-        internalQP.endsWith("A") || filenameQP.endsWith("A") ||
-        internalQP.startsWith("D") || filenameQP.startsWith("D")) {
+} else if (hasSdeMarker || hasASuffix || hasDPrefix) {
     pdfIsExt = true;
 }
 
 // Exact match bypass ONLY if the QP code came directly from JSON
 boolean isExactQP = qpFromJSON && (normJsonQP.equals(normInternalQP) || normJsonQP.equals(normFilenameQP));
 
-// REJECTION RULE: If streams mismatch and we don't have an EXACT match from JSON, REJECT.
-if (jsonIsExt != pdfIsExt && !isExactQP) {
-    result.addLog("REJECT: Stream Mismatch (Room:" + (jsonIsExt?"EXT":"REG") + " vs PDF:" + (pdfIsExt?"EXT":"REG") + ")");
-    return 0.0;
+// REJECTION RULE: Strict Stream Enforcement
+if (jsonIsExt != pdfIsExt) {
+    // If the PDF is explicitly marked as SDE but the room is Regular, REJECT regardless of QP match.
+    if (!jsonIsExt && pdfIsExt) {
+        String reason = hasSdeMarker ? "SDE Marker" : (hasASuffix ? "A-Suffix" : "D-Prefix");
+        result.addLog("STRICT REJECT: SDE Paper (" + reason + ") found, but room is REGULAR. Rejecting despite potential QP match.");
+        return 0.0;
+    }
+    
+    // For other mismatches, allow bypass only if it's an exact QP match from JSON
+    if (!isExactQP) {
+        result.addLog("REJECT: Stream Mismatch (Room:" + (jsonIsExt?"EXT":"REG") + " vs PDF:" + (pdfIsExt?"EXT":"REG") + ")");
+        return 0.0;
+    }
 }
 
 // Stream Tie-Breaker: Give a significant bonus if the filename literally contains the stream word
