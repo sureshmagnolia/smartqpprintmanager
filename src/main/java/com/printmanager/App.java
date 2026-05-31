@@ -769,7 +769,13 @@ public class App extends Application {
                 });
                 sBtn.setOnAction(e -> { if (getTableRow().getItem() != null) saveFileAs(getTableRow().getItem()); });
                 vBtn.setOnAction(e -> { if (getTableRow().getItem() != null) previewFile(getTableRow().getItem(), true, true); });
-                rBtn.setOnAction(e -> { if (getTableRow().getItem() != null) fileQueue.remove(getTableRow().getItem()); });
+                rBtn.setOnAction(e -> {
+                    FileItem item = getTableRow().getItem();
+                    if (item != null) {
+                        deleteIfTempFile(item);
+                        fileQueue.remove(item);
+                    }
+                });
                 rBtn.setStyle("-fx-text-fill: red;");
             }
             @Override protected void updateItem(Void item, boolean empty) {
@@ -851,6 +857,9 @@ public class App extends Application {
             alert.setContentText("This will remove all PDF files and clear all room cards. This action cannot be undone.");
             alert.showAndWait().ifPresent(response -> {
                 if (response == ButtonType.OK) {
+                    // Physical cleanup of transient files
+                    fileQueue.forEach(this::deleteIfTempFile);
+                    
                     fileQueue.clear();
                     roomGroupsList.clear();
                     saveConfigs();
@@ -1036,7 +1045,13 @@ public class App extends Application {
 
         // Remove existing entries for the same file path to allow "refresh/replace" behavior
         Platform.runLater(() -> {
-            fileQueue.removeIf(item -> item.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath()));
+            fileQueue.removeIf(item -> {
+                if (item.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+                    deleteIfTempFile(item);
+                    return true;
+                }
+                return false;
+            });
             pendingAnalysisTasks.set(pendingAnalysisTasks.get() + 1);
             globalProgressVisible.set(true);
         });
@@ -1286,36 +1301,35 @@ public class App extends Application {
         analysisExecutor.submit(() -> {
             try {
                 File originalFile = originalItem.getFile();
-                String parentDir = originalFile.getParent();
-                if (parentDir == null) parentDir = ".";
-
                 String originalName = originalItem.getFileName();
                 String baseName = originalName.endsWith(".pdf") ? originalName.substring(0, originalName.length() - 4) : originalName;
 
-                // 1. Save the Split Part into the same directory as the original
+                // 1. Save the Split Part into the SYSTEM TEMP directory (Keep original folder untouched)
                 String splitFileName = "Split_" + baseName + "_P" + start + "-" + end + ".pdf";
-                File finalSplitFile = new File(parentDir, splitFileName);
+                File finalSplitFile = File.createTempFile("manual_split_", ".pdf");
                 java.nio.file.Files.copy(splitPart.toPath(), finalSplitFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
                 Platform.runLater(() -> {
                     addFileToQueue(finalSplitFile, style, overlay, splitFileName);
-                    activityLogger.info("Manual Split saved & added: " + splitFileName);
+                    activityLogger.info("Manual Split created in Temp: " + splitFileName);
                 });
 
-                // 2. Create the Remainder file and replace the original
+                // 2. Create the Remainder file in TEMP and update the queue entry
                 File remainingTemp = pdfService.removePages(originalFile, start, end);
                 if (remainingTemp != null) {
-                    // Overwrite the original file with the remainder
-                    java.nio.file.Files.copy(remainingTemp.toPath(), originalFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    // We DO NOT overwrite the original file anymore.
+                    // Instead, we create a persistent temp file for this session.
+                    File persistentRemaining = File.createTempFile("remain_" + baseName + "_", ".pdf");
+                    java.nio.file.Files.copy(remainingTemp.toPath(), persistentRemaining.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
-                    int newCount = pdfService.getPageCount(originalFile);
+                    int newCount = pdfService.getPageCount(persistentRemaining);
 
                     Platform.runLater(() -> {
-                        // Trigger UI update and rule re-application
-                        originalItem.setFile(originalFile);
+                        // Point the existing queue item to the NEW temporary remainder file
+                        originalItem.setFile(persistentRemaining);
                         originalItem.setPageCount(newCount);
                         
-                        // Explicitly rename to Remain_ for visibility if not already prefixed
+                        // Explicitly rename to Remain_ for visibility
                         if (!originalItem.getFileName().startsWith("Remain_") && !originalItem.getFileName().startsWith("Split_")) {
                             originalItem.setFileName("Remain_" + originalItem.getFileName());
                         }
@@ -1327,7 +1341,7 @@ public class App extends Application {
                             originalItem.setCopies(rule.getCopies());
                             originalItem.setStyle(rule.isBooklet() ? "Booklet" : (rule.isDuplex() ? "Duplex" : "Simplex"));
                         }
-                        activityLogger.success("Original updated with Remainder: " + newCount + " pages.");
+                        activityLogger.success("Original untouched. Queue updated with Remainder (" + newCount + " pages).");
                         relinkRoomItems();
                         saveConfigs();
                     });
@@ -1342,6 +1356,23 @@ public class App extends Application {
             }
         });
     }
+    private void deleteIfTempFile(FileItem item) {
+        if (item == null || item.getFile() == null) return;
+        String filePath = item.getFile().getAbsolutePath();
+        String tempDir = System.getProperty("java.io.tmpdir");
+
+        if (filePath.contains(tempDir) || filePath.contains(".gemini" + File.separator + "tmp")) {
+            try {
+                if (item.getFile().exists()) {
+                    boolean deleted = item.getFile().delete();
+                    if (deleted) logger.info("Cleanup: Deleted transient file: " + filePath);
+                }
+            } catch (Exception e) {
+                logger.warn("Cleanup: Failed to delete " + filePath);
+            }
+        }
+    }
+
     private void saveFileAs(FileItem item) {
         FileChooser fc = new FileChooser();
         initFileChooser(fc, "Save PDF");
@@ -1889,7 +1920,7 @@ public class App extends Application {
     }
 
     private String extractQPFromFileName(String fileName) {
-        if (fileName == null) return null;
+        if (fileName == null || fileName.isEmpty()) return "";
         
         // 1. Try robust standard pattern _143812_ (most common)
         java.util.regex.Pattern p1 = java.util.regex.Pattern.compile("_(\\d{5,8})_", java.util.regex.Pattern.CASE_INSENSITIVE);
@@ -1906,7 +1937,12 @@ public class App extends Application {
         java.util.regex.Matcher m3 = p3.matcher(fileName);
         if (m3.find()) return m3.group(1);
 
-        return null;
+        // 4. Aggressive Numeric Fallback (5-8 digits anywhere)
+        java.util.regex.Pattern p4 = java.util.regex.Pattern.compile("(\\d{5,8})");
+        java.util.regex.Matcher m4 = p4.matcher(fileName);
+        if (m4.find()) return m4.group(1);
+
+        return "";
     }
 
     private void relinkRoomItems() {
@@ -1914,93 +1950,64 @@ public class App extends Application {
         logger.info("Relinking & Syncing Room Items (Queue Size: {})", fileQueue.size());
         
         for (RoomGroup g : roomGroupsList) {
-            // 1. Identify unique QP needs in this room
+            // Identify unique QP needs in this room
             Set<String> neededQPs = g.getItems().stream()
                 .map(RoomItem::getQpCode)
                 .filter(Objects::nonNull)
                 .filter(qp -> !qp.isEmpty())
                 .collect(Collectors.toSet());
             
+            // Collect items with NO QP code to try filename matching
+            List<RoomItem> noQpItems = g.getItems().stream()
+                .filter(ri -> ri.getQpCode() == null || ri.getQpCode().isEmpty())
+                .collect(Collectors.toList());
+
+            // 1. Process items WITH QP codes (Standard Path)
             for (String qp : neededQPs) {
                 List<FileItem> matches = new ArrayList<>();
 
                 if (config.isAiRoutingEnabled()) {
-                    // --- AI PATH: Match once per QP to find all parts ---
-                    // Use the first item as a template for metadata matching
+                    // ... AI logic remains the same ...
                     RoomItem template = g.getItems().stream()
                         .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
                         .findFirst().orElse(null);
                     
                     if (template != null) {
                         List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(template, fileQueue);
-
-                        // NEW: Stream Preference Filter (V6.4)
+                        // Filter and add to matches...
                         double maxScore = aiResults.stream().mapToDouble(MatchResult::getConfidenceScore).max().orElse(0.0);
-                        if (maxScore > 0) {
-                            aiResults.removeIf(r -> r.getConfidenceScore() < maxScore);
-                        }
-
-                        // NEW: Decisive Single-Match Rule (V6.5)
-                        boolean hasSplits = aiResults.stream().anyMatch(res -> {
-                            String name = res.getMatchedFile().getFileName();
-                            return name.startsWith("Split_") || name.startsWith("MCQ_") || 
-                                   name.startsWith("Main_") || name.startsWith("Remain_") ||
-                                   (res.getMatchedFile().getOverlayText() != null && !res.getMatchedFile().getOverlayText().isEmpty());
-                        });
+                        if (maxScore > 0) aiResults.removeIf(r -> r.getConfidenceScore() < maxScore);
                         
-                        if (!hasSplits && aiResults.size() > 1) {
-                            aiResults.sort((a, b) -> Double.compare(b.getConfidenceScore(), a.getConfidenceScore()));
-                            MatchResult best = aiResults.get(0);
-                            aiResults.clear();
-                            aiResults.add(best);
-                        }
-
                         Set<String> seenNames = new HashSet<>();
                         for (MatchResult res : aiResults) {
                             FileItem fi = res.getMatchedFile();
-                            String nameKey = fi.getFileName().toLowerCase();
-                            if (!seenNames.contains(nameKey)) {
+                            if (!seenNames.contains(fi.getFileName().toLowerCase())) {
                                 matches.add(fi);
-                                seenNames.add(nameKey);
+                                seenNames.add(fi.getFileName().toLowerCase());
                             }
                         }
                     }
                 } else {
-                    // --- LEGACY PATH (Decisive) ---
+                    // --- LEGACY PATH ---
                     List<FileItem> legacyMatches = fileQueue.stream()
                         .filter(f -> {
                             String extracted = extractQPFromFileName(f.getFileName());
                             return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
                         })
                         .collect(Collectors.toList());
-                    if (!legacyMatches.isEmpty()) {
-                        matches.add(legacyMatches.get(0)); // Only take one
-                    }
+                    if (!legacyMatches.isEmpty()) matches.add(legacyMatches.get(0));
                 }
                 
-                // 2. Ensure exactly one RoomItem exists for each matched file
                 for (FileItem f : matches) {
-                    // Unique link check: Does this room already have THIS file linked to THIS subject?
-                    boolean linkExists = g.getItems().stream()
-                        .anyMatch(ri -> ri.getMatchedFile() == f && qp.equalsIgnoreCase(ri.getQpCode()));
-
+                    boolean linkExists = g.getItems().stream().anyMatch(ri -> ri.getMatchedFile() == f && qp.equalsIgnoreCase(ri.getQpCode()));
                     if (!linkExists) {
-                        // Find a Pending item to heal
-                        RoomItem proto = g.getItems().stream()
-                            .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()) && ri.getMatchedFile() == null)
-                            .findFirst().orElse(null);
-
+                        RoomItem proto = g.getItems().stream().filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()) && ri.getMatchedFile() == null).findFirst().orElse(null);
                         if (proto != null) {
-                            // Reuse the existing PND item for the first match
                             proto.setPdfFileName(f.getFileName());
                             proto.setMatchedFile(f);
                             proto.setStatus("Ready");
                         } else {
-                            // Clone for subsequent matches (like splits)
-                            RoomItem baseItem = g.getItems().stream()
-                                .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
-                                .findFirst().orElse(null);
-
+                            RoomItem baseItem = g.getItems().stream().filter(ri -> qp.equalsIgnoreCase(ri.getQpCode())).findFirst().orElse(null);
                             if (baseItem != null) {
                                 RoomItem newItem = new RoomItem(g.getRoomSerial(), qp, f.getFileName(), baseItem.getCount(), baseItem.getSourceNodeId());
                                 newItem.setCourseName(baseItem.getCourseName());
@@ -2013,8 +2020,24 @@ public class App extends Application {
                     }
                 }
             }
+
+            // 2. Process items WITHOUT QP codes (Filename Fallback)
+            for (RoomItem ri : noQpItems) {
+                if (ri.getMatchedFile() != null && fileQueue.contains(ri.getMatchedFile())) continue;
+                String targetName = ri.getPdfFileName();
+                if (targetName == null || targetName.isEmpty()) continue;
+
+                FileItem match = fileQueue.stream()
+                    .filter(f -> f.getFileName().equalsIgnoreCase(targetName) || f.getFileName().contains(targetName) || targetName.contains(f.getFileName()))
+                    .findFirst().orElse(null);
+                
+                if (match != null) {
+                    ri.setMatchedFile(match);
+                    ri.setStatus("Ready");
+                }
+            }
             
-            // 3. Clean up items whose files were removed from queue
+            // 3. Cleanup
             for (RoomItem i : g.getItems()) {
                 FileItem currentMatch = i.getMatchedFile();
                 if (currentMatch != null && !fileQueue.contains(currentMatch)) {
