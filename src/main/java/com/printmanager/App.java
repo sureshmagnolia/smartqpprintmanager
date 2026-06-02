@@ -106,6 +106,8 @@ public class App extends Application {
     private Button printAllBtn;
     private final javafx.collections.ObservableMap<String, String> printerStatusCache = FXCollections.observableHashMap();
     private final HBox simAlertHeader = new HBox();
+    private final HBox healthCheckRibbon = new HBox();
+    private final Label healthErrorCountLabel = new Label();
     private final CheckBox printCoverPageCbox = new CheckBox("Print Cover Page");
     private final ToggleButton aiRoutingBtn = new ToggleButton("AI Engine");
     private final AIRoutingAgent aiRoutingAgent = new AIRoutingAgent();
@@ -246,7 +248,11 @@ public class App extends Application {
         simAlertHeader.setManaged(false);
         simAlertHeader.setVisible(false);
 
-        VBox root = new VBox(simAlertHeader, tabPane, createStatusBarView());
+        healthCheckRibbon.setStyle("-fx-background-color: #ffebee; -fx-padding: 2;");
+        healthCheckRibbon.setManaged(false);
+        healthCheckRibbon.setVisible(false);
+
+        VBox root = new VBox(healthCheckRibbon, simAlertHeader, tabPane, createStatusBarView());
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 1200, 850);
@@ -302,6 +308,142 @@ public class App extends Application {
 
         startPrinterStatusMonitor();
         updateSimulationUI();
+        
+        // Perform Startup Health Check
+        Platform.runLater(this::validateAppState);
+    }
+
+    private void validateAppState() {
+        validateAppState(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+    }
+
+    private void validateAppState(List<String> extraErrors, List<String> extraWarnings, List<String> extraInfo) {
+        List<String> missingFiles = new ArrayList<>(extraErrors);
+        List<String> unroutedFiles = new ArrayList<>(extraWarnings);
+        List<String> filesOnDiskNotInQueue = new ArrayList<>(extraInfo);
+        
+        // 1. Check existing queue for missing/unrouted files
+        for (FileItem item : fileQueue) {
+            File f = item.getFile();
+            String qp = extractQPFromFileName(item.getFileName());
+            if (f == null || !f.exists()) {
+                missingFiles.add("❌ QP [" + qp + "] File Missing: " + item.getFileName());
+                item.setStatus("Error: Missing");
+            } else if ("None".equals(item.getTargetPrinter()) || item.getTargetPrinter() == null || item.getTargetPrinter().isEmpty()) {
+                unroutedFiles.add("⚠️ QP [" + qp + "] Routing Data Missing (No printer assigned)");
+            }
+        }
+
+        // 2. Check Room Groups for missing PDFs
+        for (RoomGroup group : roomGroupsList) {
+            for (RoomItem item : group.getItems()) {
+                if (item.getMatchedFile() == null) {
+                    String qp = item.getQpCode();
+                    String msg = "❌ QP [" + qp + "] Required for Room " + group.getRoomSerial() + " but PDF is NOT LOADED";
+                    if (!missingFiles.contains(msg)) {
+                        missingFiles.add(msg);
+                    }
+                }
+            }
+        }
+
+        // 3. Check session directory for PDFs not in queue
+        File sessionDir = getSessionDir();
+        if (sessionDir != null && sessionDir.exists()) {
+            File[] files = sessionDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".pdf"));
+            if (files != null) {
+                Set<String> queuedFileNames = fileQueue.stream()
+                        .map(FileItem::getFileName)
+                        .collect(Collectors.toSet());
+                for (File f : files) {
+                    if (!queuedFileNames.contains(f.getName())) {
+                        String qp = extractQPFromFileName(f.getName());
+                        filesOnDiskNotInQueue.add("❌ QP [" + qp + "] JSON Data Missing (File found on disk but not loaded in App)");
+                    }
+                }
+            }
+        }
+
+        // 4. Update Compact Alert UI
+        Runnable updateUI = () -> {
+            healthCheckRibbon.getChildren().clear();
+            int totalErrors = missingFiles.size() + filesOnDiskNotInQueue.size();
+            int totalWarnings = unroutedFiles.size();
+
+            if (totalErrors == 0 && totalWarnings == 0) {
+                healthCheckRibbon.setVisible(false);
+                healthCheckRibbon.setManaged(false);
+                activityLogger.success("Health Check: All files verified and routed.");
+            } else {
+                healthCheckRibbon.setVisible(true);
+                healthCheckRibbon.setManaged(true);
+                healthCheckRibbon.setSpacing(10);
+                healthCheckRibbon.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+                healthCheckRibbon.setStyle("-fx-background-color: #333; -fx-padding: 5 15;");
+
+                Label alertLabel = new Label("STATIONERY HEALTH:");
+                alertLabel.setStyle("-fx-text-fill: #aaa; -fx-font-weight: bold; -fx-font-size: 11px;");
+
+                Button detailBtn = new Button();
+                String btnText = "";
+                if (totalErrors > 0) btnText += "❌ " + totalErrors + " CRITICAL ERRORS ";
+                if (totalWarnings > 0) btnText += "⚠️ " + totalWarnings + " ROUTING ISSUES";
+                detailBtn.setText(btnText.trim());
+                detailBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 2 10; -fx-cursor: hand;");
+                
+                detailBtn.setOnAction(e -> showDetailedHealthReport(missingFiles, filesOnDiskNotInQueue, unroutedFiles));
+
+                Button refreshBtn = new Button("Re-Scan");
+                refreshBtn.setStyle("-fx-font-size: 10px; -fx-padding: 1 8;");
+                refreshBtn.setOnAction(e -> validateAppState());
+
+                healthCheckRibbon.getChildren().addAll(alertLabel, detailBtn, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, refreshBtn);
+                
+                // Also log to activity logger
+                missingFiles.forEach(msg -> activityLogger.error("Health Check: " + msg));
+                filesOnDiskNotInQueue.forEach(msg -> activityLogger.error("Health Check: " + msg));
+                unroutedFiles.forEach(msg -> activityLogger.warn("Health Check: " + msg));
+            }
+        };
+
+        if (Platform.isFxApplicationThread()) {
+            updateUI.run();
+        } else {
+            Platform.runLater(updateUI);
+        }
+    }
+
+    private void showDetailedHealthReport(List<String> missing, List<String> newOnDisk, List<String> unrouted) {
+        Alert alert = new Alert(Alert.AlertType.WARNING);
+        alert.setTitle("Stationery & Data Health Report");
+        alert.setHeaderText("Discrepancies detected in your session data");
+        
+        StringBuilder sb = new StringBuilder();
+        if (!missing.isEmpty()) {
+            sb.append("❌ MISSING PAPERS (In Queue but not on Disk):\n");
+            missing.forEach(m -> sb.append("  ").append(m).append("\n"));
+            sb.append("\n");
+        }
+        if (!newOnDisk.isEmpty()) {
+            sb.append("❌ DATA MISSING (PDF on Disk but not in Queue):\n");
+            newOnDisk.forEach(m -> sb.append("  ").append(m).append("\n"));
+            sb.append("\n");
+        }
+        if (!unrouted.isEmpty()) {
+            sb.append("⚠️ ROUTING ISSUES (No Printer Assigned):\n");
+            unrouted.forEach(m -> sb.append("  ").append(m).append("\n"));
+        }
+
+        TextArea textArea = new TextArea(sb.toString());
+        textArea.setEditable(false);
+        textArea.setWrapText(true);
+        textArea.setPrefHeight(450);
+        textArea.setPrefWidth(600);
+        textArea.setStyle("-fx-font-family: 'Consolas', 'Monospace'; -fx-font-size: 12px;");
+
+        alert.getDialogPane().setExpandableContent(textArea);
+        alert.getDialogPane().setExpanded(true);
+        alert.show();
     }
 
     private void updateSimulationUI() {
@@ -907,6 +1049,7 @@ public class App extends Application {
                     fileQueue.clear();
                     roomGroupsList.clear();
                     saveConfigs();
+                    validateAppState();
                 }
             });
         });
@@ -1748,13 +1891,15 @@ public class App extends Application {
                 JsonNode root = mapper.readTree(file);
                 int countUpdated = 0;
                 Set<FileItem> matchedFiles = new HashSet<>();
+                List<String> unmatchedFromJSON = new ArrayList<>();
+
                 if (root.isArray()) {
                     for (JsonNode node : root) {
                         String qpCode = node.path("qpCode").asText("");
                         int count = node.path("count").asInt(1);
                         if (!qpCode.isEmpty()) {
                             boolean matched = false;
-                            
+
                             if (config.isAiRoutingEnabled()) {
                                 // Use AI Agent for high-precision matching
                                 RoomItem tempRoom = new RoomItem("", qpCode, "", count, -1);
@@ -1783,16 +1928,28 @@ public class App extends Application {
                                     }
                                 }
                             }
-                            if (!matched) activityLogger.error("No file found in queue for QP Code: " + qpCode);
+                            if (!matched) {
+                                unmatchedFromJSON.add("❌ QP [" + qpCode + "] File NOT Loaded (Found in JSON but missing in App Queue)");
+                                activityLogger.error("No file found in queue for QP Code: " + qpCode);
+                            }
                         }
                     }
                 }
-                
+
                 // Alert for files in queue that have no routing in JSON
+                List<String> unmatchedFromQueue = new ArrayList<>();
                 for (FileItem item : fileQueue) {
                     if (!matchedFiles.contains(item)) {
+                        String qp = extractQPFromFileName(item.getFileName());
+                        unmatchedFromQueue.add("❌ QP [" + qp + "] No routing data found in Uploaded JSON (File: " + item.getFileName() + ")");
                         activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
                     }
+                }
+
+                if (!unmatchedFromQueue.isEmpty() || !unmatchedFromJSON.isEmpty()) {
+                    validateAppState(unmatchedFromJSON, unmatchedFromQueue, new ArrayList<>());
+                } else {
+                    validateAppState();
                 }
 
                 final int finalUpdated = countUpdated;
@@ -1906,9 +2063,13 @@ public class App extends Application {
         }
 
         int countUpdated = 0;
+        Set<FileItem> updatedItems = new HashSet<>();
+        List<String> unmatchedFromCloud = new ArrayList<>();
+
         for (Map.Entry<String, Integer> entry : qpTotalCounts.entrySet()) {
             String qpCode = entry.getKey();
             int totalCount = entry.getValue();
+            boolean qpMatched = false;
             
             if (config.isAiRoutingEnabled()) {
                 // Use a temporary RoomItem to leverage the AI Agent's logic
@@ -1916,9 +2077,11 @@ public class App extends Application {
                 List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(tempRoom, fileQueue);
                 for (MatchResult res : aiResults) {
                     FileItem item = res.getMatchedFile();
+                    updatedItems.add(item);
                     final int finalCount = totalCount;
                     Platform.runLater(() -> item.setCopies(finalCount));
                     countUpdated++;
+                    qpMatched = true;
                     activityLogger.info("Synced " + item.getFileName() + ": set copies to " + totalCount + " (AI Matched QP: " + qpCode + ")");
                 }
             } else {
@@ -1926,13 +2089,35 @@ public class App extends Application {
                     String fileName = item.getFileName();
                     String extractedQP = extractQPFromFileName(fileName);
                     if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
+                        updatedItems.add(item);
                         final int finalCount = totalCount;
                         Platform.runLater(() -> item.setCopies(finalCount));
                         countUpdated++;
+                        qpMatched = true;
                         activityLogger.info("Synced " + fileName + ": set copies to " + totalCount + " (Matched QP: " + qpCode + ")");
                     }
                 }
             }
+            if (!qpMatched) {
+                unmatchedFromCloud.add("❌ QP [" + qpCode + "] File NOT Loaded (Found in Cloud Data but missing in App Queue)");
+                activityLogger.error("Cloud Sync: No file found in queue for QP Code: " + qpCode);
+            }
+        }
+
+        // Report unmatched files from queue
+        List<String> unmatchedFromQueue = new ArrayList<>();
+        for (FileItem item : fileQueue) {
+            if (!updatedItems.contains(item)) {
+                String qp = extractQPFromFileName(item.getFileName());
+                unmatchedFromQueue.add("❌ QP [" + qp + "] No routing data found in Cloud Data (File: " + item.getFileName() + ")");
+                activityLogger.warn("Cloud Sync: File " + item.getFileName() + " has NO matching data in cloud.");
+            }
+        }
+
+        if (!unmatchedFromQueue.isEmpty() || !unmatchedFromCloud.isEmpty()) {
+            validateAppState(unmatchedFromCloud, unmatchedFromQueue, new ArrayList<>());
+        } else {
+            validateAppState();
         }
 
         final int finalUpdated = countUpdated;
@@ -2214,6 +2399,7 @@ public class App extends Application {
                 if (response == ButtonType.OK) {
                     roomGroupsList.clear();
                     saveConfigs();
+                    validateAppState();
                 }
             });
         });
@@ -3400,6 +3586,7 @@ public class App extends Application {
         Platform.runLater(() -> {
             roomGroupsList.setAll(groups.values());
             refreshGlobalAlerts();
+            validateAppState(); // Trigger Health Check after room load
             activityLogger.success("Room Routing complete: " + finalGroupSize + " rooms, " + finalMatched + " matched.");
             updateStatus("Ready. " + finalGroupSize + " rooms loaded.");
             globalProgressVisible.set(false);
@@ -4520,8 +4707,9 @@ public class App extends Application {
 
     private File getSessionDir() {
         String base = downloadPathField.getText();
+        if (base == null || base.isEmpty()) return null;
         String session = sessionNameField.getText().trim();
-        if (base.isEmpty() || session.isEmpty()) return null;
+        if (session.isEmpty()) return new File(base);
         
         String folderName = session;
         // Convert Examflow Key (DD-MM-YYYY | HH:MM AM) to Folder Name (DD.MM.YY FN/AN)

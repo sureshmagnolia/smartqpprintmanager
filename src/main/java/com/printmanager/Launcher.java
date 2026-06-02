@@ -114,10 +114,20 @@ public class Launcher {
         JLabel status = new JLabel("Waking up the printing hamsters...", SwingConstants.CENTER);
         status.setFont(new Font("Segoe UI", Font.ITALIC, 14));
         status.setForeground(new Color(255, 255, 255, 200));
-        status.setBorder(BorderFactory.createEmptyBorder(0, 0, 40, 0));
+        status.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
+
+        JLabel branding = new JLabel("Product of Magnolia Creations", SwingConstants.CENTER);
+        branding.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        branding.setForeground(new Color(255, 255, 255, 150));
+        branding.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
 
         panel.add(title, BorderLayout.CENTER);
-        panel.add(status, BorderLayout.SOUTH);
+        
+        JPanel southPanel = new JPanel(new GridLayout(2, 1));
+        southPanel.setOpaque(false);
+        southPanel.add(status);
+        southPanel.add(branding);
+        panel.add(southPanel, BorderLayout.SOUTH);
 
         splash.setContentPane(panel);
         splash.setVisible(true);
