@@ -65,6 +65,14 @@ public class PrintService {
 
             ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script);
             Process p = pb.start();
+            
+            // Add timeout for PowerShell process to prevent hanging the whole app
+            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                logger.warn("Printer status PowerShell script timed out");
+                p.destroyForcibly();
+                return detailedMap;
+            }
+
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             com.fasterxml.jackson.databind.JsonNode printers = mapper.readTree(p.getInputStream());
             

@@ -176,6 +176,26 @@ public class App extends Application {
         logger.info("Application start: Loaded {} rules, {} split rules, {} queue items, {} room groups",
             config.getRules().size(), config.getSmartSplitRules().size(), appState.getFileQueue().size(), appState.getRoomGroups().size());
 
+        // Reset stuck statuses on startup to prevent UI from being locked in "Sending..."
+        for (FileItem item : appState.getFileQueue()) {
+            String s = item.getStatus();
+            if (s != null && (s.contains("Sending") || s.contains("Printing"))) {
+                item.setStatus("Ready");
+            }
+        }
+        for (RoomGroup g : appState.getRoomGroups()) {
+            String s = g.getStatus();
+            if (s != null && (s.contains("Sending") || s.contains("Printing"))) {
+                g.setStatus("Ready");
+            }
+            for (RoomItem ri : g.getItems()) {
+                String rs = ri.getStatus();
+                if (rs != null && (rs.contains("Sending") || rs.contains("Printing"))) {
+                    ri.setStatus("Ready");
+                }
+            }
+        }
+
         rulesList.addAll(config.getRules());
         smartSplitRulesList.addAll(config.getSmartSplitRules());
         fileQueue.addAll(appState.getFileQueue());
@@ -238,7 +258,7 @@ public class App extends Application {
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
-            saveConfigs();
+            saveConfigsSynchronously();
             killAllProcesses();
         });
         
@@ -2132,22 +2152,43 @@ public class App extends Application {
         }
     }
 
+    private final ExecutorService persistenceExecutor = Executors.newSingleThreadExecutor();
+
     private void saveConfigs() {
-        if (roomGroupsList.isEmpty() && fileQueue.isEmpty() && !rulesList.isEmpty()) {
-            logger.warn("Prevented saveConfigs because both queue and room groups are empty (safety check).");
-            // return; // Commented out for now to see if this is the cause
+        persistenceExecutor.submit(() -> {
+            try {
+                if (roomGroupsList.isEmpty() && fileQueue.isEmpty() && !rulesList.isEmpty()) {
+                    // logger.warn("Prevented saveConfigs because both queue and room groups are empty (safety check).");
+                    // return; // Commented out for now to see if this is the cause
+                }
+                // logger.info("Triggering saveConfigs in background. Queue size: {}, Room groups: {}", fileQueue.size(), roomGroupsList.size());
+                
+                // Save System Settings
+                config.setRules(List.copyOf(rulesList));
+                config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
+                configManager.saveConfig(config);
+                
+                // Save Dynamic Data
+                appState.setFileQueue(new ArrayList<>(fileQueue));
+                appState.setRoomGroups(new ArrayList<>(roomGroupsList));
+                configManager.saveAppState(appState);
+            } catch (Exception e) {
+                logger.error("Failed to save configs in background", e);
+            }
+        });
+    }
+
+    private void saveConfigsSynchronously() {
+        try {
+            config.setRules(List.copyOf(rulesList));
+            config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
+            configManager.saveConfig(config);
+            appState.setFileQueue(new ArrayList<>(fileQueue));
+            appState.setRoomGroups(new ArrayList<>(roomGroupsList));
+            configManager.saveAppState(appState);
+        } catch (Exception e) {
+            logger.error("Failed to save configs synchronously", e);
         }
-        logger.info("Triggering saveConfigs. Queue size: {}, Room groups: {}", fileQueue.size(), roomGroupsList.size());
-        
-        // Save System Settings
-        config.setRules(List.copyOf(rulesList));
-        config.setSmartSplitRules(List.copyOf(smartSplitRulesList));
-        configManager.saveConfig(config);
-        
-        // Save Dynamic Data
-        appState.setFileQueue(new ArrayList<>(fileQueue));
-        appState.setRoomGroups(new ArrayList<>(roomGroupsList));
-        configManager.saveAppState(appState);
     }
 
     private VBox createRoomRouterView(Stage stage) {
@@ -3887,24 +3928,31 @@ public class App extends Application {
                                     "      } " +
                                     "      return {qp: q, paper: p, time: t, syllabus: sy}; " +
                                     "    })(); " +
+                                    "    var pageText = document.body.innerText.toUpperCase(); " +
+                                    "    var isPageEde = pageText.indexOf('SDE') !== -1 || pageText.indexOf('DISTANCE') !== -1 || pageText.indexOf('EDE') !== -1 || pageText.indexOf('EXTERNAL') !== -1; " +
                                     "    rows.forEach(function(row) { " +
                                     "      var cells = row.querySelectorAll('td'); " +
                                     "      if (cells.length >= 2) { " +
                                     "        var qpVal = ''; var pVal = ''; var syVal = ''; " +
+                                    "        var rowText = row.innerText.toUpperCase(); " +
+                                    "        var isEde = isPageEde || rowText.indexOf('SDE') !== -1 || rowText.indexOf('EDE') !== -1 || rowText.indexOf('DISTANCE') !== -1 || rowText.indexOf('EXTERNAL') !== -1; " +
                                     "        if (row.cells[cols.qp] && /^\\d+$/.test(row.cells[cols.qp].innerText.trim())) { " +
                                     "          qpVal = row.cells[cols.qp].innerText.trim(); " +
+                                    "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = row.cells[cols.paper] ? row.cells[cols.paper].innerText.trim() : ''; " +
                                     "          syVal = (cols.syllabus !== -1 && row.cells[cols.syllabus]) ? row.cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
                                     "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
                                     "          results.push(prefix + qpVal + '\\t' + pVal); " +
                                     "        } else if (/^\\d+$/.test(cells[0].innerText.trim())) { " +
                                     "          qpVal = cells[0].innerText.trim(); " +
+                                    "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = cells[1].innerText.trim(); " +
                                     "          syVal = (cols.syllabus !== -1 && cells.length > cols.syllabus) ? cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
                                     "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
                                     "          results.push(prefix + qpVal + '\\t' + pVal); " +
                                     "        } else if (/^\\d+$/.test(cells[1].innerText.trim()) && cells.length >= 3) { " +
                                     "          qpVal = cells[1].innerText.trim(); " +
+                                    "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = cells[2].innerText.trim(); " +
                                     "          syVal = (cols.syllabus !== -1 && cells.length > cols.syllabus) ? cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
                                     "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
@@ -4125,8 +4173,11 @@ public class App extends Application {
                                 "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\\\s+/g, '_') : '00_00_AM'; " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
-                                "                  var rowText = r.innerText.toUpperCase(); var prefix = (rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1) ? 'EDE' : 'REG'; " +
+                                "                  var rowText = r.innerText.toUpperCase(); " +
+                                "                  var isEde = rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1 || rowText.indexOf('DISTANCE') !== -1; " +
+                                "                  var prefix = isEde ? 'EDE' : 'REG'; " +
                                 "                  var qpCode = (r.cells[cols.qp]) ? r.cells[cols.qp].innerText.trim() : '000000'; " +
+                                "                  if (isEde && !qpCode.endsWith('A')) qpCode += 'A'; " +
                                 "                  var paperName = (r.cells[cols.paper]) ? r.cells[cols.paper].innerText.replace(/[^a-z0-9]/gi, '_') : 'Subject'; " +
                                 "                  var fname = prefix + '_' + dp + '_' + tVal + '_' + qpCode + '_' + paperName; " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
@@ -4170,7 +4221,7 @@ public class App extends Application {
                                 "            document.querySelectorAll('#qp-code-container input[data-course]').forEach(function(input) { " +
                                 "              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
                                 "              var streamName = (input.dataset.stream || '').toUpperCase(); " +
-                                "              var isEdeStream = streamName.indexOf('EDE') !== -1; " +
+                                "              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
                                 "              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
                                 "              if (validPairs.length === 0) validPairs = parsedPairs; " +
                                 "              var bestMatch = null; " +
@@ -4191,7 +4242,9 @@ public class App extends Application {
                                 "                } " +
                                 "              } " +
                                 "              if (bestMatch) { " +
-                                "                input.value = bestMatch.code; " +
+                                "                var finalCode = bestMatch.code; " +
+                                "                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
+                                "                input.value = finalCode; " +
                                 "                matched++; " +
                                 "                var evt = document.createEvent('HTMLEvents'); " +
                                 "                evt.initEvent('input', true, true); " +

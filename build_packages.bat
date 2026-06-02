@@ -1,26 +1,26 @@
 @echo off
-set VERSION=5.1
+set VERSION=5.3
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;%PATH%
 
-echo Creating input directory...
-rmdir /s /q jpackage_input
-mkdir jpackage_input
-copy target\java-print-manager-%VERSION%.jar jpackage_input\
+echo Cleaning input folders...
+del /q jpackage_input\*.jar
+copy /Y target\java-print-manager-%VERSION%.jar jpackage_input\
 
-echo Creating Portable ZIP...
-rmdir /s /q dist-v%VERSION%-portable
-mkdir dist-v%VERSION%-portable
-mkdir dist-v%VERSION%-portable\bin\chromium
-copy target\java-print-manager-%VERSION%.jar dist-v%VERSION%-portable\
-copy run-app.bat dist-v%VERSION%-portable\
-copy config.default.json dist-v%VERSION%-portable\config.json
-copy README.md dist-v%VERSION%-portable\
+rem echo Creating Portable ZIP...
+rem rmdir /s /q dist-v%VERSION%-portable
+rem mkdir dist-v%VERSION%-portable
+rem mkdir dist-v%VERSION%-portable\bin\chromium
+rem mkdir dist-v%VERSION%-portable\lib
 
-echo Copying Chromium Bundle (this may take a minute)...
-xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "dist-v%VERSION%-portable\bin\chromium\"
+rem copy target\java-print-manager-%VERSION%.jar dist-v%VERSION%-portable\
+rem copy config.default.json dist-v%VERSION%-portable\config.json
+rem copy README.md dist-v%VERSION%-portable\
 
-powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist-v%VERSION%-portable\*' -DestinationPath '%APPNAME%-Portable-V%VERSION%.zip' -Force"
+rem echo Copying Chromium Bundle (this may take a minute)...
+rem xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "dist-v%VERSION%-portable\bin\chromium\"
+
+rem powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist-v%VERSION%-portable\*' -DestinationPath '%APPNAME%-Portable-V%VERSION%.zip' -Force"
 
 echo Creating Native App-Image...
 rmdir /s /q "output\%APPNAME%"
@@ -29,11 +29,12 @@ copy config.default.json "output\%APPNAME%\config.json"
 mkdir "output\%APPNAME%\bin\chromium"
 xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "output\%APPNAME%\bin\chromium\"
 
+echo Creating Native ZIP...
 powershell.exe -NoProfile -Command "Compress-Archive -Path 'output\%APPNAME%\*' -DestinationPath '%APPNAME%-Native-V%VERSION%.zip' -Force"
 
-echo Creating EXE Installer...
-jpackage --type exe --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser --win-upgrade-uuid f1a8c9e5-a6b7-4c8d-9e0f-e62c1a234b5d
-copy "output\%APPNAME%-%VERSION%.exe" "%APPNAME%-V%VERSION%.exe"
+rem echo Creating EXE Installer...
+rem jpackage --type exe --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser --win-upgrade-uuid f1a8c9e5-a6b7-4c8d-9e0f-e62c1a234b5d
+rem copy "output\%APPNAME%-%VERSION%.exe" "%APPNAME%-V%VERSION%.exe"
 
 echo Creating MSI Installer...
 jpackage --type msi --name "%APPNAME%" --app-version %VERSION% --app-image "output\%APPNAME%" --dest output --icon src\main\resources\icon.ico --win-shortcut --win-menu --win-dir-chooser --win-upgrade-uuid f1a8c9e5-a6b7-4c8d-9e0f-e62c1a234b5d
