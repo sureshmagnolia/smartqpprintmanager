@@ -125,18 +125,18 @@ public class AIRoutingAgent {
                             roomName.contains(" SDE") || roomName.contains("(SDE)") || 
                             roomName.contains("DISTANCE") || roomName.contains("EXTERNAL");
 // PDF stream detection:
-// A PDF is SDE if its filename contains SDE/DISTANCE markers OR if it has 'A' suffix / 'D' prefix 
-// UNLESS it is explicitly marked as Regular (REG_ prefix).
+// A PDF is SDE if its filename contains SDE/DISTANCE/MCQ markers OR if it has 'A' suffix / 'D' prefix 
+// UNLESS it is explicitly marked as Regular (REG_ prefix) and DOES NOT have SDE markers.
 boolean pdfIsExt = metadata.stream.equalsIgnoreCase("SDE");
 String fn = fileItem.getFileName().toUpperCase();
-boolean hasSdeMarker = fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") || fn.contains("EXTERNAL");
+boolean hasSdeMarker = fn.contains("SDE") || fn.contains("EDE") || fn.contains("DISTANCE") || fn.contains("EXTERNAL") || fn.contains("MCQ");
 boolean hasASuffix = internalQP.endsWith("A") || filenameQP.endsWith("A");
 boolean hasDPrefix = internalQP.startsWith("D") || filenameQP.startsWith("D");
 
-if (fn.contains("REG_") || fn.contains("_REG_") || fn.contains(" REG ")) {
-    pdfIsExt = false;
-} else if (hasSdeMarker || hasASuffix || hasDPrefix) {
+if (hasSdeMarker || hasASuffix || hasDPrefix) {
     pdfIsExt = true;
+} else if (fn.contains("REG_") || fn.contains("_REG_") || fn.contains(" REG ")) {
+    pdfIsExt = false;
 }
 
 // Exact match bypass ONLY if the QP code came directly from JSON
@@ -253,15 +253,45 @@ if (!jsonIsExt && (fn.contains("REG") || fn.contains("NORMAL"))) score += 0.05;
     }
 
     private String extractQPFromFileName(String fileName) {
-        if (fileName == null) return "";
-        Pattern[] patterns = {
-            Pattern.compile("_(\\d{5,8})_"),
-            Pattern.compile("_([A-Z0-9]{5,10})[._]")
-        };
-        for (Pattern p : patterns) {
-            Matcher m = p.matcher(fileName);
-            if (m.find()) return m.group(1);
+        if (fileName == null || fileName.isEmpty()) return "";
+        
+        String qp = "";
+        // 1. Try robust standard pattern _143812_ (most common)
+        java.util.regex.Pattern p1 = java.util.regex.Pattern.compile("_(\\d{5,8})_", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m1 = p1.matcher(fileName);
+        if (m1.find()) qp = m1.group(1);
+
+        if (qp.isEmpty()) {
+            // 2. Try Examflow Fallback _14.05.26_FN_143812_
+            java.util.regex.Pattern p2 = java.util.regex.Pattern.compile("_([A-Z0-9]{5,10})[_\\.]", java.util.regex.Pattern.CASE_INSENSITIVE);
+            java.util.regex.Matcher m2 = p2.matcher(fileName);
+            if (m2.find()) qp = m2.group(1);
         }
-        return "";
+        
+        if (qp.isEmpty()) {
+            // 3. Last resort: standard datetime match
+            java.util.regex.Pattern p3 = java.util.regex.Pattern.compile("_\\d{2}[-_:\\.]\\d{2}\\s+[AP]M_([A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+            java.util.regex.Matcher m3 = p3.matcher(fileName);
+            if (m3.find()) qp = m3.group(1);
+        }
+
+        if (qp.isEmpty()) {
+            // 4. Aggressive Numeric Fallback (5-8 digits anywhere)
+            java.util.regex.Pattern p4 = java.util.regex.Pattern.compile("(\\d{5,8})");
+            java.util.regex.Matcher m4 = p4.matcher(fileName);
+            if (m4.find()) qp = m4.group(1);
+        }
+
+        // --- Suffix 'A' / SDE detection for Split Files ---
+        if (!qp.isEmpty() && !qp.endsWith("A")) {
+            String fn = fileName.toUpperCase();
+            if (fn.contains("_A_") || fn.contains("_A.") || 
+                fn.contains(" SDE") || fn.contains("(SDE)") ||
+                fn.contains("MCQ")) { // Added MCQ as a marker for SDE papers in split mode
+                qp = qp + "A";
+            }
+        }
+
+        return qp;
     }
 }

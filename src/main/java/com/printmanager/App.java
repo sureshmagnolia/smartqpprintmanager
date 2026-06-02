@@ -318,47 +318,103 @@ public class App extends Application {
     }
 
     private void validateAppState(List<String> extraErrors, List<String> extraWarnings, List<String> extraInfo) {
-        List<String> missingFiles = new ArrayList<>(extraErrors);
-        List<String> unroutedFiles = new ArrayList<>(extraWarnings);
-        List<String> filesOnDiskNotInQueue = new ArrayList<>(extraInfo);
-        
-        // 1. Check existing queue for missing/unrouted files
-        for (FileItem item : fileQueue) {
-            File f = item.getFile();
-            String qp = extractQPFromFileName(item.getFileName());
-            if (f == null || !f.exists()) {
-                missingFiles.add("❌ QP [" + qp + "] File Missing: " + item.getFileName());
-                item.setStatus("Error: Missing");
-            } else if ("None".equals(item.getTargetPrinter()) || item.getTargetPrinter() == null || item.getTargetPrinter().isEmpty()) {
-                unroutedFiles.add("⚠️ QP [" + qp + "] Routing Data Missing (No printer assigned)");
+        List<String> missingFromQueue = new ArrayList<>(extraErrors);   // In JSON but NOT in Queue
+        List<String> missingFromJSON = new ArrayList<>(extraInfo);      // In Queue but NOT in JSON
+        List<String> unroutedWarnings = new ArrayList<>(extraWarnings); // In both, but no printer
+
+        // 1. Map all QPs in Queue and identify which files are actually routed
+        java.util.Map<String, FileItem> queueMap = new java.util.HashMap<>();
+        java.util.Set<FileItem> routedFiles = new java.util.HashSet<>();
+        java.util.Set<String> routedQPs = new java.util.HashSet<>();
+
+        for (RoomGroup group : roomGroupsList) {
+            for (RoomItem ri : group.getItems()) {
+                if (ri.getMatchedFile() != null) {
+                    routedFiles.add(ri.getMatchedFile());
+                    String qp = extractQPFromFileName(ri.getMatchedFile().getFileName()).toUpperCase();
+                    if (!qp.isEmpty()) routedQPs.add(qp);
+                }
             }
         }
 
-        // 2. Check Room Groups for missing PDFs
+        for (FileItem item : fileQueue) {
+            String qp = extractQPFromFileName(item.getFileName());
+            if (!qp.isEmpty()) {
+                queueMap.put(qp.toUpperCase(), item);
+            }
+        }
+
+        // 2. Map all QPs in JSON (Room Groups)
+        java.util.Set<String> jsonQPs = new java.util.HashSet<>();
         for (RoomGroup group : roomGroupsList) {
             for (RoomItem item : group.getItems()) {
-                if (item.getMatchedFile() == null) {
-                    String qp = item.getQpCode();
-                    String msg = "❌ QP [" + qp + "] Required for Room " + group.getRoomSerial() + " but PDF is NOT LOADED";
-                    if (!missingFiles.contains(msg)) {
-                        missingFiles.add(msg);
+                String qp = item.getQpCode();
+                if (qp != null && !qp.isEmpty()) {
+                    jsonQPs.add(qp.toUpperCase());
+                }
+            }
+        }
+
+        // --- THE MATCHING LOGIC (Two-Way Sync) ---
+
+        // A. Check for files in Queue that are NOT in the JSON (or are redundant masters)
+        for (FileItem item : fileQueue) {
+            String fileName = item.getFileName();
+            String qp = extractQPFromFileName(fileName).toUpperCase();
+            
+            // --- Improved Master Detection: Is this file redundant? ---
+            // A file is redundant if another file for the same QP exists with HIGHER specificity.
+            boolean isMaster = false;
+            if (!qp.isEmpty()) {
+                int myLevel = getSpecificityLevel(fileName);
+                for (FileItem other : fileQueue) {
+                    if (other == item) continue;
+                    if (qp.equalsIgnoreCase(extractQPFromFileName(other.getFileName()))) {
+                        if (getSpecificityLevel(other.getFileName()) > myLevel) {
+                            isMaster = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (isMaster) {
+                item.setStatus("Split Master (Idle)");
+                // Do not flag masters as errors/warnings
+                continue; 
+            }
+
+            boolean isRouted = routedFiles.contains(item);
+            if (qp.isEmpty() || !jsonQPs.contains(qp)) {
+                missingFromJSON.add("❌ QP [" + (qp.isEmpty() ? "UNKNOWN" : qp) + "] Routing Data Missing: File " + item.getFileName() + " has no entry in JSON.");
+                item.setStatus("No JSON Entry");
+            } else {
+                // If it IS in JSON, verify it has a printer assigned
+                if (item.getTargetPrinter() == null || "None".equals(item.getTargetPrinter()) || item.getTargetPrinter().isEmpty()) {
+                    // TRIPLE CHECK: If it's already in a room card (isRouted), don't flag it as a routing issue
+                    if (!isRouted) {
+                        unroutedWarnings.add("⚠️ QP [" + qp + "] No Printer Assigned to " + item.getFileName());
                     }
                 }
             }
         }
 
-        // 3. Check session directory for PDFs not in queue
+        // B. Check for QPs in JSON that are NOT in the Queue
+        for (String qp : jsonQPs) {
+            if (!queueMap.containsKey(qp)) {
+                missingFromQueue.add("❌ QP [" + qp + "] Required by JSON but PDF is NOT LOADED");
+            }
+        }
+
+        // C. Check disk for orphans (as extra info)
         File sessionDir = getSessionDir();
         if (sessionDir != null && sessionDir.exists()) {
             File[] files = sessionDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".pdf"));
             if (files != null) {
-                Set<String> queuedFileNames = fileQueue.stream()
-                        .map(FileItem::getFileName)
-                        .collect(Collectors.toSet());
                 for (File f : files) {
-                    if (!queuedFileNames.contains(f.getName())) {
-                        String qp = extractQPFromFileName(f.getName());
-                        filesOnDiskNotInQueue.add("❌ QP [" + qp + "] JSON Data Missing (File found on disk but not loaded in App)");
+                    String qp = extractQPFromFileName(f.getName()).toUpperCase();
+                    if (!qp.isEmpty() && !queueMap.containsKey(qp)) {
+                        missingFromJSON.add("ℹ️ QP [" + qp + "] File found on disk but NOT loaded in App: " + f.getName());
                     }
                 }
             }
@@ -367,13 +423,13 @@ public class App extends Application {
         // 4. Update Compact Alert UI
         Runnable updateUI = () -> {
             healthCheckRibbon.getChildren().clear();
-            int totalErrors = missingFiles.size() + filesOnDiskNotInQueue.size();
-            int totalWarnings = unroutedFiles.size();
+            int totalErrors = missingFromQueue.size() + missingFromJSON.stream().filter(s -> s.startsWith("❌")).collect(Collectors.toList()).size();
+            int totalWarnings = unroutedWarnings.size();
 
             if (totalErrors == 0 && totalWarnings == 0) {
                 healthCheckRibbon.setVisible(false);
                 healthCheckRibbon.setManaged(false);
-                activityLogger.success("Health Check: All files verified and routed.");
+                activityLogger.success("Health Check: All files verified and synchronized with JSON.");
             } else {
                 healthCheckRibbon.setVisible(true);
                 healthCheckRibbon.setManaged(true);
@@ -391,7 +447,7 @@ public class App extends Application {
                 detailBtn.setText(btnText.trim());
                 detailBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 2 10; -fx-cursor: hand;");
                 
-                detailBtn.setOnAction(e -> showDetailedHealthReport(missingFiles, filesOnDiskNotInQueue, unroutedFiles));
+                detailBtn.setOnAction(e -> showDetailedHealthReport(missingFromQueue, missingFromJSON, unroutedWarnings));
 
                 Button refreshBtn = new Button("Re-Scan");
                 refreshBtn.setStyle("-fx-font-size: 10px; -fx-padding: 1 8;");
@@ -400,9 +456,12 @@ public class App extends Application {
                 healthCheckRibbon.getChildren().addAll(alertLabel, detailBtn, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, refreshBtn);
                 
                 // Also log to activity logger
-                missingFiles.forEach(msg -> activityLogger.error("Health Check: " + msg));
-                filesOnDiskNotInQueue.forEach(msg -> activityLogger.error("Health Check: " + msg));
-                unroutedFiles.forEach(msg -> activityLogger.warn("Health Check: " + msg));
+                missingFromQueue.forEach(msg -> activityLogger.error("Health Check: " + msg));
+                missingFromJSON.forEach(msg -> {
+                    if (msg.startsWith("❌")) activityLogger.error("Health Check: " + msg);
+                    else activityLogger.info("Health Check: " + msg);
+                });
+                unroutedWarnings.forEach(msg -> activityLogger.warn("Health Check: " + msg));
             }
         };
 
@@ -631,6 +690,9 @@ public class App extends Application {
         };
 
         fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
+            // CRITICAL: Relink first so validateAppState sees current routing
+            relinkRoomItems(); 
+            
             while (c.next()) {
                 if (c.wasAdded()) {
                     c.getAddedSubList().forEach(item -> {
@@ -639,9 +701,9 @@ public class App extends Application {
                         item.copiesProperty().addListener((obs, old, nv) -> updateQueueStats.run());
                     });
                 }
-                updateQueueStats.run();
-                refreshGlobalAlerts();
             }
+            updateQueueStats.run(); // Calls refreshGlobalAlerts() internally
+            saveConfigs();
         });
 
         // Initialize listeners for existing items
@@ -2151,36 +2213,90 @@ public class App extends Application {
     private String extractQPFromFileName(String fileName) {
         if (fileName == null || fileName.isEmpty()) return "";
         
-        // 1. Try robust standard pattern _143812_ (most common)
-        java.util.regex.Pattern p1 = java.util.regex.Pattern.compile("_(\\d{5,8})_", java.util.regex.Pattern.CASE_INSENSITIVE);
-        java.util.regex.Matcher m1 = p1.matcher(fileName);
-        if (m1.find()) return m1.group(1);
+        List<String> candidates = new ArrayList<>();
+        // Match potential blocks: _143812_ or _140754A_ or _BCM4C04_
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("_([A-Z0-9\\.]+)[_\\.]", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m = p.matcher(fileName);
+        while (m.find()) {
+            String c = m.group(1);
+            // Filter out obvious dates (e.g. 19.05.26 or 2026-06-02)
+            long dots = c.chars().filter(ch -> ch == '.').count();
+            long dashes = c.chars().filter(ch -> ch == '-').count();
+            if (dots < 2 && dashes < 2 && c.length() >= 5) {
+                candidates.add(c.toUpperCase());
+            }
+        }
 
-        // 2. Try Examflow Fallback _14.05.26_FN_143812_
-        java.util.regex.Pattern p2 = java.util.regex.Pattern.compile("_([A-Z0-9]{5,10})[_\\.]", java.util.regex.Pattern.CASE_INSENSITIVE);
-        java.util.regex.Matcher m2 = p2.matcher(fileName);
-        if (m2.find()) return m2.group(1);
-        
-        // 3. Last resort: standard datetime match from v3.1.3
-        java.util.regex.Pattern p3 = java.util.regex.Pattern.compile("_\\d{2}[-_:\\.]\\d{2}\\s+[AP]M_([A-Z0-9]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
-        java.util.regex.Matcher m3 = p3.matcher(fileName);
-        if (m3.find()) return m3.group(1);
+        // Fallback: search for any 5-8 digit block if no candidates found
+        if (candidates.isEmpty()) {
+            java.util.regex.Pattern pDigit = java.util.regex.Pattern.compile("(\\d{5,8})");
+            java.util.regex.Matcher mDigit = pDigit.matcher(fileName);
+            while (mDigit.find()) candidates.add(mDigit.group(1));
+        }
 
-        // 4. Aggressive Numeric Fallback (5-8 digits anywhere)
-        java.util.regex.Pattern p4 = java.util.regex.Pattern.compile("(\\d{5,8})");
-        java.util.regex.Matcher m4 = p4.matcher(fileName);
-        if (m4.find()) return m4.group(1);
+        if (candidates.isEmpty()) return "";
 
-        return "";
+        // Priority Selection:
+        // 1. Prefer candidates with an 'A' suffix
+        for (String c : candidates) if (c.endsWith("A")) return c;
+        // 2. Prefer numeric-only candidates of 5-8 digits
+        for (String c : candidates) if (c.matches("\\d{5,8}")) return c;
+        // 3. Return the first valid candidate
+        String qp = candidates.get(0);
+
+        // Final SDE suffix check for split/manual files
+        if (!qp.endsWith("A")) {
+            String fn = fileName.toUpperCase();
+            if (fn.contains("_A_") || fn.contains("_A.") || fn.contains(" SDE") || fn.contains("(SDE)") || fn.contains("MCQ")) {
+                qp = qp + "A";
+            }
+        }
+        return qp;
+    }
+
+    private int getSpecificityLevel(String fileName) {
+        if (fileName == null) return 0;
+        String name = fileName.toUpperCase();
+        if (name.contains("SPLIT_") || name.contains("REMAIN_") || name.contains("PART_")) return 3;
+        if (name.contains("MAIN_") || name.contains("MCQ_") || name.contains("_SDE_") || name.contains(" SDE")) return 2;
+        return 1;
     }
 
     private void relinkRoomItems() {
         if (roomGroupsList.isEmpty()) return;
         logger.info("Relinking & Syncing Room Items (Queue Size: {})", fileQueue.size());
+
+        // Phase 0: Clear stale matches and remove ghost items from previous splits
+        for (RoomGroup g : roomGroupsList) {
+            // First, clear matches that are physically gone from the current queue
+            for (RoomItem ri : g.getItems()) {
+                if (ri.getMatchedFile() != null && !fileQueue.contains(ri.getMatchedFile())) {
+                    ri.setMatchedFile(null);
+                    ri.setStatus("PND"); // Use shorter PND for UI space
+                    ri.setPdfFileName("");
+                }
+            }
+            
+            // Second, remove redundant items with no match (usually leftovers from a previous split/re-merge)
+            // But keep at least one item per QP code (the 'template' or original)
+            java.util.Set<String> keptQPs = new java.util.HashSet<>();
+            g.getItems().removeIf(ri -> {
+                String qp = ri.getQpCode();
+                if (qp == null || qp.isEmpty()) return false;
+                if (ri.getMatchedFile() != null) {
+                    keptQPs.add(qp);
+                    return false;
+                }
+                // If we already have a matched item or a template for this QP in this group, remove this empty one
+                if (keptQPs.contains(qp)) return true; 
+                keptQPs.add(qp);
+                return false; 
+            });
+        }
         
         for (RoomGroup g : roomGroupsList) {
             // Identify unique QP needs in this room
-            Set<String> neededQPs = g.getItems().stream()
+            java.util.Set<String> neededQPs = g.getItems().stream()
                 .map(RoomItem::getQpCode)
                 .filter(Objects::nonNull)
                 .filter(qp -> !qp.isEmpty())
@@ -2196,14 +2312,12 @@ public class App extends Application {
                 List<FileItem> matches = new ArrayList<>();
 
                 if (config.isAiRoutingEnabled()) {
-                    // ... AI logic remains the same ...
                     RoomItem template = g.getItems().stream()
                         .filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()))
                         .findFirst().orElse(null);
                     
                     if (template != null) {
                         List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(template, fileQueue);
-                        // Filter and add to matches...
                         double maxScore = aiResults.stream().mapToDouble(MatchResult::getConfidenceScore).max().orElse(0.0);
                         if (maxScore > 0) aiResults.removeIf(r -> r.getConfidenceScore() < maxScore);
                         
@@ -2224,10 +2338,24 @@ public class App extends Application {
                             return qp.equalsIgnoreCase(extracted) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
                         })
                         .collect(Collectors.toList());
-                    if (!legacyMatches.isEmpty()) matches.add(legacyMatches.get(0));
+                    matches.addAll(legacyMatches);
                 }
                 
+                // --- UNIVERSAL SPECIFICITY FILTERING ---
+                // Regardless of AI or Legacy, always prioritize Children over Masters
+                if (matches.size() > 1) {
+                    int maxLevel = matches.stream()
+                        .mapToInt(f -> getSpecificityLevel(f.getFileName()))
+                        .max().orElse(1);
+                    matches.removeIf(f -> getSpecificityLevel(f.getFileName()) < maxLevel);
+                }
+
                 for (FileItem f : matches) {
+                    // CRITICAL: Always sync the room's printer to the file if it doesn't have one
+                    if (f.getTargetPrinter() == null || "None".equals(f.getTargetPrinter()) || f.getTargetPrinter().isEmpty()) {
+                        f.setTargetPrinter(g.getSelectedPrinter());
+                    }
+
                     boolean linkExists = g.getItems().stream().anyMatch(ri -> ri.getMatchedFile() == f && qp.equalsIgnoreCase(ri.getQpCode()));
                     if (!linkExists) {
                         RoomItem proto = g.getItems().stream().filter(ri -> qp.equalsIgnoreCase(ri.getQpCode()) && ri.getMatchedFile() == null).findFirst().orElse(null);
@@ -3772,6 +3900,29 @@ public class App extends Application {
                 // Print QP items
                 for (RoomItem roomItem : group.getItems()) {
                     FileItem fileItem = roomItem.getMatchedFile();
+                    
+                    // --- SAFETY RECOVERY: If match is missing or stale, try a last-second QP-based re-link ---
+                    if (fileItem == null || !fileQueue.contains(fileItem)) {
+                        String qp = roomItem.getQpCode();
+                        if (qp != null && !qp.isEmpty()) {
+                            FileItem surrogate = fileQueue.stream()
+                                .filter(f -> {
+                                    String eqp = extractQPFromFileName(f.getFileName());
+                                    return qp.equalsIgnoreCase(eqp) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
+                                })
+                                .findFirst().orElse(null);
+                            
+                            if (surrogate != null) {
+                                fileItem = surrogate;
+                                final FileItem finalS = surrogate;
+                                Platform.runLater(() -> {
+                                    roomItem.setMatchedFile(finalS);
+                                    roomItem.setStatus("Ready (Recovered)");
+                                });
+                                activityLogger.info("Room " + group.getRoomSerial() + ": Auto-recovered match for QP " + qp + " -> " + surrogate.getFileName());
+                            }
+                        }
+                    }
                     
                     if (fileItem == null || !fileQueue.contains(fileItem)) { 
                         Platform.runLater(() -> {

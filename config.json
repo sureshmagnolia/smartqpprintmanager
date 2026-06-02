@@ -61,16 +61,16 @@
     "addASuffix" : true
   } ],
   "collegeId" : "",
-  "portalUsername" : "",
-  "portalPassword" : "",
-  "portalQpPassword" : "",
+  "portalUsername" : "SMS121933",
+  "portalPassword" : "Csno1972#",
+  "portalQpPassword" : "23AFAE",
   "portalQpPrefix" : "D",
-  "lastSessionName" : "",
+  "lastSessionName" : "02-06-2026 | 10:00 AM",
   "collegeName" : "Your Institution Name",
   "currentExamDate" : "",
   "currentExamSession" : "",
   "baseDownloadPath" : "C:\\",
-  "lastDirectory" : "C:\\Users\\sures\\OneDrive\\Documents\\Downloads\\QPArchive\\13.05.26FN\\Done",
+  "lastDirectory" : "C:\\Users\\sures\\OneDrive\\Documents\\Downloads\\QPArchive\\19.05.26FN",
   "printCoverPage" : true,
-  "aiRoutingEnabled" : true
+  "aiRoutingEnabled" : false
 }
