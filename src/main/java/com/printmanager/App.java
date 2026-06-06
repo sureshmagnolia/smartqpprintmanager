@@ -116,6 +116,7 @@ public class App extends Application {
 
     private final Label roomMapAlert = new Label("\uD83D\uDDFA Maps!");
     private final Label roomStapleAlert = new Label("\uD83D\uDCCE Staple!");
+    private final Label roomTotalCount = new Label("Total Rooms: 0");
     private final Label roomTotalPP = new Label("Total PP: 0");
 
     private final Label globalMapAlert = new Label("\uD83D\uDDFA Maps!");
@@ -333,18 +334,49 @@ public class App extends Application {
                     Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
                     
                     Platform.runLater(() -> {
-                        // 1. Update simple status cache (for row indicators)
-                        printerStatusCache.clear();
-                        detailed.forEach((name, data) -> printerStatusCache.put(name, data.get("status")));
-                        
-                        // 2. Update dashboard displays
-                        for (PrinterDisplay pd : printerDisplays) {
-                            if (detailed.containsKey(pd.getName())) {
-                                Map<String, String> data = detailed.get(pd.getName());
-                                pd.setStatus(data.get("status"));
-                                pd.setActiveJobs(data.get("jobs"));
-                                pd.setCurrentTask(data.get("current"));
+                        try {
+                            // 1. Update simple status cache
+                            java.util.Set<String> currentKeys = detailed.keySet();
+                            printerStatusCache.keySet().removeIf(k -> !currentKeys.contains(k));
+                            detailed.forEach((name, data) -> {
+                                String health = "Ready";
+                                for (PrinterDisplay pd : printerDisplays) {
+                                    if (pd.getName().equals(name)) {
+                                        health = pd.healthStatusProperty().get();
+                                        break;
+                                    }
+                                }
+                                String newStatus = "Offline".equalsIgnoreCase(health) ? "Offline" : data.get("status");
+                                if (!newStatus.equals(printerStatusCache.get(name))) {
+                                    printerStatusCache.put(name, newStatus);
+                                }
+                            });
+                            
+                            // 2. Update dashboard displays
+                            for (PrinterDisplay pd : printerDisplays) {
+                                if (detailed.containsKey(pd.getName())) {
+                                    Map<String, String> data = detailed.get(pd.getName());
+                                    String health = pd.healthStatusProperty().get();
+                                    if ("Offline".equalsIgnoreCase(health)) {
+                                        pd.setStatus("Offline");
+                                        pd.setActiveJobs("-");
+                                        pd.setCurrentTask("-");
+                                    } else {
+                                        pd.setStatus(data.get("status"));
+                                        pd.setActiveJobs(data.get("jobs"));
+                                        pd.setCurrentTask(data.get("current"));
+                                    }
+                                } else {
+                                    if (!"Offline".equals(pd.statusProperty().get())) {
+                                        pd.setStatus("Not in API");
+                                    }
+                                }
                             }
+                        } catch (Exception err) {
+                            for (PrinterDisplay pd : printerDisplays) {
+                                pd.setStatus("ERR: " + err.getMessage());
+                            }
+                            err.printStackTrace();
                         }
                     });
                     Thread.sleep(5000); 
@@ -691,6 +723,8 @@ public class App extends Application {
             private final Label statusIndicator = new Label();
             private final HBox container = new HBox(5, combo, statusIndicator);
             
+            private final javafx.collections.MapChangeListener<String, String> cacheListener = change -> updateDisplay();
+            
             {
                 combo.setStyle("-fx-text-inner-color: black; -fx-text-fill: black;");
                 combo.setPrefWidth(140);
@@ -725,7 +759,7 @@ public class App extends Application {
                 });
 
                 // Centralized listener to update row indicator and combo state
-                printerStatusCache.addListener((javafx.collections.MapChangeListener<String, String>) change -> updateDisplay());
+                printerStatusCache.addListener(new javafx.collections.WeakMapChangeListener<>(cacheListener));
             }
 
             private void updateDisplay() {
@@ -938,8 +972,28 @@ public class App extends Application {
         fetchExamflowBtn.setTooltip(new Tooltip("Fetch seating data directly from the cloud using your College ID"));
         fetchExamflowBtn.setOnAction(e -> fetchFromExamflow(stage));
         fetchExamflowBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+        Button resetSpoolerBtn = new Button("\u26A0 Reset Spooler");
+        resetSpoolerBtn.setTooltip(new Tooltip("Emergency reset of the Windows Print Spooler (Requires Admin)"));
+        resetSpoolerBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
+        resetSpoolerBtn.setOnAction(e -> {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "This will force restart the Windows Print Spooler service. You may be prompted for Administrator permissions. Continue?", ButtonType.YES, ButtonType.NO);
+            alert.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.YES) {
+                    try {
+                        new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", "Start-Process powershell -ArgumentList '-NoProfile -Command Restart-Service -Name Spooler -Force' -Verb RunAs").start();
+                        com.printmanager.ui.Toast.show(stage, "Spooler Reset command dispatched.", 4000);
+                    } catch (Exception ex) {
+                        logger.error("Failed to reset spooler", ex);
+                        com.printmanager.ui.Toast.show(stage, "Error resetting spooler.", 4000);
+                    }
+                }
+            });
+        });
 
-        HBox btns = new HBox(15, addBtn, loadJsonBtn, fetchExamflowBtn, printBtn, clearBtn);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox btns = new HBox(15, addBtn, loadJsonBtn, fetchExamflowBtn, printBtn, clearBtn, spacer, resetSpoolerBtn);
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
@@ -962,6 +1016,17 @@ public class App extends Application {
             this.activeJobs = new SimpleStringProperty("0");
             this.currentTask = new SimpleStringProperty("Idle");
             this.monitor = new PrinterHealthMonitor(name);
+            
+            // Sync offline state immediately
+            this.monitor.healthStatusProperty().addListener((obs, old, val) -> {
+                if ("Offline".equalsIgnoreCase(val)) {
+                    Platform.runLater(() -> {
+                        this.status.set("Offline");
+                        this.activeJobs.set("-");
+                        this.currentTask.set("-");
+                    });
+                }
+            });
         }
 
         public String getName() { return name; }
@@ -982,8 +1047,7 @@ public class App extends Application {
     }
 
     private VBox createPrinterDashboardView() {
-        ObservableList<PrinterDisplay> printerDisplays = FXCollections.observableArrayList();
-        TableView<PrinterDisplay> table = new TableView<>(printerDisplays);
+        TableView<PrinterDisplay> table = new TableView<>(this.printerDisplays);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         table.getStyleClass().add("glass-panel");
 
@@ -1061,27 +1125,6 @@ public class App extends Application {
                 pd.getMonitor().start();
             });
 
-        Thread dashboardUpdater = new Thread(() -> {
-            while (true) {
-                try {
-                    Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
-                    Platform.runLater(() -> {
-                        for (PrinterDisplay pd : printerDisplays) {
-                            if (detailed.containsKey(pd.getName())) {
-                                Map<String, String> data = detailed.get(pd.getName());
-                                pd.setStatus(data.get("status"));
-                                pd.setActiveJobs(data.get("jobs"));
-                                pd.setCurrentTask(data.get("current"));
-                            }
-                        }
-                    });
-                    Thread.sleep(5000); 
-                } catch (InterruptedException e) { break; }
-                catch (Exception e) { logger.error("Dashboard error", e); }
-            }
-        });
-        dashboardUpdater.setDaemon(true);
-        dashboardUpdater.start();
 
         VBox layout = new VBox(20, new Label("Live Printer Activities:") {{ setStyle("-fx-font-size: 18px; -fx-font-weight: bold;"); }}, table);
         layout.setPadding(new Insets(30));
@@ -1536,7 +1579,7 @@ public class App extends Application {
             finally {
                 isPrintingAll = false;
                 if (printAllBtn != null) Platform.runLater(() -> {
-                    printAllBtn.setText("✔ Sent");
+                    printAllBtn.setText("âœ” Sent");
                     printAllBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
                     printAllBtn.setDisable(false);
                 });
@@ -1803,7 +1846,7 @@ public class App extends Application {
                                 }
                             }
                             if (!matched) {
-                                unmatchedFromJSON.add("❌ QP [" + qpCode + "] File NOT Loaded (Found in JSON but missing in App Queue)");
+                                unmatchedFromJSON.add("âŒ QP [" + qpCode + "] File NOT Loaded (Found in JSON but missing in App Queue)");
                                 activityLogger.error("No file found in queue for QP Code: " + qpCode);
                             }
                         }
@@ -1815,7 +1858,7 @@ public class App extends Application {
                 for (FileItem item : fileQueue) {
                     if (!matchedFiles.contains(item)) {
                         String qp = extractQPFromFileName(item.getFileName());
-                        unmatchedFromQueue.add("❌ QP [" + qp + "] No routing data found in Uploaded JSON (File: " + item.getFileName() + ")");
+                        unmatchedFromQueue.add("âŒ QP [" + qp + "] No routing data found in Uploaded JSON (File: " + item.getFileName() + ")");
                         activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
                     }
                 }
@@ -1973,7 +2016,7 @@ public class App extends Application {
                 }
             }
             if (!qpMatched) {
-                unmatchedFromCloud.add("❌ QP [" + qpCode + "] File NOT Loaded (Found in Cloud Data but missing in App Queue)");
+                unmatchedFromCloud.add("âŒ QP [" + qpCode + "] File NOT Loaded (Found in Cloud Data but missing in App Queue)");
                 activityLogger.error("Cloud Sync: No file found in queue for QP Code: " + qpCode);
             }
         }
@@ -1983,7 +2026,7 @@ public class App extends Application {
         for (FileItem item : fileQueue) {
             if (!updatedItems.contains(item)) {
                 String qp = extractQPFromFileName(item.getFileName());
-                unmatchedFromQueue.add("❌ QP [" + qp + "] No routing data found in Cloud Data (File: " + item.getFileName() + ")");
+                unmatchedFromQueue.add("âŒ QP [" + qp + "] No routing data found in Cloud Data (File: " + item.getFileName() + ")");
                 activityLogger.warn("Cloud Sync: File " + item.getFileName() + " has NO matching data in cloud.");
             }
         }
@@ -2363,30 +2406,35 @@ public class App extends Application {
         HBox roomSearchBox = new HBox(5, roomSearch, clearRoomSearchBtn);
         roomSearchBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
-        ScrollPane scrollPane = new ScrollPane();
-        FlowPane flowPane = new FlowPane();
-        flowPane.setPadding(new Insets(20)); flowPane.setHgap(20); flowPane.setVgap(20);
-        flowPane.prefWidthProperty().bind(scrollPane.widthProperty().subtract(20));
-
+        FilteredList<RoomGroup> filteredRooms = new FilteredList<>(roomGroupsList, p -> true);
         roomSearch.textProperty().addListener((obs, old, val) -> {
-            flowPane.getChildren().clear();
             String filter = val.toLowerCase();
-            roomGroupsList.stream()
-                .filter(g -> g.getRoomSerial().toLowerCase().contains(filter) || 
-                             g.getItems().stream().anyMatch(i -> i.getQpCode().toLowerCase().contains(filter)))
-                .forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+            filteredRooms.setPredicate(g -> filter.isEmpty() || 
+                g.getRoomSerial().toLowerCase().contains(filter) || 
+                g.getItems().stream().anyMatch(i -> i.getQpCode().toLowerCase().contains(filter)));
         });
 
-        roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
-            flowPane.getChildren().clear();
-            roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
+        ListView<RoomGroup> roomListView = new ListView<>(filteredRooms);
+        roomListView.setStyle("-fx-background-color: transparent; -fx-control-inner-background: transparent;");
+        
+        java.util.Map<RoomGroup, VBox> cardCache = new java.util.WeakHashMap<>();
+        roomListView.setCellFactory(lv -> new ListCell<RoomGroup>() {
+            @Override
+            protected void updateItem(RoomGroup group, boolean empty) {
+                super.updateItem(group, empty);
+                if (empty || group == null) {
+                    setGraphic(null);
+                    setStyle("-fx-background-color: transparent;");
+                } else {
+                    VBox card = cardCache.computeIfAbsent(group, g -> createRoomCard(g));
+                    setGraphic(card);
+                    setStyle("-fx-background-color: transparent; -fx-padding: 10px;");
+                    setAlignment(javafx.geometry.Pos.CENTER);
+                }
+            }
         });
-
-        // Initialize the view with any already loaded room groups
-        roomGroupsList.forEach(g -> flowPane.getChildren().add(createRoomCard(g)));
-
-        scrollPane.setContent(flowPane);
-        scrollPane.setFitToWidth(true);
+        
+        javafx.scene.Node scrollPane = roomListView;
 
         printCoverPageCbox.setSelected(config.isPrintCoverPage());
         printCoverPageCbox.setOnAction(e -> {
@@ -2397,10 +2445,10 @@ public class App extends Application {
         aiRoutingBtn.setSelected(config.isAiRoutingEnabled());
         Runnable updateAiBtnStyle = () -> {
             if (aiRoutingBtn.isSelected()) {
-                aiRoutingBtn.setGraphic(new Label("\u2705 🤖")); // Tick + Robot
+                aiRoutingBtn.setGraphic(new Label("\u2705 \uD83E\uDD16")); // Tick + Robot
                 aiRoutingBtn.setStyle("-fx-background-color: #e8f5e9; -fx-text-fill: #2e7d32; -fx-font-weight: bold; -fx-border-color: #2e7d32; -fx-border-radius: 3; -fx-font-size: 13px;");
             } else {
-                aiRoutingBtn.setGraphic(new Label("\u26AA 🤖")); // Empty circle + Robot
+                aiRoutingBtn.setGraphic(new Label("\u26AA \uD83E\uDD16")); // Empty circle + Robot
                 aiRoutingBtn.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
             }
         };
@@ -2423,6 +2471,7 @@ public class App extends Application {
         roomStapleAlert.managedProperty().bind(roomStapleAlert.visibleProperty());
         roomStapleAlert.opacityProperty().bind(globalPulseOpacity);
 
+        roomTotalCount.setStyle("-fx-font-weight: bold; -fx-text-fill: #1976D2; -fx-font-size: 14px;");
         roomTotalPP.setStyle("-fx-font-weight: bold; -fx-text-fill: #E91E63; -fx-font-size: 14px;");
 
         roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
@@ -2436,7 +2485,7 @@ public class App extends Application {
         roomGroupsList.forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> updateRoomAlerts()));
         updateRoomAlerts();
 
-        HBox roomAlertsBox = new HBox(8, roomTotalPP, roomMapAlert, roomStapleAlert);
+        HBox roomAlertsBox = new HBox(15, roomTotalCount, roomTotalPP, roomMapAlert, roomStapleAlert);
         roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
         Region spacer = new Region();
@@ -2454,10 +2503,14 @@ public class App extends Application {
 
     private VBox createRoomCard(RoomGroup group) {
         VBox card = new VBox(12);
-        String defaultStyle = "-fx-background-color: #ffffff; -fx-border-color: #e0e0e0; -fx-border-radius: 12; -fx-background-radius: 12; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.08), 15, 0, 0, 8);";
-        String finishedStyle = "-fx-background-color: #f9fdf9; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 12; -fx-background-radius: 12; -fx-padding: 15; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.15), 15, 0, 0, 8);";
+        
+        // Modern premium card styling
+        String defaultStyle = "-fx-background-color: #ffffff; -fx-border-color: #e3e8ee; -fx-border-width: 1; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.06), 20, 0, 0, 10);";
+        String finishedStyle = "-fx-background-color: #f2fcf5; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.2), 20, 0, 0, 10);";
+        
         card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
-        card.setPrefWidth(420); // Maintain spacious width
+        // Remove fixed PrefWidth so it naturally spans the VBox
+        card.setMaxWidth(Double.MAX_VALUE);
 
         group.statusProperty().addListener((obs, old, val) -> {
             if (val != null && val.contains("Finished")) card.setStyle(finishedStyle);
@@ -2494,11 +2547,12 @@ public class App extends Application {
         }, group.totalStudentsProperty());
 
         Label title = new Label("Room: " + group.getRoomSerial());
-        title.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #1a237e;");
+        title.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #1a237e; -fx-font-family: 'Segoe UI', sans-serif;");
         
         Label subtitle = new Label();
         subtitle.textProperty().bind(javafx.beans.binding.Bindings.concat("TOTAL STUDENTS: ", totalQtyBinding.asString()));
-        subtitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2e7d32; -fx-padding: 5px 0;");
+        // Modern Pill Badge style for subtitle
+        subtitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white; -fx-background-color: #2e7d32; -fx-padding: 6 15 6 15; -fx-background-radius: 20;");
 
         // Attachment logic for count listeners (syncs split files and updates room total)
         java.util.function.Consumer<RoomItem> attachListener = ri -> {
@@ -2523,22 +2577,25 @@ public class App extends Application {
         recalculateRoomTotal.run();
 
         Button addPaperBtn = new Button("+ Add Paper");
-        addPaperBtn.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 3 8; -fx-background-radius: 4;");
+        addPaperBtn.setStyle("-fx-background-color: #e3f2fd; -fx-text-fill: #1976d2; -fx-font-weight: bold; -fx-font-size: 13px; -fx-padding: 6 12; -fx-background-radius: 6; -fx-cursor: hand;");
         addPaperBtn.setOnAction(e -> showManualFilePicker(group));
 
         HBox titleBox = new HBox(15, title, addPaperBtn);
         titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
-        VBox headerArea = new VBox(2, titleBox, subtitle);
+        Region headerSpacer = new Region();
+        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
+
+        HBox headerArea = new HBox(titleBox, headerSpacer, subtitle);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
-        headerArea.setPadding(new Insets(10, 0, 10, 0));
+        headerArea.setPadding(new Insets(5, 0, 15, 0));
 
         TableView<RoomItem> table = new TableView<>(group.getItems());
         table.setPrefHeight(230);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        table.setStyle("-fx-font-size: 11px;");
+        table.setStyle("-fx-font-size: 13px; -fx-background-color: transparent;");
 
-        TableColumn<RoomItem, String> qpCol = new TableColumn<>("QP");
+        TableColumn<RoomItem, String> qpCol = new TableColumn<>("Question Paper");
         qpCol.setCellValueFactory(d -> {
             RoomItem ri = d.getValue();
             return javafx.beans.binding.Bindings.createStringBinding(() -> ri.getDisplayName(), ri.matchedFileProperty());
@@ -2570,7 +2627,7 @@ public class App extends Application {
             }
         });
         
-        TableColumn<RoomItem, String> styleCol = new TableColumn<>("M"); // Mode
+        TableColumn<RoomItem, String> styleCol = new TableColumn<>("Mode"); // Mode
         styleCol.setCellValueFactory(d -> {
             RoomItem ri = d.getValue();
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
@@ -2596,7 +2653,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, String> ppCol = new TableColumn<>("PS"); // Printed Sheets
+        TableColumn<RoomItem, String> ppCol = new TableColumn<>("Printed Sheets"); // Printed Sheets
         ppCol.setPrefWidth(45);
         ppCol.setCellValueFactory(d -> {
             RoomItem ri = d.getValue();
@@ -2618,7 +2675,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Q"); // Qty
+        TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Quantity"); // Qty
         countCol.setCellValueFactory(d -> new SimpleObjectProperty<>(d.getValue().getCount()));
         countCol.setPrefWidth(40);
         countCol.setCellFactory(tc -> new TableCell<RoomItem, Integer>() {
@@ -2634,7 +2691,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, String> statusCol = new TableColumn<>("S"); // Stat
+        TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status"); // Stat
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
         statusCol.setPrefWidth(65);
         statusCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
@@ -2653,7 +2710,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, Void> editCol = new TableColumn<>("E");
+        TableColumn<RoomItem, Void> editCol = new TableColumn<>("Edit");
         editCol.setPrefWidth(35);
         editCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button btn = new Button("E"); // Edit
@@ -2690,7 +2747,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, Void> logCol = new TableColumn<>("L");
+        TableColumn<RoomItem, Void> logCol = new TableColumn<>("Logs");
         logCol.setPrefWidth(35);
         logCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button aiBtn = new Button("L"); // Logs
@@ -2717,7 +2774,7 @@ public class App extends Application {
             }
         });
 
-        TableColumn<RoomItem, Void> delCol = new TableColumn<>("X");
+        TableColumn<RoomItem, Void> delCol = new TableColumn<>("Delete");
         delCol.setPrefWidth(35);
         delCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button btn = new Button("\u2715"); // X
@@ -2863,6 +2920,17 @@ public class App extends Application {
         String sentBtnStyle = "-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
         String errorBtnStyle = "-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 12; -fx-background-radius: 8;";
         
+        boolean initialDisabled = "None".equals(group.getSelectedPrinter()) || "Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(group.getSelectedPrinter(), "Ready"));
+        sendBtn.setDisable(initialDisabled);
+        
+        group.selectedPrinterProperty().addListener((obs, old, val) -> {
+            Platform.runLater(() -> {
+                if ("Sending...".equals(sendBtn.getText())) return;
+                boolean disabled = "None".equals(val) || "Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(val, "Ready"));
+                sendBtn.setDisable(disabled);
+            });
+        });
+
         sendBtn.setStyle(defaultBtnStyle);
         sendBtn.setOnAction(e -> {
             if ("Sending...".equals(sendBtn.getText())) return;
@@ -2905,8 +2973,10 @@ public class App extends Application {
                     } else {
                         sendBtn.setText("SEND PRINT BATCH");
                         sendBtn.setStyle(defaultBtnStyle);
-                        if (!"Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(group.getSelectedPrinter(), "Ready"))) {
+                        if (!"Offline".equalsIgnoreCase(printerStatusCache.getOrDefault(group.getSelectedPrinter(), "Ready")) && !"None".equals(group.getSelectedPrinter())) {
                             sendBtn.setDisable(false);
+                        } else {
+                            sendBtn.setDisable(true);
                         }
                     }
                 }
@@ -2937,36 +3007,37 @@ public class App extends Application {
         
         Runnable updateBtnState = () -> {
             String p = group.getSelectedPrinter();
-            if (p != null && !"None".equals(p)) {
-                String s = printerStatusCache.getOrDefault(p, "Ready");
-                Platform.runLater(() -> {
-                    if ("Offline".equalsIgnoreCase(s)) {
+            Platform.runLater(() -> {
+                if ("Sending...".equals(sendBtn.getText())) return;
+                if (p == null || "None".equals(p) || p.trim().isEmpty()) {
+                    printerIndicator.setText("\u26A0 NO PRINTER SELECTED");
+                    printerIndicator.setStyle("-fx-text-fill: #ff9800;");
+                    sendBtn.setDisable(true);
+                } else {
+                    String s = printerStatusCache.getOrDefault(p, "Ready");
+                    if ("Offline".equalsIgnoreCase(s) || "Other".equalsIgnoreCase(s) || "Unknown".equalsIgnoreCase(s)) {
                         printerIndicator.setText("\u26A0 PRINTER OFFLINE");
                         printerIndicator.setStyle("-fx-text-fill: #f44336;");
-                        if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(true);
+                        sendBtn.setDisable(true);
                     } else {
                         printerIndicator.setText("\u2714 Printer Ready (" + p + ")");
                         printerIndicator.setStyle("-fx-text-fill: #4CAF50;");
-                        if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(false);
+                        sendBtn.setDisable(false);
                     }
-                });
-            } else {
-                Platform.runLater(() -> { 
-                    printerIndicator.setText(""); 
-                    if (!"Sending...".equals(sendBtn.getText())) sendBtn.setDisable(false); 
-                });
-            }
+                }
+            });
         };
 
-        group.selectedPrinterProperty().addListener((o, ov, nv) -> updateBtnState.run());
-        Thread btnWatcher = new Thread(() -> {
-            while (true) {
-                try { Thread.sleep(2000); updateBtnState.run(); } 
-                catch (InterruptedException e) { break; }
+        javafx.collections.MapChangeListener<String, String> statusListener = change -> {
+            String p = group.getSelectedPrinter();
+            if (p != null && change.getKey().equals(p)) {
+                updateBtnState.run();
             }
-        });
-        btnWatcher.setDaemon(true);
-        btnWatcher.start();
+        };
+        printerStatusCache.addListener(new javafx.collections.WeakMapChangeListener<>(statusListener));
+        card.getProperties().put("statusListener", statusListener); // Strong reference to prevent GC while card exists
+        
+        group.selectedPrinterProperty().addListener((o, ov, nv) -> updateBtnState.run());
 
         Button delRoomBtn = new Button("\uD83D\uDDD1"); // Trash Bin icon
         delRoomBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #f44336; -fx-font-size: 18px; -fx-cursor: hand; -fx-padding: 0 0 0 10;");
@@ -3043,7 +3114,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics • v5.2 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics â€¢ v5.2 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3093,7 +3164,7 @@ public class App extends Application {
             "This ensures that Main Papers and MCQ parts are printed with the correct settings (e.g., Booklet for Main, Simplex for MCQ) automatically."), 0, 0);
             
         detailGrid.add(createDetailItem("The 'Temp-First' Safety Vault", 
-            "We prioritize your data integrity. Every operation—splitting, page removal, or adding Paper Code stamps—is performed on a temporary copy. " +
+            "We prioritize your data integrity. Every operationâ€”splitting, page removal, or adding Paper Code stampsâ€”is performed on a temporary copy. " +
             "Your original master PDFs in your Downloads or Archive folders remain 100% untouched and original."), 1, 0);
 
         detailGrid.add(createDetailItem("Aggressive QP Pattern Matching", 
@@ -3137,7 +3208,7 @@ public class App extends Application {
         footer.setAlignment(javafx.geometry.Pos.CENTER);
         footer.setPadding(new Insets(60, 0, 40, 0));
         
-        Label copyright = new Label("© 2026 Magnolia Creations. All Rights Reserved.");
+        Label copyright = new Label("Â© 2026 Magnolia Creations. All Rights Reserved.");
         copyright.setStyle("-fx-font-size: 14px; -fx-text-fill: #90a4ae;");
         
         HBox configInfo = new HBox(10, new Label("Configuration Storage:"), new TextField(configManager.getConfigPath()) {{ setEditable(false); setPrefWidth(500); setStyle("-fx-background-color: #eceff1; -fx-text-fill: #546e7a; -fx-font-size: 11px;"); }});
@@ -3172,7 +3243,7 @@ public class App extends Application {
 
     private VBox createDetailItem(String title, String desc) {
         VBox box = new VBox(12);
-        Label lblTitle = new Label("★ " + title);
+        Label lblTitle = new Label("â˜… " + title);
         lblTitle.setStyle("-fx-font-size: 19px; -fx-font-weight: bold; -fx-text-fill: #1b263b;");
         Label lblDesc = new Label(desc);
         lblDesc.setWrapText(true);
@@ -3223,6 +3294,7 @@ public class App extends Application {
                     }
                 }
             }
+            roomTotalCount.setText("Total Rooms: " + roomGroupsList.size());
             roomTotalPP.setText("Total PP: " + totalPPVal);
         });
     }
@@ -4324,7 +4396,7 @@ public class App extends Application {
                                 "              for (var i = 0; i < btns.length; i++) { " +
                                 "                (function(idx) { setTimeout(function() { " +
                                 "                  var progress = (idx + 1) + '/' + btns.length; " +
-                                "                  b.innerText = '⌛ Processing ' + progress + '...'; " +
+                                "                  b.innerText = 'âŒ› Processing ' + progress + '...'; " +
                                 "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
                                 "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\\\s+/g, '_') : '00_00_AM'; " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\\\-]/g, '.'); " +
@@ -4337,7 +4409,7 @@ public class App extends Application {
                                 "                  var paperName = (r.cells[cols.paper]) ? r.cells[cols.paper].innerText.replace(/[^a-z0-9]/gi, '_') : 'Subject'; " +
                                 "                  var fname = prefix + '_' + dp + '_' + tVal + '_' + qpCode + '_' + paperName; " +
                                 "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
-                                "                  if (idx === btns.length - 1) { b.innerText = '✓ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
+                                "                  if (idx === btns.length - 1) { b.innerText = 'âœ“ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
                                 "                }, idx * delayBase); })(i); " +
                                 "              } " +
                                 "            }}); " +
@@ -4475,14 +4547,14 @@ public class App extends Application {
 "              } " +
 "            }); " +
 "            if (missingInPortal.length > 0 || missingInExamflow.length > 0) { " +
-"              var alertMsg = '⚠️ MATCHING REPORT ⚠️\\n\\n'; " +
+"              var alertMsg = 'âš ï¸ MATCHING REPORT âš ï¸\\n\\n'; " +
 "              if (missingInPortal.length > 0) { " +
-"                alertMsg += '❌ MISSING IN PORTAL (These courses need manual mapping):\\n' + missingInPortal.join('\\n') + '\\n\\n'; " +
+"                alertMsg += 'âŒ MISSING IN PORTAL (These courses need manual mapping):\\n' + missingInPortal.join('\\n') + '\\n\\n'; " +
 "              } " +
 "              if (missingInExamflow.length > 0) { " +
 "                var uniqueMissing = []; " +
 "                missingInExamflow.forEach(function(m){ if(uniqueMissing.indexOf(m)===-1) uniqueMissing.push(m); }); " +
-"                alertMsg += '❌ MISSING IN EXAMFLOW (These portal codes were not used):\\n' + uniqueMissing.join('\\n') + '\\n'; " +
+"                alertMsg += 'âŒ MISSING IN EXAMFLOW (These portal codes were not used):\\n' + uniqueMissing.join('\\n') + '\\n'; " +
 "              } " +
 "              setTimeout(function(){ alert(alertMsg); }, 500); " +
 "            } " +
@@ -4500,7 +4572,7 @@ public class App extends Application {
                                 "              var st = document.getElementById('qp-code-status'); " +
                                 "              if (st) { " +
                                 "                st.style.color = '#28a745'; " +
-                                "                st.innerText = '✅ Auto-filled ' + matched + ' codes from Portal. Click SAVE QP Codes below.'; " +
+                                "                st.innerText = 'âœ… Auto-filled ' + matched + ' codes from Portal. Click SAVE QP Codes below.'; " +
                                 "              } " +
                                 "            } " +
                                 "          }; " +
@@ -4508,7 +4580,7 @@ public class App extends Application {
                                 "        window.portalError = function(msg) { " +
                                 "             var fb = document.getElementById('smart-fetch-btn'); " +
                                 "             if (fb) { " +
-                                "                fb.innerText = '❌ ' + msg.toUpperCase(); " +
+                                "                fb.innerText = 'âŒ ' + msg.toUpperCase(); " +
                                 "                fb.style.background = '#f44336'; " +
                                 "                setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); " +
                                 "             } " +
@@ -4521,10 +4593,10 @@ public class App extends Application {
                                 "              var fb = document.createElement('button'); fb.id = 'smart-fetch-btn'; fb.innerText = 'FETCH FROM PORTAL TAB'; " +
                                 "              fb.style.cssText = 'font-size:12px; background:#4CAF50; color:white; border:none; padding:8px 15px; border-radius:4px; margin:10px 0; cursor:pointer; font-weight:bold; width:100%; display:block;'; " +
                                 "              fb.onclick = function() { " +
-                                "                fb.innerText = '⌛ Connecting...'; fb.style.background = '#ff9800'; " +
+                                "                fb.innerText = 'âŒ› Connecting...'; fb.style.background = '#ff9800'; " +
                                 "                window.cefQuery({ request: 'request_portal_data', " +
-                                "                  onSuccess: function() { fb.innerText = '✔ Sync Sent'; fb.style.background = '#4CAF50'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; }, 3000); }, " +
-                                "                  onFailure: function(e, m) { fb.innerText = '❌ ' + m.toUpperCase(); fb.style.background = '#f44336'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); } " +
+                                "                  onSuccess: function() { fb.innerText = 'âœ” Sync Sent'; fb.style.background = '#4CAF50'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; }, 3000); }, " +
+                                "                  onFailure: function(e, m) { fb.innerText = 'âŒ ' + m.toUpperCase(); fb.style.background = '#f44336'; setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); } " +
                                 "                }); " +
                                 "              }; " +
                                 "              header.parentNode.insertBefore(fb, header.nextSibling); " +

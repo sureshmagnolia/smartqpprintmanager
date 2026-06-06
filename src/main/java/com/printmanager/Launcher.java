@@ -111,10 +111,23 @@ public class Launcher {
         title.setForeground(Color.WHITE);
         title.setBorder(BorderFactory.createEmptyBorder(170, 0, 10, 0));
 
-        JLabel status = new JLabel("Waking up the printing hamsters...", SwingConstants.CENTER);
+        JLabel status = new JLabel("Initializing Application Components...", SwingConstants.CENTER);
         status.setFont(new Font("Segoe UI", Font.ITALIC, 14));
         status.setForeground(new Color(255, 255, 255, 200));
         status.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
+
+        JProgressBar loaderBar = new JProgressBar(0, 100);
+        loaderBar.setStringPainted(false);
+        loaderBar.setIndeterminate(false);
+        loaderBar.setValue(0);
+        loaderBar.setPreferredSize(new Dimension(300, 4));
+        loaderBar.setBorderPainted(false);
+        loaderBar.setForeground(new Color(255, 255, 255, 200));
+        loaderBar.setBackground(new Color(0, 0, 0, 50));
+        
+        JPanel loaderPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        loaderPanel.setOpaque(false);
+        loaderPanel.add(loaderBar);
 
         JLabel branding = new JLabel("Product of Magnolia Creations", SwingConstants.CENTER);
         branding.setFont(new Font("Segoe UI", Font.BOLD, 12));
@@ -123,38 +136,37 @@ public class Launcher {
 
         panel.add(title, BorderLayout.CENTER);
         
-        JPanel southPanel = new JPanel(new GridLayout(2, 1));
+        JPanel southPanel = new JPanel(new BorderLayout());
         southPanel.setOpaque(false);
-        southPanel.add(status);
-        southPanel.add(branding);
+        
+        JPanel statusPanel = new JPanel(new GridLayout(2, 1));
+        statusPanel.setOpaque(false);
+        statusPanel.add(status);
+        statusPanel.add(loaderPanel);
+        
+        southPanel.add(statusPanel, BorderLayout.CENTER);
+        southPanel.add(branding, BorderLayout.SOUTH);
         panel.add(southPanel, BorderLayout.SOUTH);
 
         splash.setContentPane(panel);
         splash.setVisible(true);
-
-        // Satirical loading messages
-        String[] messages = {
-            "Waking up the printing hamsters...",
-            "Negotiating with paper jams...",
-            "Extracting quantum ink from the ether...",
-            "Bypassing university server rate limits...",
-            "Decrypting Question Papers (Just kidding!)...",
-            "Convincing the printer not to sleep...",
-            "Reticulating splines...",
-            "Polishing the UI pixels...",
-            "Firing up the Chromium engine...",
-            "Loading... Almost there... Probably..."
-        };
 
         Timer timer = new Timer(40, e -> {
             panel.repaint();
         });
         timer.start();
 
-        Timer textTimer = new Timer(1500, e -> {
-            int idx = (int) (Math.random() * messages.length);
-            status.setText(messages[idx]);
+        Timer loaderTimer = new Timer(20, e -> {
+            int v = loaderBar.getValue();
+            if (v < 90) {
+                loaderBar.setValue(v + 1);
+            } else if (v < 99) {
+                loaderBar.setValue(v + (Math.random() > 0.8 ? 1 : 0));
+            }
+            if (v > 20 && v < 60) status.setText("Loading PDF Engine...");
+            else if (v >= 60 && v < 85) status.setText("Connecting to JNA Winspool API...");
+            else if (v >= 85) status.setText("Starting UI Interface...");
         });
-        textTimer.start();
+        loaderTimer.start();
     }
 }

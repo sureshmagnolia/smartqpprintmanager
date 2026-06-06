@@ -1,4 +1,2 @@
 @echo off
-set /p CP=<cp.txt
-java -cp ".;target\classes;%CP%" com.printmanager.Launcher
-
+powershell -ExecutionPolicy Bypass -File run-app.ps1

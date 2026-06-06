@@ -41,86 +41,58 @@ public class PrintService {
         return (defaultService != null) ? defaultService.getName() : "None";
     }
 
+    private static final int PRINTER_STATUS_OFFLINE = 0x00000080;
+    private static final int PRINTER_STATUS_ERROR = 0x00000002;
+    private static final int PRINTER_STATUS_PAPER_JAM = 0x00000008;
+    private static final int PRINTER_STATUS_PAPER_OUT = 0x00000010;
+    private static final int PRINTER_STATUS_NOT_AVAILABLE = 0x00001000;
+    private static final int PRINTER_STATUS_PRINTING = 0x00000400;
+    private static final int PRINTER_STATUS_PAUSED = 0x00000001;
+
     public Map<String, Map<String, String>> getPrintersDetailedStatus() {
         Map<String, Map<String, String>> detailedMap = new HashMap<>();
         try {
-            // Using Get-CimInstance with .NET Ping for robust reachability check on PS 5.1
-            String script = 
-                "Get-CimInstance -ClassName Win32_Printer | Select-Object Name, PrinterStatus, WorkOffline, PortName | ForEach-Object { " +
-                "  $isOffline = $_.WorkOffline; " +
-                "  if (-not $isOffline -and ($_.PortName -like 'IP_*' -or $_.PortName -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$')) { " +
-                "    $ip = $_.PortName -replace 'IP_', ''; " +
-                "    try { " +
-                "      $ping = New-Object System.Net.NetworkInformation.Ping; " +
-                "      $reply = $ping.Send($ip, 1000); " +
-                "      if ($reply.Status -ne 'Success') { $isOffline = $true } " +
-                "    } catch { $isOffline = $true } " +
-                "  }; " +
-                "  [PSCustomObject]@{ " +
-                "    Name = $_.Name; " +
-                "    Status = $_.PrinterStatus; " +
-                "    Offline = $isOffline " +
-                "  } " +
-                "} | ConvertTo-Json";
-
-            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script);
-            Process p = pb.start();
-            
-            // Add timeout for PowerShell process to prevent hanging the whole app
-            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                logger.warn("Printer status PowerShell script timed out");
-                p.destroyForcibly();
-                return detailedMap;
+            com.sun.jna.platform.win32.Winspool.PRINTER_INFO_2[] printers = com.sun.jna.platform.win32.WinspoolUtil.getPrinterInfo2();
+            if (printers == null || printers.length == 0) {
+                throw new IllegalStateException("Failed to query Winspool or 0 printers returned");
             }
-
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode printers = mapper.readTree(p.getInputStream());
-            
-            Consumer<com.fasterxml.jackson.databind.JsonNode> initNode = node -> {
-                String name = node.path("Name").asText();
-                if (name.isEmpty()) return;
+            for (com.sun.jna.platform.win32.Winspool.PRINTER_INFO_2 p : printers) {
                 Map<String, String> data = new HashMap<>();
-                int statusInt = node.path("Status").asInt(0);
-                boolean isOffline = node.path("Offline").asBoolean(false);
+                data.put("name", p.pPrinterName);
+                data.put("jobs", String.valueOf(p.cJobs));
                 
-                // Detailed Status check
-                String statusStr = isOffline ? "Offline" : (statusInt == 3 ? "Ready" : "Other");
-                if (statusInt == 4) statusStr = "Printing";
-                if (statusInt == 7) statusStr = "Offline";
+                boolean isOffline = (p.Status & PRINTER_STATUS_OFFLINE) != 0 || 
+                                    (p.Status & PRINTER_STATUS_NOT_AVAILABLE) != 0 ||
+                                    (p.Status & PRINTER_STATUS_ERROR) != 0;
                 
+                String statusStr = isOffline ? "Offline" : "Ready";
+                if ((p.Status & PRINTER_STATUS_PRINTING) != 0) statusStr = "Printing";
+                if ((p.Status & PRINTER_STATUS_PAUSED) != 0) statusStr = "Paused";
+                if ((p.Status & PRINTER_STATUS_PAPER_JAM) != 0) statusStr = "Jam";
+                if ((p.Status & PRINTER_STATUS_PAPER_OUT) != 0) statusStr = "Out of Paper";
+                
+                // If it claims to be Ready but has jobs, it is printing or warming up
+                if ("Ready".equals(statusStr) && p.cJobs > 0) statusStr = "Printing";
+
                 data.put("status", statusStr);
-                data.put("jobs", "0");
-                data.put("current", "Idle");
-                detailedMap.put(name, data);
-            };
-
-            if (printers.isArray()) for (com.fasterxml.jackson.databind.JsonNode n : printers) initNode.accept(n);
-            else if (printers.isObject()) initNode.accept(printers);
-
-            // Fetch Active Job Details
-            ProcessBuilder pbJobs = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", 
-                "Get-CimInstance -ClassName Win32_PrintJob | Select-Object Name, Document | ConvertTo-Json");
-            Process pJobs = pbJobs.start();
-            com.fasterxml.jackson.databind.JsonNode jobs = mapper.readTree(pJobs.getInputStream());
-
-            Consumer<com.fasterxml.jackson.databind.JsonNode> processJob = node -> {
-                String fullName = node.path("Name").asText();
-                if (fullName.contains(",")) {
-                    String printerName = fullName.substring(0, fullName.lastIndexOf(",")).trim();
-                    if (detailedMap.containsKey(printerName)) {
-                        Map<String, String> data = detailedMap.get(printerName);
-                        int count = Integer.parseInt(data.get("jobs")) + 1;
-                        data.put("jobs", String.valueOf(count));
-                        data.put("current", node.path("Document").asText("Unknown"));
-                        if (!"Offline".equals(data.get("status"))) data.put("status", "Printing");
-                    }
+                data.put("current", p.cJobs > 0 ? "Printing job..." : "Idle");
+                
+                detailedMap.put(p.pPrinterName, data);
+            }
+        } catch (Throwable e) {
+            logger.error("JNA EnumPrinters failed, falling back to basic javax.print", e);
+            try {
+                for (javax.print.PrintService ps : java.awt.print.PrinterJob.lookupPrintServices()) {
+                    Map<String, String> data = new HashMap<>();
+                    data.put("status", "Unknown");
+                    data.put("jobs", "0");
+                    data.put("current", "Idle");
+                    detailedMap.put(ps.getName(), data);
                 }
-            };
-
-            if (jobs.isArray()) for (com.fasterxml.jackson.databind.JsonNode j : jobs) processJob.accept(j);
-            else if (jobs.isObject()) processJob.accept(jobs);
-
-        } catch (Exception e) { logger.error("Detailed status error", e); }
+            } catch (Exception inner) {
+                 logger.error("javax.print fallback failed", inner);
+            }
+        }
         return detailedMap;
     }
 

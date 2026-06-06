@@ -56,16 +56,17 @@
     -fx-text-fill: white;
 }
 
-.table-view {
-    -fx-background-color: transparent;
-    -fx-selection-bar: #e3f2fd;
+.table-view .column-header-background,
+.table-view .column-header-background .filler,
+.table-view .column-header {
+    -fx-background-color: #eeeeee !important;
+    -fx-border-color: #dddddd !important;
+    -fx-border-width: 0 0 1 0 !important;
 }
 
-.table-view .column-header {
-    -fx-background-color: #eeeeee;
-    -fx-border-color: #dddddd;
-    -fx-border-width: 0 0 1 0;
-    -fx-padding: 10;
+.table-view .column-header .label {
+    -fx-text-fill: black !important;
+    -fx-font-weight: bold !important;
 }
 
 .table-row-cell:odd {
