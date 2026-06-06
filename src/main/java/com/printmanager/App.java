@@ -88,6 +88,8 @@ public class App extends Application {
     private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(2);
 
+
+    private ValidationService validationService;
     private Config config;
     private AppState appState;
     private final ObservableList<FileItem> fileQueue = FXCollections.observableArrayList(item -> new javafx.beans.Observable[] {
@@ -304,205 +306,15 @@ public class App extends Application {
             roomGroupsList.forEach(this::setupRoomGroupListeners);
         });
 
+
+        validationService = new ValidationService(this, roomGroupsList, fileQueue, activityLogger, healthCheckRibbon);
         activityLogger.info("Application started");
 
         startPrinterStatusMonitor();
         updateSimulationUI();
         
         // Perform Startup Health Check
-        Platform.runLater(this::validateAppState);
-    }
-
-    private void validateAppState() {
-        validateAppState(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
-    }
-
-    private void validateAppState(List<String> extraErrors, List<String> extraWarnings, List<String> extraInfo) {
-        List<String> missingFromQueue = new ArrayList<>(extraErrors);   // In JSON but NOT in Queue
-        List<String> missingFromJSON = new ArrayList<>(extraInfo);      // In Queue but NOT in JSON
-        List<String> unroutedWarnings = new ArrayList<>(extraWarnings); // In both, but no printer
-
-        // 1. Map all QPs in Queue and identify which files are actually routed
-        java.util.Map<String, FileItem> queueMap = new java.util.HashMap<>();
-        java.util.Set<FileItem> routedFiles = new java.util.HashSet<>();
-        java.util.Set<String> routedQPs = new java.util.HashSet<>();
-
-        for (RoomGroup group : roomGroupsList) {
-            for (RoomItem ri : group.getItems()) {
-                if (ri.getMatchedFile() != null) {
-                    routedFiles.add(ri.getMatchedFile());
-                    String qp = extractQPFromFileName(ri.getMatchedFile().getFileName()).toUpperCase();
-                    if (!qp.isEmpty()) routedQPs.add(qp);
-                }
-            }
-        }
-
-        for (FileItem item : fileQueue) {
-            String qp = extractQPFromFileName(item.getFileName());
-            if (!qp.isEmpty()) {
-                queueMap.put(qp.toUpperCase(), item);
-            }
-        }
-
-        // 2. Map all QPs in JSON (Room Groups)
-        java.util.Set<String> jsonQPs = new java.util.HashSet<>();
-        for (RoomGroup group : roomGroupsList) {
-            for (RoomItem item : group.getItems()) {
-                String qp = item.getQpCode();
-                if (qp != null && !qp.isEmpty()) {
-                    jsonQPs.add(qp.toUpperCase());
-                }
-            }
-        }
-
-        // --- THE MATCHING LOGIC (Two-Way Sync) ---
-
-        // A. Check for files in Queue that are NOT in the JSON (or are redundant masters)
-        for (FileItem item : fileQueue) {
-            String fileName = item.getFileName();
-            String qp = extractQPFromFileName(fileName).toUpperCase();
-            
-            // --- Improved Master Detection: Is this file redundant? ---
-            // A file is redundant if another file for the same QP exists with HIGHER specificity.
-            boolean isMaster = false;
-            if (!qp.isEmpty()) {
-                int myLevel = getSpecificityLevel(fileName);
-                for (FileItem other : fileQueue) {
-                    if (other == item) continue;
-                    if (qp.equalsIgnoreCase(extractQPFromFileName(other.getFileName()))) {
-                        if (getSpecificityLevel(other.getFileName()) > myLevel) {
-                            isMaster = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (isMaster) {
-                item.setStatus("Split Master (Idle)");
-                // Do not flag masters as errors/warnings
-                continue; 
-            }
-
-            boolean isRouted = routedFiles.contains(item);
-            if (qp.isEmpty() || !jsonQPs.contains(qp)) {
-                missingFromJSON.add("❌ QP [" + (qp.isEmpty() ? "UNKNOWN" : qp) + "] Routing Data Missing: File " + item.getFileName() + " has no entry in JSON.");
-                item.setStatus("No JSON Entry");
-            } else {
-                // If it IS in JSON, verify it has a printer assigned
-                if (item.getTargetPrinter() == null || "None".equals(item.getTargetPrinter()) || item.getTargetPrinter().isEmpty()) {
-                    // TRIPLE CHECK: If it's already in a room card (isRouted), don't flag it as a routing issue
-                    if (!isRouted) {
-                        unroutedWarnings.add("⚠️ QP [" + qp + "] No Printer Assigned to " + item.getFileName());
-                    }
-                }
-            }
-        }
-
-        // B. Check for QPs in JSON that are NOT in the Queue
-        for (String qp : jsonQPs) {
-            if (!queueMap.containsKey(qp)) {
-                missingFromQueue.add("❌ QP [" + qp + "] Required by JSON but PDF is NOT LOADED");
-            }
-        }
-
-        // C. Check disk for orphans (as extra info)
-        File sessionDir = getSessionDir();
-        if (sessionDir != null && sessionDir.exists()) {
-            File[] files = sessionDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".pdf"));
-            if (files != null) {
-                for (File f : files) {
-                    String qp = extractQPFromFileName(f.getName()).toUpperCase();
-                    if (!qp.isEmpty() && !queueMap.containsKey(qp)) {
-                        missingFromJSON.add("ℹ️ QP [" + qp + "] File found on disk but NOT loaded in App: " + f.getName());
-                    }
-                }
-            }
-        }
-
-        // 4. Update Compact Alert UI
-        Runnable updateUI = () -> {
-            healthCheckRibbon.getChildren().clear();
-            int totalErrors = missingFromQueue.size() + missingFromJSON.stream().filter(s -> s.startsWith("❌")).collect(Collectors.toList()).size();
-            int totalWarnings = unroutedWarnings.size();
-
-            if (totalErrors == 0 && totalWarnings == 0) {
-                healthCheckRibbon.setVisible(false);
-                healthCheckRibbon.setManaged(false);
-                activityLogger.success("Health Check: All files verified and synchronized with JSON.");
-            } else {
-                healthCheckRibbon.setVisible(true);
-                healthCheckRibbon.setManaged(true);
-                healthCheckRibbon.setSpacing(10);
-                healthCheckRibbon.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-                healthCheckRibbon.setStyle("-fx-background-color: #333; -fx-padding: 5 15;");
-
-                Label alertLabel = new Label("STATIONERY HEALTH:");
-                alertLabel.setStyle("-fx-text-fill: #aaa; -fx-font-weight: bold; -fx-font-size: 11px;");
-
-                Button detailBtn = new Button();
-                String btnText = "";
-                if (totalErrors > 0) btnText += "❌ " + totalErrors + " CRITICAL ERRORS ";
-                if (totalWarnings > 0) btnText += "⚠️ " + totalWarnings + " ROUTING ISSUES";
-                detailBtn.setText(btnText.trim());
-                detailBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 2 10; -fx-cursor: hand;");
-                
-                detailBtn.setOnAction(e -> showDetailedHealthReport(missingFromQueue, missingFromJSON, unroutedWarnings));
-
-                Button refreshBtn = new Button("Re-Scan");
-                refreshBtn.setStyle("-fx-font-size: 10px; -fx-padding: 1 8;");
-                refreshBtn.setOnAction(e -> validateAppState());
-
-                healthCheckRibbon.getChildren().addAll(alertLabel, detailBtn, new Region() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, refreshBtn);
-                
-                // Also log to activity logger
-                missingFromQueue.forEach(msg -> activityLogger.error("Health Check: " + msg));
-                missingFromJSON.forEach(msg -> {
-                    if (msg.startsWith("❌")) activityLogger.error("Health Check: " + msg);
-                    else activityLogger.info("Health Check: " + msg);
-                });
-                unroutedWarnings.forEach(msg -> activityLogger.warn("Health Check: " + msg));
-            }
-        };
-
-        if (Platform.isFxApplicationThread()) {
-            updateUI.run();
-        } else {
-            Platform.runLater(updateUI);
-        }
-    }
-
-    private void showDetailedHealthReport(List<String> missing, List<String> newOnDisk, List<String> unrouted) {
-        Alert alert = new Alert(Alert.AlertType.WARNING);
-        alert.setTitle("Stationery & Data Health Report");
-        alert.setHeaderText("Discrepancies detected in your session data");
-        
-        StringBuilder sb = new StringBuilder();
-        if (!missing.isEmpty()) {
-            sb.append("❌ MISSING PAPERS (In Queue but not on Disk):\n");
-            missing.forEach(m -> sb.append("  ").append(m).append("\n"));
-            sb.append("\n");
-        }
-        if (!newOnDisk.isEmpty()) {
-            sb.append("❌ DATA MISSING (PDF on Disk but not in Queue):\n");
-            newOnDisk.forEach(m -> sb.append("  ").append(m).append("\n"));
-            sb.append("\n");
-        }
-        if (!unrouted.isEmpty()) {
-            sb.append("⚠️ ROUTING ISSUES (No Printer Assigned):\n");
-            unrouted.forEach(m -> sb.append("  ").append(m).append("\n"));
-        }
-
-        TextArea textArea = new TextArea(sb.toString());
-        textArea.setEditable(false);
-        textArea.setWrapText(true);
-        textArea.setPrefHeight(450);
-        textArea.setPrefWidth(600);
-        textArea.setStyle("-fx-font-family: 'Consolas', 'Monospace'; -fx-font-size: 12px;");
-
-        alert.getDialogPane().setExpandableContent(textArea);
-        alert.getDialogPane().setExpanded(true);
-        alert.show();
+        Platform.runLater(validationService::validateAppState);
     }
 
     private void updateSimulationUI() {
@@ -1111,7 +923,7 @@ public class App extends Application {
                     fileQueue.clear();
                     roomGroupsList.clear();
                     saveConfigs();
-                    validateAppState();
+                    validationService.validateAppState();
                 }
             });
         });
@@ -2009,9 +1821,9 @@ public class App extends Application {
                 }
 
                 if (!unmatchedFromQueue.isEmpty() || !unmatchedFromJSON.isEmpty()) {
-                    validateAppState(unmatchedFromJSON, unmatchedFromQueue, new ArrayList<>());
+                    validationService.validateAppState(unmatchedFromJSON, unmatchedFromQueue, new ArrayList<>());
                 } else {
-                    validateAppState();
+                    validationService.validateAppState();
                 }
 
                 final int finalUpdated = countUpdated;
@@ -2177,9 +1989,9 @@ public class App extends Application {
         }
 
         if (!unmatchedFromQueue.isEmpty() || !unmatchedFromCloud.isEmpty()) {
-            validateAppState(unmatchedFromCloud, unmatchedFromQueue, new ArrayList<>());
+            validationService.validateAppState(unmatchedFromCloud, unmatchedFromQueue, new ArrayList<>());
         } else {
-            validateAppState();
+            validationService.validateAppState();
         }
 
         final int finalUpdated = countUpdated;
@@ -2210,7 +2022,7 @@ public class App extends Application {
         }
     }
 
-    private String extractQPFromFileName(String fileName) {
+    public String extractQPFromFileName(String fileName) {
         if (fileName == null || fileName.isEmpty()) return "";
         
         List<String> candidates = new ArrayList<>();
@@ -2254,7 +2066,7 @@ public class App extends Application {
         return qp;
     }
 
-    private int getSpecificityLevel(String fileName) {
+    public int getSpecificityLevel(String fileName) {
         if (fileName == null) return 0;
         String name = fileName.toUpperCase();
         if (name.contains("SPLIT_") || name.contains("REMAIN_") || name.contains("PART_")) return 3;
@@ -2407,15 +2219,14 @@ public class App extends Application {
 
     private boolean isAlertItem(FileItem item) {
         if (item == null) return false;
-        boolean isMap = item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+        boolean isMap = hasMapKeywords(item);
         boolean isStaple = "Booklet".equals(item.getStyle()) && calculatePP(item) > 1;
         return isMap || isStaple;
     }
 
     private boolean isAlertRoomItem(RoomItem item) {
         if (item == null) return false;
-        boolean isMap = (item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
-                        (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history"));
+        boolean isMap = item.getMatchedFile() != null && hasMapKeywords(item.getMatchedFile());
         boolean isStaple = false;
         if (item.getMatchedFile() != null) {
             FileItem f = item.getMatchedFile();
@@ -2424,6 +2235,15 @@ public class App extends Application {
         return isMap || isStaple;
     }
 
+
+    private static final java.util.regex.Pattern HISTORY_PATTERN = java.util.regex.Pattern.compile("\\bhistory\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern MAP_PATTERN = java.util.regex.Pattern.compile("\\bmap\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private boolean hasMapKeywords(FileItem item) {
+        if (item == null || item.getContent() == null) return false;
+        String content = item.getContent();
+        return HISTORY_PATTERN.matcher(content).find() && MAP_PATTERN.matcher(content).find();
+    }
     private void updateRowStyle(TableRow<FileItem> row, String status) {
         FileItem item = row.getItem();
         if (item == null) {
@@ -2434,7 +2254,7 @@ public class App extends Application {
             return;
         }
 
-        boolean isMap = item.getFileName() != null && item.getFileName().toLowerCase().contains("history");
+        boolean isMap = hasMapKeywords(item);
         boolean isStaple = "Booklet".equals(item.getStyle()) && calculatePP(item) > 1;
 
         // Reset bindings
@@ -2527,7 +2347,7 @@ public class App extends Application {
                 if (response == ButtonType.OK) {
                     roomGroupsList.clear();
                     saveConfigs();
-                    validateAppState();
+                    validationService.validateAppState();
                 }
             });
         });
@@ -2939,8 +2759,7 @@ public class App extends Application {
 
                 if (item == null) { row.setStyle(""); return; }
 
-                boolean isMap = (item.getPdfFileName() != null && item.getPdfFileName().toLowerCase().contains("history")) || 
-                                (item.getCourseName() != null && item.getCourseName().toLowerCase().contains("history"));
+                boolean isMap = item.getMatchedFile() != null && hasMapKeywords(item.getMatchedFile());
                 
                 boolean isStaple = false;
                 if (item.getMatchedFile() != null) {
@@ -3390,7 +3209,7 @@ public class App extends Application {
 
     private void updateRoomAlerts() {
         Platform.runLater(() -> {
-            boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getPdfFileName() != null && i.getPdfFileName().toLowerCase().contains("history")) || (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+            boolean hasHistory = roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> i.getMatchedFile() != null && hasMapKeywords(i.getMatchedFile()));
             boolean hasStaple = roomGroupsList.stream().flatMap(g -> g.getItems().stream())
                                   .anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
             roomMapAlert.setVisible(hasHistory);
@@ -3410,8 +3229,7 @@ public class App extends Application {
 
     private void refreshGlobalAlerts() {
         Platform.runLater(() -> {
-            boolean hasHistory = fileQueue.stream().anyMatch(f -> f.getFileName() != null && f.getFileName().toLowerCase().contains("history")) ||
-                                 roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> (i.getCourseName() != null && i.getCourseName().toLowerCase().contains("history")));
+            boolean hasHistory = fileQueue.stream().anyMatch(f -> hasMapKeywords(f)) || roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> i.getMatchedFile() != null && hasMapKeywords(i.getMatchedFile()));
             
             boolean hasStaple = fileQueue.stream().anyMatch(f -> "Booklet".equals(f.getStyle()) && calculatePP(f) > 1) ||
                                  roomGroupsList.stream().flatMap(g -> g.getItems().stream()).anyMatch(i -> i.getMatchedFile() != null && "Booklet".equals(i.getMatchedFile().getStyle()) && calculatePP(i.getMatchedFile()) > 1);
@@ -3714,7 +3532,7 @@ public class App extends Application {
         Platform.runLater(() -> {
             roomGroupsList.setAll(groups.values());
             refreshGlobalAlerts();
-            validateAppState(); // Trigger Health Check after room load
+            validationService.validateAppState(); // Trigger Health Check after room load
             activityLogger.success("Room Routing complete: " + finalGroupSize + " rooms, " + finalMatched + " matched.");
             updateStatus("Ready. " + finalGroupSize + " rooms loaded.");
             globalProgressVisible.set(false);
@@ -4549,50 +4367,136 @@ public class App extends Application {
                                 "            }); " +
                                 "            if (parsedPairs.length === 0) return; " +
                                 "            var matched = 0; " +
-                                "            function sanitizeCourse(name) { " +
-                                "              if (!name) return ''; " +
-                                "              return name.replace(/[\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]/g, ' ') " +
-                                "                         .replace(/[^a-zA-Z0-9\\s()+\\-]/g, '') " +
-                                "                         .replace(/\\s+/g, ' ') " +
-                                "                         .trim(); " +
-                                "            } " +
-                                "            document.querySelectorAll('#qp-code-container input[data-course]').forEach(function(input) { " +
-                                "              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
-                                "              var streamName = (input.dataset.stream || '').toUpperCase(); " +
-                                "              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
-                                "              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
-                                "              if (validPairs.length === 0) validPairs = parsedPairs; " +
-                                "              var bestMatch = null; " +
-                                "              bestMatch = validPairs.find(function(p){return p.searchText.indexOf(uiCourseName) !== -1 || uiCourseName.indexOf(p.searchText) !== -1;}); " +
-                                "              if (!bestMatch) { " +
-                                "                var words = uiCourseName.split(/[\\s,.-]+/).filter(function(w){return w.length > 2;}); " +
-                                "                if (words.length > 0) { " +
-                                "                  var bestScore = 0; " +
-                                "                  validPairs.forEach(function(p) { " +
-                                "                    var score = 0; " +
-                                "                    words.forEach(function(w){ if(p.searchText.indexOf(w) !== -1) score++; }); " +
-                                "                    if (score > bestScore) { " +
-                                "                      bestScore = score; " +
-                                "                      bestMatch = p; " +
-                                "                    } " +
-                                "                  }); " +
-                                "                  if (bestScore < 1) bestMatch = null; " +
-                                "                } " +
-                                "              } " +
-                                "              if (bestMatch) { " +
-                                "                var finalCode = bestMatch.code; " +
-                                "                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
-                                "                input.value = finalCode; " +
-                                "                matched++; " +
-                                "                var evt = document.createEvent('HTMLEvents'); " +
-                                "                evt.initEvent('input', true, true); " +
-                                "                input.dispatchEvent(evt); " +
-                                "                var evt2 = document.createEvent('HTMLEvents'); " +
-                                "                evt2.initEvent('change', true, true); " +
-                                "                input.dispatchEvent(evt2); " +
-                                "              } " +
-                                "            }); " +
-                                "            if (matched > 0) { " +
+"            var inputs = Array.from(document.querySelectorAll('#qp-code-container input[data-course]')); " +
+"            var usedPairs = new Set(); " +
+"            function sanitizeCourse(name) { " +
+"              if (!name) return ''; " +
+"              return name.replace(/[\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]/g, ' ') " +
+"                         .replace(/[^a-zA-Z0-9\\s()+\\-]/g, '') " +
+"                         .replace(/\\s+/g, ' ') " +
+"                         .trim(); " +
+"            } " +
+"            inputs.forEach(function(input) { " +
+"              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
+"              var streamName = (input.dataset.stream || '').toUpperCase(); " +
+"              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
+"              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
+"              if (validPairs.length === 0) validPairs = parsedPairs; " +
+"              var perfectMatch = validPairs.find(function(p){return p.searchText === uiCourseName;}); " +
+"              if (perfectMatch) { " +
+"                var finalCode = perfectMatch.code; " +
+"                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
+"                input.value = finalCode; " +
+"                usedPairs.add(perfectMatch); " +
+"                matched++; " +
+"              } " +
+"            }); " +
+"            inputs.forEach(function(input) { " +
+"              if (input.value) return; " +
+"              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
+"              var streamName = (input.dataset.stream || '').toUpperCase(); " +
+"              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
+"              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
+"              if (validPairs.length === 0 && isEdeStream) validPairs = parsedPairs; " +
+"              var bestMatch = null; " +
+"              var maxLength = 0; " +
+"              validPairs.forEach(function(p) { " +
+"                if (p.searchText.indexOf(uiCourseName) !== -1 || uiCourseName.indexOf(p.searchText) !== -1) { " +
+"                  if (p.searchText.length > maxLength) { " +
+"                    maxLength = p.searchText.length; " +
+"                    bestMatch = p; " +
+"                  } " +
+"                } " +
+"              }); " +
+"              if (bestMatch) { " +
+"                var finalCode = bestMatch.code; " +
+"                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
+"                input.value = finalCode; " +
+"                usedPairs.add(bestMatch); " +
+"                matched++; " +
+"              } " +
+"            }); " +
+"            inputs.forEach(function(input) { " +
+"              if (input.value) return; " +
+"              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
+"              var streamName = (input.dataset.stream || '').toUpperCase(); " +
+"              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
+"              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
+"              if (validPairs.length === 0 && isEdeStream) validPairs = parsedPairs; " +
+"              var words = uiCourseName.split(/[\\s,.\\-\\[\\]()]+/).filter(function(w){return w.length > 2;}); " +
+"              var ignoreWords = ['SYLLABUS', 'PART', 'PAPER', 'BASIC', 'COMMON', 'COURSE', 'PROGRAMME', 'EXAMINATION', 'CORE', 'COMPLEMENTARY', 'OPEN', 'ELECTIVE']; " +
+"              var coreWords = words.filter(function(w){return ignoreWords.indexOf(w) === -1 && isNaN(w);}); " +
+"              if (words.length > 0) { " +
+"                var bestScore = 0; " +
+"                var bestMatch = null; " +
+"                validPairs.forEach(function(p) { " +
+"                  var score = 0; " +
+"                  var coreScore = 0; " +
+"                  var consecutiveMatches = 0; " +
+"                  var prevMatchedIndex = -1; " +
+"                  var portalWords = p.searchText.split(/[\\s,.\\-\\[\\]()]+/).filter(function(w){return w.length > 2;}); " +
+"                  words.forEach(function(w) { " +
+"                    var pIdx = portalWords.indexOf(w); " +
+"                    if (pIdx !== -1) { " +
+"                      score++; " +
+"                      if (coreWords.indexOf(w) !== -1) coreScore++; " +
+"                      if (prevMatchedIndex !== -1 && pIdx === prevMatchedIndex + 1) { " +
+"                        consecutiveMatches++; " +
+"                      } " +
+"                      prevMatchedIndex = pIdx; " +
+"                    } " +
+"                  }); " +
+"                  var totalScore = coreScore + (consecutiveMatches * 2); " +
+"                  var coreRatio = coreWords.length > 0 ? coreScore / coreWords.length : 0; " +
+"                  if ((consecutiveMatches >= 1 || coreRatio > 0.7 || coreWords.length === 0) && totalScore > bestScore) { " +
+"                    bestScore = totalScore; " +
+"                    bestMatch = p; " +
+"                  } " +
+"                }); " +
+"                if (bestMatch && bestScore > 0) { " +
+"                  var finalCode = bestMatch.code; " +
+"                  if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
+"                  input.value = finalCode; " +
+"                  usedPairs.add(bestMatch); " +
+"                  matched++; " +
+"                } " +
+"              } " +
+"            }); " +
+"            var missingInPortal = []; " +
+"            inputs.forEach(function(input) { " +
+"              if (!input.value) { " +
+"                missingInPortal.push(input.dataset.course); " +
+"              } " +
+"            }); " +
+"            var missingInExamflow = []; " +
+"            parsedPairs.forEach(function(p) { " +
+"              if (!usedPairs.has(p)) { " +
+"                missingInExamflow.push(p.searchText); " +
+"              } " +
+"            }); " +
+"            if (missingInPortal.length > 0 || missingInExamflow.length > 0) { " +
+"              var alertMsg = '⚠️ MATCHING REPORT ⚠️\\n\\n'; " +
+"              if (missingInPortal.length > 0) { " +
+"                alertMsg += '❌ MISSING IN PORTAL (These courses need manual mapping):\\n' + missingInPortal.join('\\n') + '\\n\\n'; " +
+"              } " +
+"              if (missingInExamflow.length > 0) { " +
+"                var uniqueMissing = []; " +
+"                missingInExamflow.forEach(function(m){ if(uniqueMissing.indexOf(m)===-1) uniqueMissing.push(m); }); " +
+"                alertMsg += '❌ MISSING IN EXAMFLOW (These portal codes were not used):\\n' + uniqueMissing.join('\\n') + '\\n'; " +
+"              } " +
+"              setTimeout(function(){ alert(alertMsg); }, 500); " +
+"            } " +
+"            inputs.forEach(function(input) { " +
+"              if (input.value) { " +
+"                var evt = document.createEvent('HTMLEvents'); " +
+"                evt.initEvent('input', true, true); " +
+"                input.dispatchEvent(evt); " +
+"                var evt2 = document.createEvent('HTMLEvents'); " +
+"                evt2.initEvent('change', true, true); " +
+"                input.dispatchEvent(evt2); " +
+"              } " +
+"            }); " +
+"            if (matched > 0) { " +
                                 "              var st = document.getElementById('qp-code-status'); " +
                                 "              if (st) { " +
                                 "                st.style.color = '#28a745'; " +
@@ -4856,7 +4760,7 @@ public class App extends Application {
         }
     }
 
-    private File getSessionDir() {
+    public File getSessionDir() {
         String base = downloadPathField.getText();
         if (base == null || base.isEmpty()) return null;
         String session = sessionNameField.getText().trim();
