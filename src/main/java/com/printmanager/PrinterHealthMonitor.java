@@ -113,7 +113,7 @@ public class PrinterHealthMonitor {
         // 2. Fallback to general PrinterStatus if no specific error
         switch (printerStatus) {
             case 1: return "Other";
-            case 2: return "Unknown";
+            case 2: return "Ready"; // WMI often reports 2 (Unknown) for idle network printers
             case 3: return "Ready";
             case 4: return "Printing";
             case 5: return "Warmup";

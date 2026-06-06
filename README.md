@@ -1,4 +1,4 @@
-# Smart QP Print Manager - AI Engine V5.1
+# Smart QP Print Manager - AI Engine V6.2
 
 Advanced PDF management and printing automation tool for college examination departments.
 
@@ -15,12 +15,12 @@ Advanced PDF management and printing automation tool for college examination dep
 
 ## How to Run
 ### Portable Version (Recommended)
-1. Extract `Smart QP Print Manager-Portable-V5.1.zip`.
+1. Extract `Smart QP Print Manager-Portable-V6.2.zip`.
 2. Run `Smart QP Print Manager.exe`.
 
 ### From JAR
 1. Ensure Java 17+ is installed.
-2. Run `java -jar java-print-manager-5.1.jar`.
+2. Run `java -jar java-print-manager-6.2.jar`.
 
 ## Configuration
 - `config.json`: Stores user rules, printer mappings, and AI settings.
