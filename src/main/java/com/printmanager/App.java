@@ -87,6 +87,10 @@ public class App extends Application {
     private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4);
     private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(2);
+    private final java.util.concurrent.ScheduledExecutorService printerMonitorExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+
+    // Map to track and clean up listeners to prevent memory leaks
+    private final Map<RoomGroup, javafx.collections.ListChangeListener<RoomItem>> roomGroupListeners = new HashMap<>();
 
 
     private ValidationService validationService;
@@ -140,6 +144,9 @@ public class App extends Application {
     // Global Synchronization Engine
     private final DoubleProperty globalPulseOpacity = new SimpleDoubleProperty(1.0);
     private final BooleanProperty dualAlertPhase = new SimpleBooleanProperty(true); // true = Red, false = Black
+
+    // UI Performance Debouncers
+    private final javafx.animation.PauseTransition fileQueueDebouncer = new javafx.animation.PauseTransition(javafx.util.Duration.millis(500));
 
     @Override
     public void start(Stage primaryStage) {
@@ -263,7 +270,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - AI Engine V5.1");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V6.2");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -299,6 +306,9 @@ public class App extends Application {
             roomGroupsList.addListener((javafx.collections.ListChangeListener<RoomGroup>) c -> {
                 saveConfigs();
                 while (c.next()) {
+                    if (c.wasRemoved()) {
+                        c.getRemoved().forEach(this::teardownRoomGroupListeners);
+                    }
                     if (c.wasAdded()) {
                         c.getAddedSubList().forEach(this::setupRoomGroupListeners);
                     }
@@ -326,66 +336,70 @@ public class App extends Application {
 
     private final ObservableList<PrinterDisplay> printerDisplays = FXCollections.observableArrayList();
 
+    private int printerMonitorErrorCount = 0;
+
     private void startPrinterStatusMonitor() {
-        Thread monitorThread = new Thread(() -> {
-            while (true) {
-                try {
-                    // Fetch detailed status once per cycle
-                    Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
-                    
-                    Platform.runLater(() -> {
-                        try {
-                            // 1. Update simple status cache
-                            java.util.Set<String> currentKeys = detailed.keySet();
-                            printerStatusCache.keySet().removeIf(k -> !currentKeys.contains(k));
-                            detailed.forEach((name, data) -> {
-                                String health = "Ready";
-                                for (PrinterDisplay pd : printerDisplays) {
-                                    if (pd.getName().equals(name)) {
-                                        health = pd.healthStatusProperty().get();
-                                        break;
-                                    }
-                                }
-                                String newStatus = "Offline".equalsIgnoreCase(health) ? "Offline" : data.get("status");
-                                if (!newStatus.equals(printerStatusCache.get(name))) {
-                                    printerStatusCache.put(name, newStatus);
-                                }
-                            });
-                            
-                            // 2. Update dashboard displays
+        printerMonitorExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                // Fetch detailed status once per cycle
+                Map<String, Map<String, String>> detailed = printService.getPrintersDetailedStatus();
+                
+                Platform.runLater(() -> {
+                    try {
+                        // 1. Update simple status cache
+                        java.util.Set<String> currentKeys = detailed.keySet();
+                        printerStatusCache.keySet().removeIf(k -> !currentKeys.contains(k));
+                        detailed.forEach((name, data) -> {
+                            String health = "Ready";
                             for (PrinterDisplay pd : printerDisplays) {
-                                if (detailed.containsKey(pd.getName())) {
-                                    Map<String, String> data = detailed.get(pd.getName());
-                                    String health = pd.healthStatusProperty().get();
-                                    if ("Offline".equalsIgnoreCase(health)) {
-                                        pd.setStatus("Offline");
-                                        pd.setActiveJobs("-");
-                                        pd.setCurrentTask("-");
-                                    } else {
-                                        pd.setStatus(data.get("status"));
-                                        pd.setActiveJobs(data.get("jobs"));
-                                        pd.setCurrentTask(data.get("current"));
-                                    }
+                                if (pd.getName().equals(name)) {
+                                    health = pd.healthStatusProperty().get();
+                                    break;
+                                }
+                            }
+                            String newStatus = "Offline".equalsIgnoreCase(health) ? "Offline" : data.get("status");
+                            if (!newStatus.equals(printerStatusCache.get(name))) {
+                                printerStatusCache.put(name, newStatus);
+                            }
+                        });
+                        
+                        // 2. Update dashboard displays
+                        for (PrinterDisplay pd : printerDisplays) {
+                            if (detailed.containsKey(pd.getName())) {
+                                Map<String, String> data = detailed.get(pd.getName());
+                                String health = pd.healthStatusProperty().get();
+                                if ("Offline".equalsIgnoreCase(health)) {
+                                    pd.setStatus("Offline");
+                                    pd.setActiveJobs("-");
+                                    pd.setCurrentTask("-");
                                 } else {
-                                    if (!"Offline".equals(pd.statusProperty().get())) {
-                                        pd.setStatus("Not in API");
-                                    }
+                                    pd.setStatus(data.get("status"));
+                                    pd.setActiveJobs(data.get("jobs"));
+                                    pd.setCurrentTask(data.get("current"));
+                                }
+                            } else {
+                                if (!"Offline".equals(pd.statusProperty().get())) {
+                                    pd.setStatus("Not in API");
                                 }
                             }
-                        } catch (Exception err) {
-                            for (PrinterDisplay pd : printerDisplays) {
-                                pd.setStatus("ERR: " + err.getMessage());
-                            }
-                            err.printStackTrace();
                         }
-                    });
-                    Thread.sleep(5000); 
-                } catch (InterruptedException e) { break; }
-                catch (Exception e) { logger.error("Printer monitor error", e); }
+                        printerMonitorErrorCount = 0; // Reset on success
+                    } catch (Exception err) {
+                        for (PrinterDisplay pd : printerDisplays) {
+                            pd.setStatus("ERR: " + err.getMessage());
+                        }
+                        logger.error("UI update failed in printer monitor", err);
+                    }
+                });
+            } catch (Exception e) {
+                printerMonitorErrorCount++;
+                logger.error("Printer monitor error (count: {})", printerMonitorErrorCount, e);
+                // Backoff logic: Sleep thread briefly if we're hitting consecutive errors
+                if (printerMonitorErrorCount > 3) {
+                    try { Thread.sleep(5000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                }
             }
-        });
-        monitorThread.setDaemon(true);
-        monitorThread.start();
+        }, 0, 5, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     @Override
@@ -395,6 +409,7 @@ public class App extends Application {
             activityLogger.info("Application stopping. Initiating deep cleanup...");
             
             // 1. Shutdown all thread pools
+            printerMonitorExecutor.shutdownNow();
             analysisExecutor.shutdownNow();
             printQueueExecutor.shutdownNow();
             roomPrintExecutor.shutdownNow();
@@ -533,10 +548,13 @@ public class App extends Application {
             refreshGlobalAlerts();
         };
 
+        fileQueueDebouncer.setOnFinished(e -> {
+            relinkRoomItems();
+            updateQueueStats.run();
+            saveConfigs();
+        });
+
         fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
-            // CRITICAL: Relink first so validateAppState sees current routing
-            relinkRoomItems(); 
-            
             while (c.next()) {
                 if (c.wasAdded()) {
                     c.getAddedSubList().forEach(item -> {
@@ -546,8 +564,8 @@ public class App extends Application {
                     });
                 }
             }
-            updateQueueStats.run(); // Calls refreshGlobalAlerts() internally
-            saveConfigs();
+            // Trigger debounce to prevent UI stuttering
+            fileQueueDebouncer.playFromStart();
         });
 
         // Initialize listeners for existing items
@@ -2509,8 +2527,9 @@ public class App extends Application {
         String finishedStyle = "-fx-background-color: #f2fcf5; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.2), 20, 0, 0, 10);";
         
         card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
-        // Remove fixed PrefWidth so it naturally spans the VBox
-        card.setMaxWidth(Double.MAX_VALUE);
+        // Add extra width beyond content to make it comfortable, but not full screen
+        card.setPrefWidth(750);
+        card.setMaxWidth(750);
 
         group.statusProperty().addListener((obs, old, val) -> {
             if (val != null && val.contains("Finished")) card.setStyle(finishedStyle);
@@ -2600,7 +2619,7 @@ public class App extends Application {
             RoomItem ri = d.getValue();
             return javafx.beans.binding.Bindings.createStringBinding(() -> ri.getDisplayName(), ri.matchedFileProperty());
         });
-        qpCol.setPrefWidth(90);
+        qpCol.setPrefWidth(200);
         qpCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             private final Label label = new Label();
             private final Label icon = new Label();
@@ -2635,7 +2654,7 @@ public class App extends Application {
                 return f != null ? f.getStyle() : "-";
             }, ri.matchedFileProperty());
         });
-        styleCol.setPrefWidth(35);
+        styleCol.setPrefWidth(80);
         styleCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -2654,7 +2673,7 @@ public class App extends Application {
         });
 
         TableColumn<RoomItem, String> ppCol = new TableColumn<>("Printed Sheets"); // Printed Sheets
-        ppCol.setPrefWidth(45);
+        ppCol.setPrefWidth(130);
         ppCol.setCellValueFactory(d -> {
             RoomItem ri = d.getValue();
             return javafx.beans.binding.Bindings.createStringBinding(() -> {
@@ -2677,7 +2696,7 @@ public class App extends Application {
 
         TableColumn<RoomItem, Integer> countCol = new TableColumn<>("Quantity"); // Qty
         countCol.setCellValueFactory(d -> new SimpleObjectProperty<>(d.getValue().getCount()));
-        countCol.setPrefWidth(40);
+        countCol.setPrefWidth(90);
         countCol.setCellFactory(tc -> new TableCell<RoomItem, Integer>() {
             @Override protected void updateItem(Integer item, boolean empty) {
                 super.updateItem(item, empty);
@@ -2693,7 +2712,7 @@ public class App extends Application {
 
         TableColumn<RoomItem, String> statusCol = new TableColumn<>("Status"); // Stat
         statusCol.setCellValueFactory(d -> d.getValue().statusProperty());
-        statusCol.setPrefWidth(65);
+        statusCol.setPrefWidth(100);
         statusCol.setCellFactory(tc -> new TableCell<RoomItem, String>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -2711,7 +2730,7 @@ public class App extends Application {
         });
 
         TableColumn<RoomItem, Void> editCol = new TableColumn<>("Edit");
-        editCol.setPrefWidth(35);
+        editCol.setPrefWidth(60);
         editCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button btn = new Button("E"); // Edit
             {
@@ -2748,7 +2767,7 @@ public class App extends Application {
         });
 
         TableColumn<RoomItem, Void> logCol = new TableColumn<>("Logs");
-        logCol.setPrefWidth(35);
+        logCol.setPrefWidth(60);
         logCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button aiBtn = new Button("L"); // Logs
             {
@@ -2775,7 +2794,7 @@ public class App extends Application {
         });
 
         TableColumn<RoomItem, Void> delCol = new TableColumn<>("Delete");
-        delCol.setPrefWidth(35);
+        delCol.setPrefWidth(70);
         delCol.setCellFactory(tc -> new TableCell<RoomItem, Void>() {
             private final Button btn = new Button("\u2715"); // X
             {
@@ -3056,11 +3075,10 @@ public class App extends Application {
             });
         });
 
-        HBox actions = new HBox(8, sendBtn, delRoomBtn);
-        HBox.setHgrow(sendBtn, Priority.ALWAYS);
-        actions.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        HBox delBox = new HBox(delRoomBtn);
+        delBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
-        card.getChildren().addAll(headerArea, table, printerBox, printerIndicator, actions, roomStatus);
+        card.getChildren().addAll(headerArea, table, printerBox, printerIndicator, sendBtn, delBox, roomStatus);
         return card;
     }
 
@@ -3114,7 +3132,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics â€¢ v5.2 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v6.2 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3164,7 +3182,7 @@ public class App extends Application {
             "This ensures that Main Papers and MCQ parts are printed with the correct settings (e.g., Booklet for Main, Simplex for MCQ) automatically."), 0, 0);
             
         detailGrid.add(createDetailItem("The 'Temp-First' Safety Vault", 
-            "We prioritize your data integrity. Every operationâ€”splitting, page removal, or adding Paper Code stampsâ€”is performed on a temporary copy. " +
+            "We prioritize your data integrity. Every operation - splitting, page removal, or adding Paper Code stamps - is performed on a temporary copy. " +
             "Your original master PDFs in your Downloads or Archive folders remain 100% untouched and original."), 1, 0);
 
         detailGrid.add(createDetailItem("Aggressive QP Pattern Matching", 
@@ -3243,7 +3261,7 @@ public class App extends Application {
 
     private VBox createDetailItem(String title, String desc) {
         VBox box = new VBox(12);
-        Label lblTitle = new Label("â˜… " + title);
+        Label lblTitle = new Label("> " + title);
         lblTitle.setStyle("-fx-font-size: 19px; -fx-font-weight: bold; -fx-text-fill: #1b263b;");
         Label lblDesc = new Label(desc);
         lblDesc.setWrapText(true);
@@ -3611,7 +3629,17 @@ public class App extends Application {
         });
     }
 
+    private void teardownRoomGroupListeners(RoomGroup group) {
+        javafx.collections.ListChangeListener<RoomItem> listener = roomGroupListeners.remove(group);
+        if (listener != null) {
+            group.getItems().removeListener(listener);
+        }
+    }
+
     private void setupRoomGroupListeners(RoomGroup group) {
+        // Prevent duplicate listener registration
+        if (roomGroupListeners.containsKey(group)) return;
+
         // Helper to recalculate room total from items, avoiding double-counting splits
         Runnable recalculateRoomTotal = () -> {
             // Group by node or key to ensure Main/MCQ splits are counted as one student set
@@ -3633,15 +3661,15 @@ public class App extends Application {
             }
         };
 
-        group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
-            saveConfigs();
+        javafx.collections.ListChangeListener<RoomItem> listener = c -> {
             recalculateRoomTotal.run();
+            saveConfigs();
             while (c.next()) {
                 if (c.wasAdded()) {
                     c.getAddedSubList().forEach(this::attachRoomItemListeners);
                 }
             }
-        });
+        };
         recalculateRoomTotal.run();
     }
 

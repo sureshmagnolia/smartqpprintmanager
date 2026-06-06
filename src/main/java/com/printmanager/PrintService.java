@@ -52,7 +52,15 @@ public class PrintService {
     public Map<String, Map<String, String>> getPrintersDetailedStatus() {
         Map<String, Map<String, String>> detailedMap = new HashMap<>();
         try {
-            com.sun.jna.platform.win32.Winspool.PRINTER_INFO_2[] printers = com.sun.jna.platform.win32.WinspoolUtil.getPrinterInfo2();
+            // Run JNA call with strict 3-second timeout to prevent spooler hang from freezing the app
+            java.util.concurrent.CompletableFuture<com.sun.jna.platform.win32.Winspool.PRINTER_INFO_2[]> future = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    return com.sun.jna.platform.win32.WinspoolUtil.getPrinterInfo2();
+                });
+            
+            com.sun.jna.platform.win32.Winspool.PRINTER_INFO_2[] printers = 
+                future.get(3, java.util.concurrent.TimeUnit.SECONDS);
+
             if (printers == null || printers.length == 0) {
                 throw new IllegalStateException("Failed to query Winspool or 0 printers returned");
             }
