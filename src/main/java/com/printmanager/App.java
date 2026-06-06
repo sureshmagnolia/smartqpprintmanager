@@ -2954,9 +2954,19 @@ public class App extends Application {
                             dialog.showAndWait().ifPresent(v -> {
                                 try { 
                                     int newQty = Integer.parseInt(v);
-                                    item.setCount(newQty); 
-                                    activityLogger.info("Updated Qty for " + item.getQpCode() + " to " + newQty);
-                                    saveConfigs();
+                                    if (newQty > 0) {
+                                        item.setCount(newQty); 
+                                        activityLogger.info("Updated Qty for " + item.getQpCode() + " to " + newQty);
+                                        saveConfigs();
+                                        table.refresh();
+                                        String p = group.getSelectedPrinter();
+                                        if (p != null && !"None".equals(p) && !p.trim().isEmpty()) {
+                                            printSingleRoomItem(item, p);
+                                        } else {
+                                            Alert alert = new Alert(Alert.AlertType.WARNING, "No printer assigned! Quantity updated but not printed.");
+                                            alert.show();
+                                        }
+                                    }
                                 } catch (Exception ex) {}
                             });
                         }
