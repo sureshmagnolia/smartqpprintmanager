@@ -8,6 +8,10 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.util.Matrix;
 import org.apache.pdfbox.multipdf.LayerUtility;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceEntry;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream;
 
 import java.io.File;
 import java.io.IOException;
@@ -57,6 +61,7 @@ public class PDFService {
 
     public File splitPages(File file, int startPage, int endPage) throws IOException {
         try (PDDocument document = Loader.loadPDF(file)) {
+            flattenAnnotations(document);
             PDDocument newDoc = new PDDocument();
             for (int i = startPage - 1; i < endPage; i++) {
                 newDoc.addPage(document.getPage(i));
@@ -76,6 +81,7 @@ public class PDFService {
         }
 
         try (PDDocument document = Loader.loadPDF(file)) {
+            flattenAnnotations(document);
             int pageCount = document.getNumberOfPages();
             org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
 
@@ -108,11 +114,12 @@ public class PDFService {
 
     public File removePages(File file, int startPage, int endPage) throws IOException {
         try (PDDocument document = Loader.loadPDF(file)) {
+            flattenAnnotations(document);
             PDDocument newDoc = new PDDocument();
             int total = document.getNumberOfPages();
             for (int i = 1; i <= total; i++) {
                 if (i < startPage || i > endPage) {
-                    newDoc.importPage(document.getPage(i - 1));
+                    newDoc.addPage(document.getPage(i - 1));
                 }
             }
             if (newDoc.getNumberOfPages() == 0) {
@@ -130,6 +137,8 @@ public class PDFService {
         logger.info("Creating Adobe-standard vector booklet for: {} (Paper: {})", inputFile.getName(), paperSize);
         try (PDDocument srcDoc = Loader.loadPDF(inputFile);
              PDDocument bookletDoc = new PDDocument()) {
+
+            flattenAnnotations(srcDoc);
 
             int originalPageCount = srcDoc.getNumberOfPages();
             int totalPages = (int) (Math.ceil(originalPageCount / 4.0) * 4);
@@ -198,5 +207,42 @@ public class PDFService {
         stream.transform(matrix);
         stream.drawForm(form);
         stream.restoreGraphicsState();
+    }
+
+    private void flattenAnnotations(PDDocument document) throws IOException {
+        for (PDPage page : document.getPages()) {
+            List<PDAnnotation> annotations = page.getAnnotations();
+            if (annotations == null || annotations.isEmpty()) continue;
+
+            try (PDPageContentStream cs = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+                for (PDAnnotation ann : annotations) {
+                    PDAppearanceDictionary appearance = ann.getAppearance();
+                    if (appearance != null && appearance.getNormalAppearance() != null) {
+                        PDAppearanceEntry normal = appearance.getNormalAppearance();
+                        if (normal.isStream()) {
+                            PDAppearanceStream apStream = normal.getAppearanceStream();
+                            PDFormXObject form = new PDFormXObject(apStream.getCOSObject());
+                            
+                            cs.saveGraphicsState();
+                            PDRectangle rect = ann.getRectangle();
+                            PDRectangle bbox = form.getBBox();
+                            
+                            Matrix matrix = new Matrix();
+                            if (rect != null) {
+                                matrix.translate(rect.getLowerLeftX(), rect.getLowerLeftY());
+                            }
+                            if (bbox != null) {
+                                matrix.translate(-bbox.getLowerLeftX(), -bbox.getLowerLeftY());
+                            }
+                            
+                            cs.transform(matrix);
+                            cs.drawForm(form);
+                            cs.restoreGraphicsState();
+                        }
+                    }
+                }
+            }
+            page.setAnnotations(new ArrayList<>());
+        }
     }
 }
