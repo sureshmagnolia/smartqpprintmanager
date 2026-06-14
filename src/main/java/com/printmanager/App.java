@@ -237,7 +237,9 @@ public class App extends Application {
         }
 
         StackPane centerContainer = new StackPane();
-        centerContainer.getChildren().add(createMainView(primaryStage));
+        javafx.scene.Parent[] viewCache = new javafx.scene.Parent[7];
+        viewCache[0] = createMainView(primaryStage);
+        centerContainer.getChildren().add(viewCache[0]);
 
         VBox sidebar = new VBox(10);
         sidebar.setPadding(new Insets(20));
@@ -245,6 +247,7 @@ public class App extends Application {
         sidebar.setStyle("-fx-background-color: #2b2b2b; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 0);");
         
         String navBtnStyle = "-fx-background-color: transparent; -fx-text-fill: white; -fx-font-size: 14px; -fx-alignment: CENTER_LEFT; -fx-padding: 10 20;";
+        String collapsedStyle = "-fx-background-color: transparent; -fx-text-fill: white; -fx-font-size: 20px; -fx-alignment: CENTER; -fx-padding: 10 0;";
         
         Button btnMain = new Button("\uD83D\uDDA5 Print Queue"); btnMain.setMaxWidth(Double.MAX_VALUE); btnMain.setStyle(navBtnStyle);
         Button btnRoom = new Button("\uD83D\uDCCB Room Router"); btnRoom.setMaxWidth(Double.MAX_VALUE); btnRoom.setStyle(navBtnStyle);
@@ -254,13 +257,34 @@ public class App extends Application {
         Button btnAbout = new Button("\u2139 About"); btnAbout.setMaxWidth(Double.MAX_VALUE); btnAbout.setStyle(navBtnStyle);
         Button btnPortal = new Button("\uD83C\uDF10 Exam Portals"); btnPortal.setMaxWidth(Double.MAX_VALUE); btnPortal.setStyle(navBtnStyle);
 
-        btnMain.setOnAction(e -> centerContainer.getChildren().setAll(createMainView(primaryStage)));
-        btnRoom.setOnAction(e -> centerContainer.getChildren().setAll(createRoomRouterView(primaryStage)));
-        btnPrinters.setOnAction(e -> centerContainer.getChildren().setAll(createPrinterDashboardView()));
-        btnLogs.setOnAction(e -> centerContainer.getChildren().setAll(createLogsView()));
-        btnSettings.setOnAction(e -> centerContainer.getChildren().setAll(createSettingsView()));
-        btnAbout.setOnAction(e -> centerContainer.getChildren().setAll(createAboutView()));
-        btnPortal.setOnAction(e -> centerContainer.getChildren().setAll(createPortalView()));
+        btnMain.setOnAction(e -> {
+            if (viewCache[0] == null) viewCache[0] = createMainView(primaryStage);
+            centerContainer.getChildren().setAll(viewCache[0]);
+        });
+        btnRoom.setOnAction(e -> {
+            if (viewCache[1] == null) viewCache[1] = createRoomRouterView(primaryStage);
+            centerContainer.getChildren().setAll(viewCache[1]);
+        });
+        btnPrinters.setOnAction(e -> {
+            if (viewCache[2] == null) viewCache[2] = createPrinterDashboardView();
+            centerContainer.getChildren().setAll(viewCache[2]);
+        });
+        btnLogs.setOnAction(e -> {
+            if (viewCache[3] == null) viewCache[3] = createLogsView();
+            centerContainer.getChildren().setAll(viewCache[3]);
+        });
+        btnSettings.setOnAction(e -> {
+            if (viewCache[4] == null) viewCache[4] = createSettingsView();
+            centerContainer.getChildren().setAll(viewCache[4]);
+        });
+        btnAbout.setOnAction(e -> {
+            if (viewCache[5] == null) viewCache[5] = createAboutView();
+            centerContainer.getChildren().setAll(viewCache[5]);
+        });
+        btnPortal.setOnAction(e -> {
+            if (viewCache[6] == null) viewCache[6] = createPortalView();
+            centerContainer.getChildren().setAll(viewCache[6]);
+        });
 
         sidebar.getChildren().addAll(btnMain, btnRoom, btnPrinters, btnPortal, new Region(), btnLogs, btnSettings, btnAbout);
         VBox.setVgrow(sidebar.getChildren().get(4), Priority.ALWAYS); // Spacer
@@ -282,11 +306,32 @@ public class App extends Application {
         topRibbon.setStyle("-fx-background-color: #2b2b2b; -fx-padding: 5 15; -fx-border-color: #1a1a1a; -fx-border-width: 0 0 1 0;");
         topRibbon.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
+        BooleanProperty sidebarExpanded = new SimpleBooleanProperty(true);
         Button burgerBtn = new Button("\u2630");
         burgerBtn.setStyle("-fx-background-color: transparent; -fx-font-size: 18px; -fx-cursor: hand; -fx-text-fill: white;");
         burgerBtn.setOnAction(e -> {
-            if (borderPane.getLeft() != null) borderPane.setLeft(null);
-            else borderPane.setLeft(sidebar);
+            sidebarExpanded.set(!sidebarExpanded.get());
+            if (sidebarExpanded.get()) {
+                sidebar.setPrefWidth(220);
+                sidebar.setPadding(new Insets(20));
+                btnMain.setText("\uD83D\uDDA5 Print Queue"); btnMain.setStyle(navBtnStyle);
+                btnRoom.setText("\uD83D\uDCCB Room Router"); btnRoom.setStyle(navBtnStyle);
+                btnPrinters.setText("\uD83D\uDDA8 Printers"); btnPrinters.setStyle(navBtnStyle);
+                btnLogs.setText("\uD83D\uDCDC Activity Logs"); btnLogs.setStyle(navBtnStyle);
+                btnSettings.setText("\u2699 Settings"); btnSettings.setStyle(navBtnStyle);
+                btnAbout.setText("\u2139 About"); btnAbout.setStyle(navBtnStyle);
+                btnPortal.setText("\uD83C\uDF10 Exam Portals"); btnPortal.setStyle(navBtnStyle);
+            } else {
+                sidebar.setPrefWidth(60);
+                sidebar.setPadding(new Insets(20, 0, 20, 0));
+                btnMain.setText("\uD83D\uDDA5"); btnMain.setStyle(collapsedStyle);
+                btnRoom.setText("\uD83D\uDCCB"); btnRoom.setStyle(collapsedStyle);
+                btnPrinters.setText("\uD83D\uDDA8"); btnPrinters.setStyle(collapsedStyle);
+                btnLogs.setText("\uD83D\uDCDC"); btnLogs.setStyle(collapsedStyle);
+                btnSettings.setText("\u2699"); btnSettings.setStyle(collapsedStyle);
+                btnAbout.setText("\u2139"); btnAbout.setStyle(collapsedStyle);
+                btnPortal.setText("\uD83C\uDF10"); btnPortal.setStyle(collapsedStyle);
+            }
         });
         
         Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.0");
@@ -1170,13 +1215,15 @@ public class App extends Application {
             return row;
         });
 
-        printService.getAvailablePrinters().stream()
-            .filter(n -> !"None".equals(n))
-            .forEach(n -> {
-                PrinterDisplay pd = new PrinterDisplay(n, "Checking...");
-                printerDisplays.add(pd);
-                pd.getMonitor().start();
-            });
+        if (printerDisplays.isEmpty()) {
+            printService.getAvailablePrinters().stream()
+                .filter(n -> !"None".equals(n))
+                .forEach(n -> {
+                    PrinterDisplay pd = new PrinterDisplay(n, "Checking...");
+                    printerDisplays.add(pd);
+                    pd.getMonitor().start();
+                });
+        }
 
 
         VBox layout = new VBox(20, new Label("Live Printer Activities:") {{ setStyle("-fx-font-size: 18px; -fx-font-weight: bold;"); }}, table);

@@ -1,89 +1,153 @@
 /* Smart QP Print Manager - Modern Theme */
 
 .root {
-    -fx-base: #f4f4f4;
-    -fx-accent: #2196F3;
-    -fx-default-button: #2196F3;
-    -fx-focus-color: #bbdefb;
+    -fx-base: #f8fafc; /* Light modern background */
+    -fx-accent: #3b82f6; /* Modern Blue */
+    -fx-default-button: #3b82f6;
+    -fx-focus-color: #93c5fd;
     -fx-faint-focus-color: transparent;
+    -fx-font-family: "Segoe UI", "Inter", Roboto, sans-serif;
 }
 
-.tab-pane .tab-header-area .tab-header-background {
-    -fx-background-color: #212121;
+/* Sidebar Navigation */
+.sidebar {
+    -fx-background-color: #1e293b; /* Dark slate */
+    -fx-padding: 20 10 20 10;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 10, 0, 0, 0);
 }
 
-.tab {
-    -fx-background-color: #212121;
-    -fx-padding: 10 20;
-}
-
-.tab:selected {
-    -fx-background-color: #2196F3;
-}
-
-.tab .tab-label {
-    -fx-text-fill: #9e9e9e;
+.sidebar-title {
+    -fx-text-fill: #f8fafc;
+    -fx-font-size: 18px;
     -fx-font-weight: bold;
+    -fx-padding: 0 0 20 10;
 }
 
-.tab:selected .tab-label {
-    -fx-text-fill: white;
-}
-
-.button {
-    -fx-background-radius: 4;
-    -fx-padding: 8 15;
+.nav-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #cbd5e1;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-alignment: CENTER_LEFT;
+    -fx-padding: 12 20;
+    -fx-background-radius: 8;
     -fx-cursor: hand;
 }
 
-#print-btn {
-    -fx-background-color: #4CAF50;
+.nav-button:hover {
+    -fx-background-color: #334155;
     -fx-text-fill: white;
+}
+
+.nav-button-active {
+    -fx-background-color: #3b82f6;
+    -fx-text-fill: white;
+}
+.nav-button-active:hover {
+    -fx-background-color: #2563eb;
+}
+
+/* Dashboard Cards */
+.dashboard-card {
+    -fx-background-color: white;
+    -fx-background-radius: 12;
+    -fx-padding: 20;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 8, 0, 0, 4);
+    -fx-border-color: #e2e8f0;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.card-title {
+    -fx-text-fill: #64748b;
+    -fx-font-size: 14px;
     -fx-font-weight: bold;
 }
 
-#print-btn:hover {
-    -fx-background-color: #45a049;
+.card-value {
+    -fx-text-fill: #0f172a;
+    -fx-font-size: 28px;
+    -fx-font-weight: bold;
 }
+
+/* Generic Buttons */
+.button {
+    -fx-background-radius: 6;
+    -fx-padding: 8 16;
+    -fx-cursor: hand;
+    -fx-font-weight: bold;
+}
+
+#print-btn {
+    -fx-background-color: #10b981; /* Emerald */
+    -fx-text-fill: white;
+}
+#print-btn:hover { -fx-background-color: #059669; }
 
 #add-btn {
-    -fx-background-color: #2196F3;
+    -fx-background-color: #3b82f6;
     -fx-text-fill: white;
 }
+#add-btn:hover { -fx-background-color: #2563eb; }
 
 #clear-btn {
-    -fx-background-color: #f44336;
+    -fx-background-color: #ef4444; /* Red */
     -fx-text-fill: white;
 }
+#clear-btn:hover { -fx-background-color: #dc2626; }
 
-.table-view .column-header-background,
-.table-view .column-header-background .filler,
+/* Table View Restyling */
+.table-view {
+    -fx-background-color: white;
+    -fx-border-color: #e2e8f0;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+}
+
+.table-view .column-header-background {
+    -fx-background-color: #f8fafc !important;
+    -fx-background-radius: 8 8 0 0;
+}
+
 .table-view .column-header {
-    -fx-background-color: #eeeeee !important;
-    -fx-border-color: #dddddd !important;
+    -fx-background-color: transparent !important;
+    -fx-border-color: #e2e8f0 !important;
     -fx-border-width: 0 0 1 0 !important;
 }
 
 .table-view .column-header .label {
-    -fx-text-fill: black !important;
+    -fx-text-fill: #475569 !important;
     -fx-font-weight: bold !important;
+    -fx-font-size: 13px;
+}
+
+.table-row-cell {
+    -fx-border-color: transparent transparent #f1f5f9 transparent;
+    -fx-border-width: 1;
 }
 
 .table-row-cell:odd {
-    -fx-background-color: #fafafa;
+    -fx-background-color: #f8fafc;
+}
+.table-row-cell:even {
+    -fx-background-color: white;
+}
+.table-row-cell:selected {
+    -fx-background-color: #e0f2fe;
+    -fx-text-fill: #0ea5e9;
 }
 
+/* Status Bar */
 .status-bar {
-    -fx-background-color: #eeeeee;
-    -fx-padding: 5 10;
-    -fx-border-color: #cccccc;
-    -fx-border-width: 1 0 0 0;
+    -fx-background-color: #1e293b;
+    -fx-text-fill: #94a3b8;
+    -fx-padding: 8 15;
 }
 
 /* Simulation Mode Alert Header */
 #simulation-alert {
-    -fx-background-color: #f44336;
-    -fx-padding: 5 20;
+    -fx-background-color: #ef4444;
+    -fx-padding: 10 20;
     -fx-alignment: CENTER;
 }
 #simulation-alert .label {
@@ -92,15 +156,16 @@
     -fx-font-size: 14px;
 }
 
-/* Glassy Dashboard Theme */
+/* Keep old glass-panel just in case */
 .glass-panel {
-    -fx-background-color: rgba(255, 255, 255, 0.7);
-    -fx-background-radius: 10;
-    -fx-border-color: rgba(200, 200, 200, 0.5);
-    -fx-border-radius: 10;
-    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);
+    -fx-background-color: rgba(255, 255, 255, 0.9);
+    -fx-background-radius: 12;
+    -fx-border-color: #e2e8f0;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.05), 10, 0, 0, 4);
 }
 
-.log-entry-info { -fx-text-fill: #333333; }
-.log-entry-error { -fx-text-fill: #f44336; -fx-font-weight: bold; }
-.log-entry-success { -fx-text-fill: #4CAF50; }
+.log-entry-info { -fx-text-fill: #334155; }
+.log-entry-error { -fx-text-fill: #ef4444; -fx-font-weight: bold; }
+.log-entry-success { -fx-text-fill: #10b981; }
+
