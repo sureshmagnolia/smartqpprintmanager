@@ -236,22 +236,38 @@ public class App extends Application {
             }
         }
 
-        TabPane tabPane = new TabPane();
-        Tab mainTab = new Tab("Print Queue", createMainView(primaryStage));
-        mainTab.setClosable(false);
-        Tab roomTab = new Tab("Smart Room Wise Router", createRoomRouterView(primaryStage));
-        roomTab.setClosable(false);
-        Tab printerTab = new Tab("Printer Dashboard", createPrinterDashboardView());
-        printerTab.setClosable(false);
-        Tab logsTab = new Tab("Activity Logs", createLogsView());
-        logsTab.setClosable(false);
-        Tab settingsTab = new Tab("Settings", createSettingsView());
-        settingsTab.setClosable(false);
-        Tab aboutTab = new Tab("About", createAboutView());
-        aboutTab.setClosable(false);
-        Tab portalTab = new Tab("Exam Portals", createPortalView());
-        portalTab.setClosable(false);
-        tabPane.getTabs().addAll(mainTab, roomTab, printerTab, logsTab, settingsTab, aboutTab, portalTab);
+        StackPane centerContainer = new StackPane();
+        centerContainer.getChildren().add(createMainView(primaryStage));
+
+        VBox sidebar = new VBox(10);
+        sidebar.setPadding(new Insets(20));
+        sidebar.setPrefWidth(220);
+        sidebar.setStyle("-fx-background-color: #2b2b2b; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 0);");
+        
+        String navBtnStyle = "-fx-background-color: transparent; -fx-text-fill: white; -fx-font-size: 14px; -fx-alignment: CENTER_LEFT; -fx-padding: 10 20;";
+        
+        Button btnMain = new Button("\uD83D\uDDA5 Print Queue"); btnMain.setMaxWidth(Double.MAX_VALUE); btnMain.setStyle(navBtnStyle);
+        Button btnRoom = new Button("\uD83D\uDCCB Room Router"); btnRoom.setMaxWidth(Double.MAX_VALUE); btnRoom.setStyle(navBtnStyle);
+        Button btnPrinters = new Button("\uD83D\uDDA8 Printers"); btnPrinters.setMaxWidth(Double.MAX_VALUE); btnPrinters.setStyle(navBtnStyle);
+        Button btnLogs = new Button("\uD83D\uDCDC Activity Logs"); btnLogs.setMaxWidth(Double.MAX_VALUE); btnLogs.setStyle(navBtnStyle);
+        Button btnSettings = new Button("\u2699 Settings"); btnSettings.setMaxWidth(Double.MAX_VALUE); btnSettings.setStyle(navBtnStyle);
+        Button btnAbout = new Button("\u2139 About"); btnAbout.setMaxWidth(Double.MAX_VALUE); btnAbout.setStyle(navBtnStyle);
+        Button btnPortal = new Button("\uD83C\uDF10 Exam Portals"); btnPortal.setMaxWidth(Double.MAX_VALUE); btnPortal.setStyle(navBtnStyle);
+
+        btnMain.setOnAction(e -> centerContainer.getChildren().setAll(createMainView(primaryStage)));
+        btnRoom.setOnAction(e -> centerContainer.getChildren().setAll(createRoomRouterView(primaryStage)));
+        btnPrinters.setOnAction(e -> centerContainer.getChildren().setAll(createPrinterDashboardView()));
+        btnLogs.setOnAction(e -> centerContainer.getChildren().setAll(createLogsView()));
+        btnSettings.setOnAction(e -> centerContainer.getChildren().setAll(createSettingsView()));
+        btnAbout.setOnAction(e -> centerContainer.getChildren().setAll(createAboutView()));
+        btnPortal.setOnAction(e -> centerContainer.getChildren().setAll(createPortalView()));
+
+        sidebar.getChildren().addAll(btnMain, btnRoom, btnPrinters, btnPortal, new Region(), btnLogs, btnSettings, btnAbout);
+        VBox.setVgrow(sidebar.getChildren().get(4), Priority.ALWAYS); // Spacer
+
+        BorderPane borderPane = new BorderPane();
+        borderPane.setLeft(sidebar);
+        borderPane.setCenter(centerContainer);
 
         simAlertHeader.setId("simulation-alert");
         simAlertHeader.getChildren().add(new Label("\u26A0 SIMULATION MODE ACTIVE: Actual printing is disabled. Change this in Settings."));
@@ -262,15 +278,34 @@ public class App extends Application {
         healthCheckRibbon.setManaged(false);
         healthCheckRibbon.setVisible(false);
 
-        VBox root = new VBox(healthCheckRibbon, simAlertHeader, tabPane, createStatusBarView());
-        VBox.setVgrow(tabPane, Priority.ALWAYS);
+        HBox topRibbon = new HBox(10);
+        topRibbon.setStyle("-fx-background-color: #2b2b2b; -fx-padding: 5 15; -fx-border-color: #1a1a1a; -fx-border-width: 0 0 1 0;");
+        topRibbon.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        
+        Button burgerBtn = new Button("\u2630");
+        burgerBtn.setStyle("-fx-background-color: transparent; -fx-font-size: 18px; -fx-cursor: hand; -fx-text-fill: white;");
+        burgerBtn.setOnAction(e -> {
+            if (borderPane.getLeft() != null) borderPane.setLeft(null);
+            else borderPane.setLeft(sidebar);
+        });
+        
+        Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.0");
+        appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
+        
+        Region topSpacer = new Region();
+        HBox.setHgrow(topSpacer, Priority.ALWAYS);
+        
+        topRibbon.getChildren().addAll(burgerBtn, appTitleLabel, topSpacer, healthCheckRibbon, simAlertHeader);
+
+        VBox root = new VBox(topRibbon, borderPane, createStatusBarView());
+        VBox.setVgrow(borderPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 1200, 850);
         try {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - AI Engine V6.5");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.0");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -297,7 +332,7 @@ public class App extends Application {
         // Setup auto-save listeners AFTER UI is ready and initial load is complete
         Platform.runLater(() -> {
             // Re-initialize Room Router view content to force UI refresh with loaded data
-            roomTab.setContent(createRoomRouterView(primaryStage));
+            // (Skipped since we use BorderPane, view will refresh on click)
 
             fileQueue.addListener((javafx.collections.ListChangeListener<FileItem>) c -> {
                 relinkRoomItems();
@@ -2503,15 +2538,19 @@ public class App extends Application {
         roomGroupsList.forEach(g -> g.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> updateRoomAlerts()));
         updateRoomAlerts();
 
-        HBox roomAlertsBox = new HBox(15, roomTotalCount, roomTotalPP, roomMapAlert, roomStapleAlert);
-        roomAlertsBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        HBox statsRow = new HBox(20, roomTotalCount, roomTotalPP, roomMapAlert, roomStapleAlert);
+        statsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        statsRow.setPadding(new Insets(10, 0, 0, 0));
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox header = new HBox(12, uploadBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, printCoverPageCbox, aiRoutingBtn, spacer, roomAlertsBox);
-        header.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        header.setPadding(new Insets(0, 5, 0, 5));
+        HBox toolsRow = new HBox(12, uploadBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
+        toolsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        
+        VBox header = new VBox(15, toolsRow, statsRow);
+        header.setPadding(new Insets(20));
+        header.getStyleClass().add("glass-panel");
 
         VBox layout = new VBox(15, header, scrollPane);
         layout.setPadding(new Insets(15));
@@ -2526,8 +2565,8 @@ public class App extends Application {
         String finishedStyle = "-fx-background-color: #f2fcf5; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 10 15 10 15; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.2), 10, 0, 0, 5); -fx-cursor: hand;";
         
         card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
-        card.setPrefWidth(650);
-        card.setMaxWidth(650);
+        card.setPrefWidth(480);
+        card.setMaxWidth(480);
 
         group.statusProperty().addListener((obs, old, val) -> {
             if (val != null && val.contains("Finished")) card.setStyle(finishedStyle);
@@ -3152,7 +3191,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - AI Engine V6.5";
+                    String targetTitle = "Smart QP Print Manager - AI Engine V7.0";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3184,7 +3223,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v6.5 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.0 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3590,7 +3629,7 @@ public class App extends Application {
                         }
                     }
 
-                    // NEW: Decisive Single-Match Rule (V6.5)
+                    // NEW: Decisive Single-Match Rule (V7.0)
                     // If no split components are detected, we MUST only have one match per room item.
                     if (!hasSplits && uniqueAi.size() > 1) {
                         // Keep only the first one (already filtered by maxScore)
@@ -4521,6 +4560,7 @@ public class App extends Application {
                                 "            var matched = 0; " +
 "            var inputs = Array.from(document.querySelectorAll('#qp-code-container input[data-course]')); " +
 "            var usedPairs = new Set(); " +
+"            var matchedInputs = new Set(); " +
 "            function sanitizeCourse(name) { " +
 "              if (!name) return ''; " +
 "              return name.replace(/[\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]/g, ' ') " +
@@ -4540,11 +4580,12 @@ public class App extends Application {
 "                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
 "                input.value = finalCode; " +
 "                usedPairs.add(perfectMatch); " +
+"                matchedInputs.add(input); " +
 "                matched++; " +
 "              } " +
 "            }); " +
 "            inputs.forEach(function(input) { " +
-"              if (input.value) return; " +
+"              if (matchedInputs.has(input)) return; " +
 "              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
 "              var streamName = (input.dataset.stream || '').toUpperCase(); " +
 "              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
@@ -4565,51 +4606,68 @@ public class App extends Application {
 "                if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
 "                input.value = finalCode; " +
 "                usedPairs.add(bestMatch); " +
+"                matchedInputs.add(input); " +
 "                matched++; " +
 "              } " +
 "            }); " +
 "            inputs.forEach(function(input) { " +
-"              if (input.value) return; " +
+"              if (matchedInputs.has(input)) return; " +
 "              var uiCourseName = sanitizeCourse(input.dataset.course).trim().toUpperCase(); " +
 "              var streamName = (input.dataset.stream || '').toUpperCase(); " +
 "              var isEdeStream = streamName.indexOf('EDE') !== -1 || streamName.indexOf('SDE') !== -1 || streamName.indexOf('DISTANCE') !== -1 || streamName.indexOf('EXTERNAL') !== -1; " +
 "              var validPairs = parsedPairs.filter(function(p){return p.isEde === isEdeStream;}); " +
 "              if (validPairs.length === 0 && isEdeStream) validPairs = parsedPairs; " +
-"              var words = uiCourseName.split(/[\\s,.\\-\\[\\]()]+/).filter(function(w){return w.length > 2;}); " +
+"              var words = uiCourseName.split(/[\\s,.\\-\\[\\]()]+/).filter(function(w){return w.length > 2 && !w.match(/^20\\d{2}$/);}); " +
 "              var ignoreWords = ['SYLLABUS', 'PART', 'PAPER', 'BASIC', 'COMMON', 'COURSE', 'PROGRAMME', 'EXAMINATION', 'CORE', 'COMPLEMENTARY', 'OPEN', 'ELECTIVE']; " +
 "              var coreWords = words.filter(function(w){return ignoreWords.indexOf(w) === -1 && isNaN(w);}); " +
+"              var uiYearMatch = uiCourseName.match(/20\\d{2}/); " +
+"              var uiYear = uiYearMatch ? uiYearMatch[0] : null; " +
 "              if (words.length > 0) { " +
-"                var bestScore = 0; " +
-"                var bestMatch = null; " +
+"                var candidates = []; " +
 "                validPairs.forEach(function(p) { " +
+"                  var pYearMatch = p.searchText.match(/20\\d{2}/); " +
+"                  var pYear = pYearMatch ? pYearMatch[0] : null; " +
 "                  var score = 0; " +
 "                  var coreScore = 0; " +
 "                  var consecutiveMatches = 0; " +
 "                  var prevMatchedIndex = -1; " +
+"                  var lastFoundIndex = -1; " +
 "                  var portalWords = p.searchText.split(/[\\s,.\\-\\[\\]()]+/).filter(function(w){return w.length > 2;}); " +
 "                  words.forEach(function(w) { " +
-"                    var pIdx = portalWords.indexOf(w); " +
+"                    var startIndex = lastFoundIndex === -1 ? 0 : lastFoundIndex + 1; " +
+"                    var pIdx = portalWords.indexOf(w, startIndex); " +
 "                    if (pIdx !== -1) { " +
 "                      score++; " +
 "                      if (coreWords.indexOf(w) !== -1) coreScore++; " +
 "                      if (prevMatchedIndex !== -1 && pIdx === prevMatchedIndex + 1) { " +
 "                        consecutiveMatches++; " +
 "                      } " +
+"                      lastFoundIndex = pIdx; " +
 "                      prevMatchedIndex = pIdx; " +
 "                    } " +
 "                  }); " +
 "                  var totalScore = coreScore + (consecutiveMatches * 2); " +
 "                  var coreRatio = coreWords.length > 0 ? coreScore / coreWords.length : 0; " +
-"                  if ((consecutiveMatches >= 1 || coreRatio > 0.7 || coreWords.length === 0) && totalScore > bestScore) { " +
-"                    bestScore = totalScore; " +
-"                    bestMatch = p; " +
+"                  if ((coreRatio > 0.6 || coreWords.length === 0) && totalScore > 0) { " +
+"                    candidates.push({ p: p, totalScore: totalScore, pYear: pYear }); " +
 "                  } " +
 "                }); " +
-"                if (bestMatch && bestScore > 0) { " +
+"                var bestMatch = null; " +
+"                if (candidates.length === 1) { " +
+"                    bestMatch = candidates[0].p; " +
+"                } else if (candidates.length > 1) { " +
+"                    var yearMatched = candidates.filter(function(c) { return !uiYear || !c.pYear || c.pYear === uiYear; }); " +
+"                    if (yearMatched.length > 0) { " +
+"                        yearMatched.sort(function(a, b) { return b.totalScore - a.totalScore; }); " +
+"                        bestMatch = yearMatched[0].p; " +
+"                    } " +
+"                } " +
+"                if (bestMatch) { " +
 "                  var finalCode = bestMatch.code; " +
 "                  if (isEdeStream && !finalCode.endsWith('A')) finalCode += 'A'; " +
 "                  input.value = finalCode; " +
 "                  usedPairs.add(bestMatch); " +
+"                  matchedInputs.add(input); " +
 "                  matched++; " +
 "                } " +
 "              } " +
@@ -4660,7 +4718,7 @@ public class App extends Application {
                                 "        window.portalError = function(msg) { " +
                                 "             var fb = document.getElementById('smart-fetch-btn'); " +
                                 "             if (fb) { " +
-                                "                fb.innerText = 'âŒ ' + msg.toUpperCase(); " +
+                                  "                fb.innerText = '\\u26A0 ' + msg.toUpperCase(); " +
                                 "                fb.style.background = '#f44336'; " +
                                 "                setTimeout(function(){ fb.innerText = 'FETCH FROM PORTAL TAB'; fb.style.background = '#4CAF50'; }, 4000); " +
                                 "             } " +
