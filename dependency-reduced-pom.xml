@@ -53,6 +53,7 @@
                 <transformer>
                   <mainClass>com.printmanager.Launcher</mainClass>
                 </transformer>
+                <transformer />
               </transformers>
             </configuration>
           </execution>

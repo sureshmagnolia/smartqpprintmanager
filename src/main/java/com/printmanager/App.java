@@ -43,6 +43,11 @@ import javax.swing.JPanel;
 import javax.swing.JFrame;
 import javax.swing.JTabbedPane;
 import javax.net.ssl.*;
+import org.cef.handler.CefJSDialogHandlerAdapter;
+import org.cef.callback.CefJSDialogCallback;
+import org.cef.handler.CefJSDialogHandler.JSDialogType;
+import org.cef.misc.BoolRef;
+import javax.swing.JOptionPane;
 import java.awt.BorderLayout;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -3364,7 +3369,7 @@ public class App extends Application {
         footer.setAlignment(javafx.geometry.Pos.CENTER);
         footer.setPadding(new Insets(60, 0, 40, 0));
         
-        Label copyright = new Label("Â© 2026 Magnolia Creations. All Rights Reserved.");
+        Label copyright = new Label("\u00A9 2026 Magnolia Creations. All Rights Reserved.");
         copyright.setStyle("-fx-font-size: 14px; -fx-text-fill: #90a4ae;");
         
         HBox configInfo = new HBox(10, new Label("Configuration Storage:"), new TextField(configManager.getConfigPath()) {{ setEditable(false); setPrefWidth(500); setStyle("-fx-background-color: #eceff1; -fx-text-fill: #546e7a; -fx-font-size: 11px;"); }});
@@ -4241,6 +4246,39 @@ public class App extends Application {
                 
                 cefApp = builder.build();
                 cefClient = cefApp.createClient();
+                cefClient.addJSDialogHandler(new CefJSDialogHandlerAdapter() {
+                      @Override
+                      public boolean onJSDialog(CefBrowser browser, String origin_url, JSDialogType dialog_type, String message_text, String default_prompt_text, CefJSDialogCallback callback, BoolRef suppress_message) {
+                          SwingUtilities.invokeLater(() -> {
+                              if (dialog_type == JSDialogType.JSDIALOGTYPE_ALERT) {
+                                  JOptionPane.showMessageDialog(null, message_text, "Browser Alert", JOptionPane.WARNING_MESSAGE);
+                                  callback.Continue(true, "");
+                              } else if (dialog_type == JSDialogType.JSDIALOGTYPE_CONFIRM) {
+                                  int res = JOptionPane.showConfirmDialog(null, message_text, "Browser Confirmation", JOptionPane.YES_NO_OPTION);
+                                  callback.Continue(res == JOptionPane.YES_OPTION, "");
+                              } else if (dialog_type == JSDialogType.JSDIALOGTYPE_PROMPT) {
+                                  String input = JOptionPane.showInputDialog(null, message_text, default_prompt_text);
+                                  callback.Continue(input != null, input != null ? input : "");
+                              } else {
+                                  callback.Continue(true, "");
+                              }
+                          });
+                          return true;
+                      }
+
+                      @Override
+                      public boolean onBeforeUnloadDialog(CefBrowser browser, String message_text, boolean is_reload, CefJSDialogCallback callback) {
+                          SwingUtilities.invokeLater(() -> {
+                              String promptMessage = message_text;
+                              if (promptMessage == null || promptMessage.trim().isEmpty()) {
+                                  promptMessage = is_reload ? "The page that you're looking for used information that you entered. Returning to that page might cause any action you took to be repeated. Do you want to continue?" : "Do you want to leave this site?\nChanges you made may not be saved.";
+                              }
+                              int res = JOptionPane.showConfirmDialog(null, promptMessage, "Confirm Navigation", JOptionPane.YES_NO_OPTION);
+                              callback.Continue(res == JOptionPane.YES_OPTION, "");
+                          });
+                          return true;
+                      }
+                  });
                 
                 cefClient.addDisplayHandler(new CefDisplayHandlerAdapter() {
                     @Override
@@ -4330,21 +4368,21 @@ public class App extends Application {
                                     "        var qpVal = ''; var pVal = ''; var syVal = ''; " +
                                     "        var rowText = row.innerText.toUpperCase(); " +
                                     "        var isEde = isPageEde || rowText.indexOf('SDE') !== -1 || rowText.indexOf('EDE') !== -1 || rowText.indexOf('DISTANCE') !== -1 || rowText.indexOf('EXTERNAL') !== -1; " +
-                                    "        if (row.cells[cols.qp] && /^\\d+$/.test(row.cells[cols.qp].innerText.trim())) { " +
+                                    "        if (row.cells[cols.qp] && /^\\d+[A-Za-z]?$/.test(row.cells[cols.qp].innerText.trim())) { " +
                                     "          qpVal = row.cells[cols.qp].innerText.trim(); " +
                                     "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = row.cells[cols.paper] ? row.cells[cols.paper].innerText.trim() : ''; " +
                                     "          syVal = (cols.syllabus !== -1 && row.cells[cols.syllabus]) ? row.cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
                                     "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
                                     "          results.push(prefix + qpVal + '\\t' + pVal); " +
-                                    "        } else if (/^\\d+$/.test(cells[0].innerText.trim())) { " +
+                                    "        } else if (/^\\d+[A-Za-z]?$/.test(cells[0].innerText.trim())) { " +
                                     "          qpVal = cells[0].innerText.trim(); " +
                                     "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = cells[1].innerText.trim(); " +
                                     "          syVal = (cols.syllabus !== -1 && cells.length > cols.syllabus) ? cells[cols.syllabus].innerText.trim().replace(/[()]/g, '') : ''; " +
                                     "          if (syVal && pVal.indexOf(syVal) === -1) pVal = pVal + ' ' + syVal; " +
                                     "          results.push(prefix + qpVal + '\\t' + pVal); " +
-                                    "        } else if (/^\\d+$/.test(cells[1].innerText.trim()) && cells.length >= 3) { " +
+                                    "        } else if (/^\\d+[A-Za-z]?$/.test(cells[1].innerText.trim()) && cells.length >= 3) { " +
                                     "          qpVal = cells[1].innerText.trim(); " +
                                     "          if (isEde && !qpVal.endsWith('A')) qpVal += 'A'; " +
                                     "          pVal = cells[2].innerText.trim(); " +
@@ -4568,7 +4606,7 @@ public class App extends Application {
                                 "                  var dp = (window._lastDate || '').replace(/[/\\\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
                                 "                  var rowText = r.innerText.toUpperCase(); " +
-                                "                  var isEde = rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1 || rowText.indexOf('DISTANCE') !== -1; " +
+                                "                  var isEde = rowText.indexOf('EDE') !== -1 || rowText.indexOf('EXTERNAL') !== -1 || rowText.indexOf('SDE') !== -1 || rowText.indexOf('DISTANCE') !== -1 || (r.cells[cols.qp] && r.cells[cols.qp].innerText.trim().toUpperCase().endsWith('A')); " +
                                 "                  var prefix = isEde ? 'EDE' : 'REG'; " +
                                 "                  var qpCode = (r.cells[cols.qp]) ? r.cells[cols.qp].innerText.trim() : '000000'; " +
                                 "                  if (isEde && !qpCode.endsWith('A')) qpCode += 'A'; " +
@@ -4881,15 +4919,88 @@ public class App extends Application {
         
         backBtn.addActionListener(e -> browser.goBack());
         forwardBtn.addActionListener(e -> browser.goForward());
-        refreshBtn.addActionListener(e -> {
-            logger.info("Browser reload triggered via browser.reloadIgnoreCache()");
-            activityLogger.info("Reloading browser tab (Hard Refresh)...");
-            browser.reloadIgnoreCache();
+
+        final java.util.concurrent.atomic.AtomicReference<String> lastPostUrlRef = new java.util.concurrent.atomic.AtomicReference<>(null);
+        final java.util.concurrent.atomic.AtomicReference<String> lastPostDataRef = new java.util.concurrent.atomic.AtomicReference<>(null);
+
+        cefClient.addRequestHandler(new org.cef.handler.CefRequestHandlerAdapter() {
+            @Override
+            public boolean onBeforeBrowse(CefBrowser browser, org.cef.browser.CefFrame frame, org.cef.network.CefRequest request, boolean user_gesture, boolean is_redirect) {
+                if (frame.isMain()) {
+                    if ("POST".equalsIgnoreCase(request.getMethod())) {
+                        lastPostUrlRef.set(request.getURL());
+                        org.cef.network.CefPostData originalPostData = request.getPostData();
+                        String postStr = "";
+                        if (originalPostData != null) {
+                            java.util.Vector<org.cef.network.CefPostDataElement> elements = new java.util.Vector<>();
+                            originalPostData.getElements(elements);
+                            for (org.cef.network.CefPostDataElement el : elements) {
+                                if (el.getType() == org.cef.network.CefPostDataElement.Type.PDE_TYPE_BYTES) {
+                                    int bytesCount = el.getBytesCount();
+                                    if (bytesCount > 0) {
+                                        byte[] bytes = new byte[bytesCount];
+                                        el.getBytes(bytesCount, bytes);
+                                        postStr = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        lastPostDataRef.set(postStr);
+                    } else {
+                        lastPostUrlRef.set(null);
+                        lastPostDataRef.set(null);
+                    }
+                }
+                return false;
+            }
         });
+
+        refreshBtn.addActionListener(e -> {
+            logger.info("Browser reload triggered");
+            String lastUrl = lastPostUrlRef.get();
+            String postDataStr = lastPostDataRef.get();
+            
+            if (lastUrl != null && postDataStr != null) {
+                int res = JOptionPane.showConfirmDialog(null, 
+                    "The page that you're looking for used information that you entered.\nReturning to that page might cause any action you took to be repeated.\nDo you want to continue?", 
+                    "Confirm Form Resubmission", JOptionPane.YES_NO_OPTION);
+                if (res == JOptionPane.YES_OPTION) {
+                    activityLogger.info("Resubmitting POST data natively...");
+                    if (!postDataStr.isEmpty()) {
+                        String js = "var f = document.createElement('form');" +
+                                    "f.method = 'POST';" +
+                                    "f.action = '" + lastUrl + "';" +
+                                    "var p = '" + postDataStr.replace("'", "\\'") + "';" +
+                                    "p.split('&').forEach(function(pair) {" +
+                                    "    var eq = pair.indexOf('=');" +
+                                    "    var key = eq > -1 ? pair.substring(0, eq) : pair;" +
+                                    "    var val = eq > -1 ? pair.substring(eq + 1) : '';" +
+                                    "    if (key) {" +
+                                    "        var i = document.createElement('input');" +
+                                    "        i.type = 'hidden';" +
+                                    "        i.name = decodeURIComponent(key.replace(/\\+/g, '%20'));" +
+                                    "        i.value = decodeURIComponent(val.replace(/\\+/g, '%20'));" +
+                                    "        f.appendChild(i);" +
+                                    "    }" +
+                                    "});" +
+                                    "document.body.appendChild(f);" +
+                                    "f.submit();";
+                        browser.executeJavaScript(js, lastUrl, 0);
+                    } else {
+                        browser.reload();
+                    }
+                }
+            } else {
+                activityLogger.info("Reloading browser tab...");
+                browser.reload();
+            }
+        });
+        
         syncBtn.addActionListener(e -> {
             Platform.runLater(this::syncSessionFolder);
         });
-        
+
         // Make address bar editable and clear
         addressBar.setEditable(true);
         addressBar.addActionListener(e -> {

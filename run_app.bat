@@ -1,3 +1,3 @@
 @echo off
-set /p CP=<cp.txt
-java -cp "target\classes;%CP%" com.printmanager.Launcher
+cd /d "%~dp0"
+java -jar target\java-print-manager-7.1.jar

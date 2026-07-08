@@ -1,3 +1,1 @@
-$cp = (Get-Content cp.txt -Raw).Trim()
-$env:CLASSPATH = "target\classes;" + $cp
-java com.printmanager.Launcher
+java -jar "target\java-print-manager-7.1.jar"
