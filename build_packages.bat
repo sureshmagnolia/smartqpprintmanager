@@ -1,9 +1,11 @@
 @echo off
-set VERSION=7.0
+cd /d "%~dp0"
+set VERSION=7.1
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;%PATH%
 
 echo Cleaning input folders...
+if not exist jpackage_input mkdir jpackage_input
 del /q jpackage_input\*.jar
 copy /Y target\java-print-manager-%VERSION%.jar jpackage_input\
 
