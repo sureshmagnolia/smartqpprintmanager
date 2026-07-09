@@ -4300,8 +4300,10 @@ public class App extends Application {
                                 String fileId = parts[0];
                                 String fileName = parts[1];
                                 downloadFilenameMap.put(fileId, fileName);
-                                // Trigger standard browser download by loading the URL
-                                browser.loadURL("https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId);
+                                // Trigger standard browser download by injecting a click on a download link
+                                String pdfUrl = "https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId;
+                                String js = "var a = document.createElement('a'); a.href = '" + pdfUrl + "'; a.download = ''; document.body.appendChild(a); a.click(); document.body.removeChild(a);";
+                                browser.executeJavaScript(js, "", 0);
                                 callback.success("OK"); 
                                 return true; 
                             }
