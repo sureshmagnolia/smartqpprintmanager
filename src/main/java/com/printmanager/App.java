@@ -355,7 +355,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.0");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.2");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
