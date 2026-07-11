@@ -339,7 +339,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.0");
+        Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.3");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -355,7 +355,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.2");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.3");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -3243,7 +3243,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - AI Engine V7.0";
+                    String targetTitle = "Smart QP Print Manager - AI Engine V7.3";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3275,7 +3275,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.0 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.3 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -4302,7 +4302,7 @@ public class App extends Application {
                                 downloadFilenameMap.put(fileId, fileName);
                                 // Trigger standard browser download by injecting a click on a download link
                                 String pdfUrl = "https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId;
-                                String js = "var a = document.createElement('a'); a.href = '" + pdfUrl + "'; a.download = ''; document.body.appendChild(a); a.click(); document.body.removeChild(a);";
+                                String js = "(function() { var iframe = document.createElement('iframe'); iframe.style.display = 'none'; iframe.src = '" + pdfUrl + "'; document.body.appendChild(iframe); })();";
                                 browser.executeJavaScript(js, "", 0);
                                 callback.success("OK"); 
                                 return true; 
@@ -4596,14 +4596,18 @@ public class App extends Application {
                                 "          b.onclick = function() { " +
                                 "            window.cefQuery({ request: 'check_session', onSuccess: function(res) { " +
                                 "              if(res === 'MISSING') { alert('Please enter Detected Session name in the App first!'); return; } " +
-                                "              if(!confirm('Start automated download for ' + btns.length + ' papers? (2s delay per file)')) return; " +
+                                "              var uniqueIds = {}; for(var j=0; j<btns.length; j++) uniqueIds[btns[j].value.trim()] = true; var uCount = Object.keys(uniqueIds).length; " +
+                                "              if(!confirm('Start automated download for ' + uCount + ' unique papers (out of ' + btns.length + ')? (2s delay per file)')) return; " +
                                 "              b.disabled = true; " +
                                 "              var delayBase = 2000; " +
+                                "              var seenIds = {}; var qCount = 0; " +
                                 "              for (var i = 0; i < btns.length; i++) { " +
-                                "                (function(idx) { setTimeout(function() { " +
-                                "                  var progress = (idx + 1) + '/' + btns.length; " +
-                                "                  b.innerText = 'âŒ› Processing ' + progress + '...'; " +
-                                "                  var cur = btns[idx]; var r = cur.closest('tr'); " +
+                                "                var cur = btns[i]; var fid = cur.value.trim(); " +
+                                "                if (seenIds[fid]) continue; seenIds[fid] = true; " +
+                                "                (function(idx, currentBtn, currentQ) { setTimeout(function() { " +
+                                "                  var progress = (currentQ + 1) + '/' + uCount; " +
+                                "                  b.innerText = '\\u231B Processing ' + progress + '...'; " +
+                                "                  var r = currentBtn.closest('tr'); " +
                                 "                  var tVal = (r.cells[cols.time]) ? r.cells[cols.time].innerText.replace(/:/g, '_').replace(/\\\\s+/g, '_') : '00_00_AM'; " +
                                 "                  var dp = (window._lastDate || '').replace(/[/\\\\-]/g, '.'); " +
                                 "                  if (!dp) { var d = new Date(); dp = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) + '.' + (d.getFullYear()+'').substring(2); } " +
@@ -4614,9 +4618,10 @@ public class App extends Application {
                                 "                  if (isEde && !qpCode.endsWith('A')) qpCode += 'A'; " +
                                 "                  var paperName = (r.cells[cols.paper]) ? r.cells[cols.paper].innerText.replace(/[^a-z0-9]/gi, '_') : 'Subject'; " +
                                 "                  var fname = prefix + '_' + dp + '_' + tVal + '_' + qpCode + '_' + paperName; " +
-                                "                  window.cefQuery({ request: 'download:' + cur.value.trim() + '|' + fname }); " +
-                                "                  if (idx === btns.length - 1) { b.innerText = 'âœ“ All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
-                                "                }, idx * delayBase); })(i); " +
+                                "                  window.cefQuery({ request: 'download:' + currentBtn.value.trim() + '|' + fname }); " +
+                                "                  if (currentQ === uCount - 1) { b.innerText = '\\u2713 All Files Queued'; setTimeout(function() { b.innerText = 'Start Bulk Download & Queue'; b.disabled = false; }, 3000); } " +
+                                "                }, currentQ * delayBase); })(i, cur, qCount); " +
+                                "                qCount++; " +
                                 "              } " +
                                 "            }}); " +
                                 "          }; " +
