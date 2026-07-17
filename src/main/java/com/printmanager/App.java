@@ -4300,10 +4300,9 @@ public class App extends Application {
                                 String fileId = parts[0];
                                 String fileName = parts[1];
                                 downloadFilenameMap.put(fileId, fileName);
-                                // Trigger standard browser download by injecting a click on a download link
+                                // Trigger standard browser download by using CEF's built-in startDownload
                                 String pdfUrl = "https://collegeportal.uoc.ac.in/valuation_camp/downloadqp_file?fileid=" + fileId;
-                                String js = "(function() { var iframe = document.createElement('iframe'); iframe.style.display = 'none'; iframe.src = '" + pdfUrl + "'; document.body.appendChild(iframe); })();";
-                                browser.executeJavaScript(js, "", 0);
+                                browser.startDownload(pdfUrl);
                                 callback.success("OK"); 
                                 return true; 
                             }
@@ -5136,10 +5135,28 @@ public class App extends Application {
     }
 
     public File getSessionDir() {
-        String base = downloadPathField.getText();
+        String base = config.getBaseDownloadPath();
+        if (base == null || base.isEmpty()) {
+            if (Platform.isFxApplicationThread()) {
+                base = downloadPathField.getText();
+            } else {
+                java.util.concurrent.FutureTask<String> task = new java.util.concurrent.FutureTask<>(() -> downloadPathField.getText());
+                Platform.runLater(task);
+                try { base = task.get(1, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception e) {}
+            }
+        }
         if (base == null || base.isEmpty()) return null;
-        String session = sessionNameField.getText().trim();
-        if (session.isEmpty()) return new File(base);
+        
+        String session = "";
+        if (Platform.isFxApplicationThread()) {
+            session = sessionNameField.getText().trim();
+        } else {
+            java.util.concurrent.FutureTask<String> task = new java.util.concurrent.FutureTask<>(() -> sessionNameField.getText().trim());
+            Platform.runLater(task);
+            try { session = task.get(1, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception e) {}
+        }
+        
+        if (session == null || session.isEmpty()) return new File(base);
         
         String folderName = session;
         // Convert Examflow Key (DD-MM-YYYY | HH:MM AM) to Folder Name (DD.MM.YY FN/AN)
