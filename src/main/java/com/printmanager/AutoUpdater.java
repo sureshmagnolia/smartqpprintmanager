@@ -20,7 +20,7 @@ import java.util.Optional;
 public class AutoUpdater {
 
     private static final String GITHUB_API_URL = "https://api.github.com/repos/sureshmagnolia/smartqpprintmanager/releases/latest";
-    private static final String CURRENT_VERSION = "7.13";
+    private static final String CURRENT_VERSION = "7.14";
 
     public static void checkForUpdates() {
         new Thread(() -> {
