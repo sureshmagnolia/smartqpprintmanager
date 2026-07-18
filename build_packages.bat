@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-set VERSION=7.3
+set VERSION=7.4
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;%PATH%
 

@@ -345,7 +345,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.3");
+        Label appTitleLabel = new Label("Smart QP Print Manager - AI Engine V7.4");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -361,7 +361,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.3");
+        primaryStage.setTitle("Smart QP Print Manager - AI Engine V7.4");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -1024,20 +1024,20 @@ public class App extends Application {
             return row;
         });
 
-        Button addBtn = new Button("Add PDFs");
+        Button addBtn = new Button("Add Files");
         addBtn.setId("add-btn");
-        addBtn.setTooltip(new Tooltip("Add PDF files to the print queue"));
+        addBtn.setTooltip(new Tooltip("Add PDF or JSON files to the print queue"));
         addBtn.setOnAction(e -> {
             FileChooser fc = new FileChooser();
-            initFileChooser(fc, "Add PDFs");
-            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF Files", "*.pdf"));
+            initFileChooser(fc, "Add Files");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Supported Files", "*.pdf", "*.json"));
             List<File> files = fc.showOpenMultipleDialog(stage);
             if (files != null && !files.isEmpty()) {
                 updateLastDirectory(files.get(0));
                 List<String> selectedPaths = new ArrayList<>();
                 for (File f : files) selectedPaths.add(f.getAbsolutePath());
                 checkPathsForOldDates(selectedPaths);
-                files.forEach(this::processFile);
+                processInputFiles(files);
             }
         });
 
@@ -1074,10 +1074,7 @@ public class App extends Application {
             });
         });
 
-        Button loadJsonBtn = new Button("Upload JSON");
-        loadJsonBtn.setId("load-json-btn");
-        loadJsonBtn.setTooltip(new Tooltip("Upload a JSON file to automatically update copy counts based on QP codes"));
-        loadJsonBtn.setOnAction(e -> loadJsonAndUpdateCopies(stage));
+
 
         Button fetchExamflowBtn = new Button("\u2601 Fetch from Examflow");
         fetchExamflowBtn.setId("fetch-examflow-btn");
@@ -1105,7 +1102,7 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox btns = new HBox(15, addBtn, loadJsonBtn, fetchExamflowBtn, printBtn, clearBtn, spacer, resetSpoolerBtn);
+        HBox btns = new HBox(15, addBtn, fetchExamflowBtn, printBtn, clearBtn, spacer, resetSpoolerBtn);
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
@@ -1904,95 +1901,167 @@ public class App extends Application {
         ScrollPane sp = new ScrollPane(layout);
         sp.setFitToWidth(true);
         return sp;
+    }    private void processInputFiles(List<File> files) {
+        List<File> pdfFiles = new ArrayList<>();
+        List<File> jsonFiles = new ArrayList<>();
+        
+        for (File file : files) {
+            String name = file.getName().toLowerCase();
+            if (name.endsWith(".pdf")) {
+                pdfFiles.add(file);
+            } else if (name.endsWith(".json")) {
+                jsonFiles.add(file);
+            }
+        }
+        
+        for (File pdf : pdfFiles) {
+            processFile(pdf);
+        }
+        
+        if (!jsonFiles.isEmpty()) {
+            new Thread(() -> {
+                try {
+                    // Allow time for Platform.runLater in processFile to increment pendingAnalysisTasks
+                    Thread.sleep(200);
+                    
+                    // Wait for all PDF analysis to complete
+                    while (pendingAnalysisTasks.get() > 0) {
+                        Thread.sleep(100);
+                    }
+                    
+                    // Allow extra time for final Platform.runLater blocks to add items to fileQueue
+                    Thread.sleep(300);
+                    
+                    for (File json : jsonFiles) {
+                        processJsonFile(json);
+                    }
+                } catch (InterruptedException e) {
+                    logger.error("Interrupted waiting for PDF tasks", e);
+                }
+            }).start();
+        }
     }
 
-    private void loadJsonAndUpdateCopies(Stage stage) {
-        FileChooser fc = new FileChooser();
-        initFileChooser(fc, "Select QP Print Job JSON");
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
-        File file = fc.showOpenDialog(stage);
-        if (file == null) return;
-        updateLastDirectory(file);
-        checkPathsForOldDates(java.util.Collections.singletonList(file.getAbsolutePath()));
-        
+    private void processJsonFile(File file) {
         activityLogger.info("Fetching data from JSON: " + file.getName());
         analysisExecutor.submit(() -> {
             try {
                 updateStatus("Reading JSON: " + file.getName());
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(file);
-                int countUpdated = 0;
-                Set<FileItem> matchedFiles = new HashSet<>();
-                List<String> unmatchedFromJSON = new ArrayList<>();
-
-                if (root.isArray()) {
+                
+                boolean isRoomJson = false;
+                if (root.isArray() && root.size() > 0) {
+                    if (root.get(0).has("roomSerial")) {
+                        isRoomJson = true;
+                    }
+                }
+                
+                if (isRoomJson) {
+                    activityLogger.info("Detected Smart Room JSON: " + file.getName());
+                    // Pass 1: Aggregate copies and update Print Queue
+                    java.util.Map<String, Integer> qpCounts = new java.util.HashMap<>();
                     for (JsonNode node : root) {
-                        String qpCode = node.path("qpCode").asText("");
-                        int count = node.path("count").asInt(1);
+                        String qpCode = node.path("qpCode").asText("").trim();
+                        int count = node.path("count").asInt(0);
                         if (!qpCode.isEmpty()) {
-                            boolean matched = false;
+                            qpCounts.put(qpCode, qpCounts.getOrDefault(qpCode, 0) + count);
+                        }
+                    }
+                    
+                    com.fasterxml.jackson.databind.node.ArrayNode syntheticRoot = mapper.createArrayNode();
+                    for (java.util.Map.Entry<String, Integer> entry : qpCounts.entrySet()) {
+                        com.fasterxml.jackson.databind.node.ObjectNode on = mapper.createObjectNode();
+                        on.put("qpCode", entry.getKey());
+                        on.put("count", entry.getValue());
+                        syntheticRoot.add(on);
+                    }
+                    
+                    updateCopiesFromJsonArray(syntheticRoot, file.getName());
+                    
+                    // Pass 2: Populate Room Router
+                    processRoomWiseJson(root, file.getName());
+                } else {
+                    activityLogger.info("Detected Standard Print Job JSON: " + file.getName());
+                    updateCopiesFromJsonArray(root, file.getName());
+                }
 
-                            if (config.isAiRoutingEnabled()) {
-                                // Use AI Agent for high-precision matching
-                                RoomItem tempRoom = new RoomItem("", qpCode, "", count, -1);
-                                List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(tempRoom, fileQueue);
-                                for (MatchResult res : aiResults) {
-                                    FileItem item = res.getMatchedFile();
-                                    final int finalCount = count;
-                                    Platform.runLater(() -> item.setCopies(finalCount));
-                                    countUpdated++;
-                                    matched = true;
-                                    matchedFiles.add(item);
-                                    activityLogger.info("Updated " + item.getFileName() + " copies to " + finalCount + " (AI Matched QP: " + qpCode + ")");
-                                }
-                            } else {
-                                // Legacy matching
-                                for (FileItem item : fileQueue) {
-                                    String fileName = item.getFileName();
-                                    String extractedQP = extractQPFromFileName(fileName);
-                                    if (qpCode.equalsIgnoreCase(extractedQP) || fileName.contains("_" + qpCode + "_") || fileName.contains("_" + qpCode + ".")) {
-                                        final int finalCount = count;
-                                        Platform.runLater(() -> item.setCopies(finalCount));
-                                        countUpdated++;
-                                        matched = true;
-                                        matchedFiles.add(item);
-                                        activityLogger.info("Updated " + fileName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
-                                    }
-                                }
-                            }
-                            if (!matched) {
-                                unmatchedFromJSON.add("âŒ QP [" + qpCode + "] File NOT Loaded (Found in JSON but missing in App Queue)");
-                                activityLogger.error("No file found in queue for QP Code: " + qpCode);
+            } catch (Exception e) {
+                logger.error("Failed to process JSON", e);
+                updateStatus("Error processing JSON.");
+                Platform.runLater(() -> com.printmanager.ui.Toast.show(null, "Error parsing JSON.", 3000));
+            }
+        });
+    }
+
+    private void updateCopiesFromJsonArray(JsonNode root, String fileName) {
+        int countUpdated = 0;
+        Set<FileItem> matchedFiles = new HashSet<>();
+        List<String> unmatchedFromJSON = new ArrayList<>();
+
+        if (root.isArray()) {
+            for (JsonNode node : root) {
+                String qpCode = node.path("qpCode").asText("");
+                int count = node.path("count").asInt(1);
+                if (!qpCode.isEmpty()) {
+                    boolean matched = false;
+
+                    if (config.isAiRoutingEnabled()) {
+                        // Use AI Agent for high-precision matching
+                        RoomItem tempRoom = new RoomItem("", qpCode, "", count, -1);
+                        List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(tempRoom, fileQueue);
+                        for (MatchResult res : aiResults) {
+                            FileItem item = res.getMatchedFile();
+                            final int finalCount = count;
+                            Platform.runLater(() -> item.setCopies(finalCount));
+                            countUpdated++;
+                            matched = true;
+                            matchedFiles.add(item);
+                            activityLogger.info("Updated " + item.getFileName() + " copies to " + finalCount + " (AI Matched QP: " + qpCode + ")");
+                        }
+                    } else {
+                        // Legacy matching
+                        for (FileItem item : fileQueue) {
+                            String fName = item.getFileName();
+                            String extractedQP = extractQPFromFileName(fName);
+                            if (qpCode.equalsIgnoreCase(extractedQP) || fName.contains("_" + qpCode + "_") || fName.contains("_" + qpCode + ".")) {
+                                final int finalCount = count;
+                                Platform.runLater(() -> item.setCopies(finalCount));
+                                countUpdated++;
+                                matched = true;
+                                matchedFiles.add(item);
+                                activityLogger.info("Updated " + fName + " copies to " + finalCount + " (Matched QP: " + qpCode + ")");
                             }
                         }
                     }
-                }
-
-                // Alert for files in queue that have no routing in JSON
-                List<String> unmatchedFromQueue = new ArrayList<>();
-                for (FileItem item : fileQueue) {
-                    if (!matchedFiles.contains(item)) {
-                        String qp = extractQPFromFileName(item.getFileName());
-                        unmatchedFromQueue.add("âŒ QP [" + qp + "] No routing data found in Uploaded JSON (File: " + item.getFileName() + ")");
-                        activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
+                    if (!matched) {
+                        unmatchedFromJSON.add("â Œ QP [" + qpCode + "] File NOT Loaded (Found in JSON but missing in App Queue)");
+                        activityLogger.error("No file found in queue for QP Code: " + qpCode);
                     }
                 }
-
-                if (!unmatchedFromQueue.isEmpty() || !unmatchedFromJSON.isEmpty()) {
-                    validationService.validateAppState(unmatchedFromJSON, unmatchedFromQueue, new ArrayList<>());
-                } else {
-                    validationService.validateAppState();
-                }
-
-                final int finalUpdated = countUpdated;
-                Platform.runLater(() -> {
-                    updateStatus("Finished: Updated " + finalUpdated + " files.");
-                    activityLogger.success("JSON data fetch complete. Total files updated: " + finalUpdated);
-                });
-            } catch (Exception e) { 
-                logger.error("JSON Error", e);
-                activityLogger.error("Failed to read JSON: " + e.getMessage());
             }
+        }
+
+        // Alert for files in queue that have no routing in JSON
+        List<String> unmatchedFromQueue = new ArrayList<>();
+        for (FileItem item : fileQueue) {
+            if (!matchedFiles.contains(item)) {
+                String qp = extractQPFromFileName(item.getFileName());
+                unmatchedFromQueue.add("â Œ QP [" + qp + "] No routing data found in Uploaded JSON (File: " + item.getFileName() + ")");
+                activityLogger.warn("Queue File: " + item.getFileName() + " has NO routing entries in JSON.");
+            }
+        }
+
+        if (!unmatchedFromQueue.isEmpty() || !unmatchedFromJSON.isEmpty()) {
+            validationService.validateAppState(unmatchedFromJSON, unmatchedFromQueue, new ArrayList<>());
+        } else {
+            validationService.validateAppState();
+        }
+
+        final int finalUpdated = countUpdated;
+        Platform.runLater(() -> {
+            updateStatus("Finished: Updated " + finalUpdated + " files.");
+            activityLogger.success("JSON data fetch complete. Total files updated: " + finalUpdated);
         });
     }
 
@@ -2483,10 +2552,7 @@ public class App extends Application {
     }
 
     private VBox createRoomRouterView(Stage stage) {
-        Button uploadBtn = new Button("Upload Room JSON");
-        uploadBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
-        uploadBtn.setPrefWidth(180);
-        uploadBtn.setOnAction(e -> loadRoomWiseJson(stage));
+
 
         Button addRoomBtn = new Button("Manually Add Room");
         addRoomBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
@@ -2607,7 +2673,7 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox toolsRow = new HBox(12, uploadBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
+        HBox toolsRow = new HBox(12, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
         toolsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
         VBox header = new VBox(15, toolsRow, statsRow);
@@ -3253,7 +3319,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - AI Engine V7.3";
+                    String targetTitle = "Smart QP Print Manager - AI Engine V7.4";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3285,7 +3351,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.3 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.4 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3596,32 +3662,7 @@ public class App extends Application {
         });
     }
 
-    private void loadRoomWiseJson(Stage stage) {
-        FileChooser fc = new FileChooser();
-        initFileChooser(fc, "Select Room JSON");
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
-        File file = fc.showOpenDialog(stage);
-        if (file != null) {
-            updateLastDirectory(file);
-            checkPathsForOldDates(java.util.Collections.singletonList(file.getAbsolutePath()));
-            processRoomWiseJsonFile(file);
-        }
-    }
 
-    private void processRoomWiseJsonFile(File file) {
-        activityLogger.info("Auto-loading Seating JSON: " + file.getName());
-        analysisExecutor.submit(() -> {
-            try {
-                updateStatus("Processing Seating JSON...");
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode root = mapper.readTree(file);
-                processRoomWiseJson(root, file.getName());
-            } catch (Exception e) { 
-                updateStatus("Error loading JSON."); 
-                activityLogger.error("Failed to load Room JSON: " + e.getMessage());
-            }
-        });
-    }
 
     private void processRoomWiseJson(JsonNode root, String sourceName) {
         // PASS 1: CONSOLIDATION
@@ -4526,7 +4567,7 @@ public class App extends Application {
                             activityLogger.success("Download Ready: " + f.getName());
                             String name = f.getName().toLowerCase();
                             if (name.endsWith(".json")) {
-                                Platform.runLater(() -> processRoomWiseJsonFile(f));
+                                Platform.runLater(() -> processInputFiles(java.util.Collections.singletonList(f)));
                             } else if (name.endsWith(".pdf")) {
                                 Platform.runLater(() -> processFile(f));
                             }
