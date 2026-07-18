@@ -20,7 +20,7 @@ import java.util.Optional;
 public class AutoUpdater {
 
     private static final String GITHUB_API_URL = "https://api.github.com/repos/sureshmagnolia/smartqpprintmanager/releases/latest";
-    private static final double CURRENT_VERSION = 7.9;
+    private static final double CURRENT_VERSION = 7.10;
 
     public static void checkForUpdates() {
         new Thread(() -> {
@@ -87,17 +87,22 @@ public class AutoUpdater {
         Platform.runLater(() -> {
             Alert notice = new Alert(Alert.AlertType.INFORMATION);
             notice.initModality(javafx.stage.Modality.NONE); // Non-blocking
-            notice.setTitle("Update Notice");
-            notice.setHeaderText(null);
-            notice.setContentText("A new update (Version " + newVersion + ") is downloading in the background. You will be prompted to restart once it is ready.");
+            notice.setTitle("Downloading Update");
+            notice.setHeaderText("Downloading Version " + newVersion + " in the background...");
+            
+            javafx.scene.control.ProgressBar progressBar = new javafx.scene.control.ProgressBar(0);
+            progressBar.setPrefWidth(250);
+            javafx.scene.layout.VBox vbox = new javafx.scene.layout.VBox(10, new javafx.scene.control.Label("You can continue working. You will be prompted to restart when ready."), progressBar);
+            vbox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+            notice.getDialogPane().setContent(vbox);
             notice.show();
+            
+            System.out.println("AutoUpdater: Starting background download of update...");
+            downloadUpdateInBackground(newVersion, downloadUrl, notice, progressBar);
         });
-
-        System.out.println("AutoUpdater: Starting background download of update...");
-        downloadUpdateInBackground(newVersion, downloadUrl);
     }
 
-    private static void downloadUpdateInBackground(double newVersion, String downloadUrl) {
+    private static void downloadUpdateInBackground(double newVersion, String downloadUrl, Alert notice, javafx.scene.control.ProgressBar progressBar) {
         new Thread(() -> {
             try {
                 File tempFile = new File(System.getProperty("java.io.tmpdir"), "SmartQPPrintManager_Update.msi");
@@ -106,26 +111,40 @@ public class AutoUpdater {
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(downloadUrl)).build();
                 
                 HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                long contentLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
                 
                 if (response.statusCode() == 200) {
                     try (InputStream is = response.body(); FileOutputStream fos = new FileOutputStream(tempFile)) {
                         byte[] buffer = new byte[8192];
                         int bytesRead;
+                        long totalRead = 0;
                         while ((bytesRead = is.read(buffer)) != -1) {
                             fos.write(buffer, 0, bytesRead);
+                            totalRead += bytesRead;
+                            if (contentLength > 0) {
+                                double progress = (double) totalRead / contentLength;
+                                Platform.runLater(() -> progressBar.setProgress(progress));
+                            }
                         }
                     }
                     
                     System.out.println("AutoUpdater: Background download complete.");
-                    // Prompt the user to install now that it's downloaded
-                    Platform.runLater(() -> promptUserToInstall(newVersion, tempFile));
+                    Platform.runLater(() -> {
+                        notice.close(); // Close the progress notice
+                        promptUserToInstall(newVersion, tempFile);
+                    });
                 } else {
                     System.err.println("AutoUpdater: Failed to download update. HTTP " + response.statusCode());
+                    Platform.runLater(() -> {
+                        notice.close();
+                        new Alert(Alert.AlertType.ERROR, "Failed to download update in background (HTTP " + response.statusCode() + ").").show();
+                    });
                 }
 
             } catch (Exception e) {
                 System.err.println("AutoUpdater: Background update download failed: " + e.getMessage());
                 e.printStackTrace();
+                Platform.runLater(() -> notice.close());
             }
         }).start();
     }
