@@ -20,7 +20,7 @@ import java.util.Optional;
 public class AutoUpdater {
 
     private static final String GITHUB_API_URL = "https://api.github.com/repos/sureshmagnolia/smartqpprintmanager/releases/latest";
-    private static final double CURRENT_VERSION = 7.6;
+    private static final double CURRENT_VERSION = 7.7;
 
     public static void checkForUpdates() {
         new Thread(() -> {
@@ -83,29 +83,21 @@ public class AutoUpdater {
     }
 
     private static void promptUserForUpdate(double newVersion, String downloadUrl) {
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Update Available");
-        alert.setHeaderText("A new version is available!");
-        alert.setContentText("Version " + newVersion + " has been released. Would you like to download and install it now?");
+        // Show a non-blocking notice that an update is downloading
+        Platform.runLater(() -> {
+            Alert notice = new Alert(Alert.AlertType.INFORMATION);
+            notice.initModality(javafx.stage.Modality.NONE); // Non-blocking
+            notice.setTitle("Update Notice");
+            notice.setHeaderText(null);
+            notice.setContentText("A new update (Version " + newVersion + ") is downloading in the background. You will be prompted to restart once it is ready.");
+            notice.show();
+        });
 
-        Optional<ButtonType> result = alert.showAndWait();
-        if (result.isPresent() && result.get() == ButtonType.OK) {
-            downloadAndInstallUpdate(downloadUrl);
-        }
+        System.out.println("AutoUpdater: Starting background download of update...");
+        downloadUpdateInBackground(newVersion, downloadUrl);
     }
 
-    private static void downloadAndInstallUpdate(String downloadUrl) {
-        Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-        progressAlert.setTitle("Downloading Update");
-        progressAlert.setHeaderText("Please wait, downloading update...");
-        
-        ProgressIndicator progressIndicator = new ProgressIndicator();
-        VBox vbox = new VBox(progressIndicator);
-        vbox.setAlignment(javafx.geometry.Pos.CENTER);
-        progressAlert.getDialogPane().setContent(vbox);
-        progressAlert.getButtonTypes().clear();
-        progressAlert.show();
-
+    private static void downloadUpdateInBackground(double newVersion, String downloadUrl) {
         new Thread(() -> {
             try {
                 File tempFile = new File(System.getProperty("java.io.tmpdir"), "SmartQPPrintManager_Update.msi");
@@ -114,32 +106,40 @@ public class AutoUpdater {
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(downloadUrl)).build();
                 
                 HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                long contentLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
                 
-                try (InputStream is = response.body(); FileOutputStream fos = new FileOutputStream(tempFile)) {
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    long totalRead = 0;
-                    while ((bytesRead = is.read(buffer)) != -1) {
-                        fos.write(buffer, 0, bytesRead);
-                        totalRead += bytesRead;
-                        if (contentLength > 0) {
-                            double progress = (double) totalRead / contentLength;
-                            Platform.runLater(() -> progressIndicator.setProgress(progress));
+                if (response.statusCode() == 200) {
+                    try (InputStream is = response.body(); FileOutputStream fos = new FileOutputStream(tempFile)) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, bytesRead);
                         }
                     }
+                    
+                    System.out.println("AutoUpdater: Background download complete.");
+                    // Prompt the user to install now that it's downloaded
+                    Platform.runLater(() -> promptUserToInstall(newVersion, tempFile));
+                } else {
+                    System.err.println("AutoUpdater: Failed to download update. HTTP " + response.statusCode());
                 }
 
-                Platform.runLater(progressAlert::close);
-                installUpdate(tempFile);
-
             } catch (Exception e) {
-                Platform.runLater(() -> {
-                    progressAlert.close();
-                    new Alert(Alert.AlertType.ERROR, "Update failed: " + e.getMessage()).show();
-                });
+                System.err.println("AutoUpdater: Background update download failed: " + e.getMessage());
+                e.printStackTrace();
             }
         }).start();
+    }
+    
+    private static void promptUserToInstall(double newVersion, File installerFile) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Update Ready");
+        alert.setHeaderText("A new update (Version " + newVersion + ") is ready to install!");
+        alert.setContentText("The update has been downloaded in the background. Would you like to restart the application and install the update now?");
+
+        Optional<ButtonType> result = alert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            installUpdate(installerFile);
+        }
     }
 
     private static void installUpdate(File installer) {
