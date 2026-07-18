@@ -5133,10 +5133,13 @@ public class App extends Application {
             Platform.runLater(() -> new Alert(Alert.AlertType.WARNING, "Session folder not found!").show());
             return;
         }
-        File[] files = dir.listFiles((d, name) -> name.toLowerCase().endsWith(".pdf"));
-        if (files != null) {
-            activityLogger.info("Syncing session folder: Found " + files.length + " PDFs.");
-            for (File f : files) processFile(f);
+        File[] files = dir.listFiles((d, name) -> {
+            String lower = name.toLowerCase();
+            return lower.endsWith(".pdf") || lower.endsWith(".json");
+        });
+        if (files != null && files.length > 0) {
+            activityLogger.info("Syncing session folder: Found " + files.length + " files (PDFs/JSONs).");
+            processInputFiles(java.util.Arrays.asList(files));
         }
     }
 
