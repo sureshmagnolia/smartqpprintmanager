@@ -345,7 +345,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.8");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V7.9");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -361,7 +361,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.8 - Developed by Suresh");
+        primaryStage.setTitle("Smart QP Print Manager - V7.9");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -3322,7 +3322,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.8 - Developed by Suresh";
+                    String targetTitle = "Smart QP Print Manager - V7.9";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
