@@ -2,7 +2,14 @@
 cd /d "%~dp0"
 set VERSION=7.7
 set APPNAME=Smart QP Print Manager
-set PATH=C:\Users\sures\WiX;%PATH%
+set PATH=C:\Users\sures\WiX;C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.6.2\plugins\maven\lib\maven3\bin;%PATH%
+
+echo Building Maven Project...
+call mvn clean package
+if %ERRORLEVEL% neq 0 (
+    echo Maven build failed.
+    exit /b %ERRORLEVEL%
+)
 
 echo Cleaning input folders...
 if not exist jpackage_input mkdir jpackage_input
