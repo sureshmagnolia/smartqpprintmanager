@@ -241,6 +241,12 @@ public class App extends Application {
             }
         }
 
+        List<String> startupPaths = new ArrayList<>();
+        for (FileItem item : fileQueue) {
+            startupPaths.add(item.getFilePath());
+        }
+        checkPathsForOldDates(startupPaths);
+
         StackPane centerContainer = new StackPane();
         javafx.scene.Parent[] viewCache = new javafx.scene.Parent[7];
         viewCache[0] = createMainView(primaryStage);
@@ -1028,6 +1034,9 @@ public class App extends Application {
             List<File> files = fc.showOpenMultipleDialog(stage);
             if (files != null && !files.isEmpty()) {
                 updateLastDirectory(files.get(0));
+                List<String> selectedPaths = new ArrayList<>();
+                for (File f : files) selectedPaths.add(f.getAbsolutePath());
+                checkPathsForOldDates(selectedPaths);
                 files.forEach(this::processFile);
             }
         });
@@ -1904,6 +1913,7 @@ public class App extends Application {
         File file = fc.showOpenDialog(stage);
         if (file == null) return;
         updateLastDirectory(file);
+        checkPathsForOldDates(java.util.Collections.singletonList(file.getAbsolutePath()));
         
         activityLogger.info("Fetching data from JSON: " + file.getName());
         analysisExecutor.submit(() -> {
@@ -3531,6 +3541,47 @@ public class App extends Application {
         }
     }
 
+    private void checkPathsForOldDates(List<String> paths) {
+        if (paths == null || paths.isEmpty()) return;
+        boolean oldDateFound = false;
+        String todayDotYY = new java.text.SimpleDateFormat("dd.MM.yy").format(new java.util.Date());
+        String todayDashYY = new java.text.SimpleDateFormat("dd-MM-yy").format(new java.util.Date());
+        String todayDotYYYY = new java.text.SimpleDateFormat("dd.MM.yyyy").format(new java.util.Date());
+        String todayDashYYYY = new java.text.SimpleDateFormat("dd-MM-yyyy").format(new java.util.Date());
+        
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?<!\\d)(\\d{2})([\\.-])(\\d{2})\\2(\\d{2}|\\d{4})(?!\\d)");
+        
+        for (String path : paths) {
+            if (path == null) continue;
+            java.util.regex.Matcher m = p.matcher(path);
+            while (m.find()) {
+                String dateStr = m.group(0);
+                try {
+                    int day = Integer.parseInt(m.group(1));
+                    int month = Integer.parseInt(m.group(3));
+                    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+                        if (!dateStr.equals(todayDotYY) && !dateStr.equals(todayDashYY) 
+                            && !dateStr.equals(todayDotYYYY) && !dateStr.equals(todayDashYYYY)) {
+                            oldDateFound = true;
+                            break;
+                        }
+                    }
+                } catch (Exception e) {}
+            }
+            if (oldDateFound) break;
+        }
+
+        if (oldDateFound) {
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("Old Date Detected");
+                alert.setHeaderText("Warning: You might be loading old files!");
+                alert.setContentText("The system detected a date string in the file path that is NOT today's date.\n\nPlease double-check that you are loading the correct files for today.");
+                alert.showAndWait();
+            });
+        }
+    }
+
     private void printSingleRoomItem(RoomItem roomItem, String selectedPrinter) {
         if ("None".equals(selectedPrinter) || selectedPrinter == null) { updateStatus("Error: Select a printer."); return; }
         roomItem.setStatus("Sending...");
@@ -3552,6 +3603,7 @@ public class App extends Application {
         File file = fc.showOpenDialog(stage);
         if (file != null) {
             updateLastDirectory(file);
+            checkPathsForOldDates(java.util.Collections.singletonList(file.getAbsolutePath()));
             processRoomWiseJsonFile(file);
         }
     }
