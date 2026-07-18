@@ -20,29 +20,31 @@ import java.util.Optional;
 public class AutoUpdater {
 
     private static final String GITHUB_API_URL = "https://api.github.com/repos/sureshmagnolia/smartqpprintmanager/releases/latest";
-    private static final double CURRENT_VERSION = 7.11;
+    private static final String CURRENT_VERSION = "7.12";
 
     public static void checkForUpdates() {
         new Thread(() -> {
             try {
-                System.out.println("AutoUpdater checking for updates...");
-                HttpClient client = HttpClient.newHttpClient();
+                HttpClient client = HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.ALWAYS)
+                        .build();
+
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(GITHUB_API_URL))
                         .header("Accept", "application/vnd.github.v3+json")
+                        .GET()
                         .build();
 
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                System.out.println("AutoUpdater GitHub API Response code: " + response.statusCode());
 
                 if (response.statusCode() == 200) {
                     ObjectMapper mapper = new ObjectMapper();
                     JsonNode root = mapper.readTree(response.body());
                     String tagName = root.path("tag_name").asText();
-                    double latestVersion = parseVersion(tagName);
+                    String latestVersion = parseVersionString(tagName);
                     System.out.println("AutoUpdater Parsed latestVersion: " + latestVersion);
 
-                    if (latestVersion > CURRENT_VERSION) {
+                    if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
                         String downloadUrl = getMsiDownloadUrl(root);
                         System.out.println("AutoUpdater MSI URL: " + downloadUrl);
                         if (downloadUrl != null) {
@@ -63,12 +65,21 @@ public class AutoUpdater {
         }).start();
     }
 
-    private static double parseVersion(String tag) {
-        try {
-            return Double.parseDouble(tag.replaceAll("[^0-9.]", ""));
-        } catch (Exception e) {
-            return 0;
+    private static String parseVersionString(String tag) {
+        return tag.replaceAll("[^0-9.]", "");
+    }
+
+    private static int compareVersions(String v1, String v2) {
+        String[] parts1 = v1.split("\\.");
+        String[] parts2 = v2.split("\\.");
+        int length = Math.max(parts1.length, parts2.length);
+        for(int i = 0; i < length; i++) {
+            int p1 = i < parts1.length && !parts1[i].isEmpty() ? Integer.parseInt(parts1[i]) : 0;
+            int p2 = i < parts2.length && !parts2[i].isEmpty() ? Integer.parseInt(parts2[i]) : 0;
+            if(p1 < p2) return -1;
+            if(p1 > p2) return 1;
         }
+        return 0;
     }
 
     private static String getMsiDownloadUrl(JsonNode root) {
@@ -82,7 +93,7 @@ public class AutoUpdater {
         return null;
     }
 
-    private static void promptUserForUpdate(double newVersion, String downloadUrl) {
+    private static void promptUserForUpdate(String newVersion, String downloadUrl) {
         File targetFile = new File(System.getProperty("java.io.tmpdir"), "SmartQPPrintManager_Update_V" + newVersion + ".msi");
         if (targetFile.exists() && targetFile.length() > 0) {
             System.out.println("AutoUpdater: Update already downloaded.");
@@ -109,7 +120,7 @@ public class AutoUpdater {
         });
     }
 
-    private static void downloadUpdateInBackground(double newVersion, String downloadUrl, Alert notice, javafx.scene.control.ProgressBar progressBar, File targetFile) {
+    private static void downloadUpdateInBackground(String newVersion, String downloadUrl, Alert notice, javafx.scene.control.ProgressBar progressBar, File targetFile) {
         new Thread(() -> {
             try {
                 File tempFile = new File(targetFile.getAbsolutePath() + ".tmp");
@@ -159,7 +170,7 @@ public class AutoUpdater {
         }).start();
     }
     
-    private static void promptUserToInstall(double newVersion, File installerFile) {
+    private static void promptUserToInstall(String newVersion, File installerFile) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.setTitle("Update Ready");
         alert.setHeaderText("A new update (Version " + newVersion + ") is ready to install!");
