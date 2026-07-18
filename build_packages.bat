@@ -11,7 +11,7 @@ copy /Y target\java-print-manager-%VERSION%.jar jpackage_input\
 
 echo Creating Native App-Image...
 rmdir /s /q "output\%APPNAME%"
-jpackage --type app-image --name "%APPNAME%" --app-version %VERSION% --input jpackage_input --main-jar java-print-manager-%VERSION%.jar --main-class com.printmanager.Launcher --dest output --icon src\main\resources\icon.ico --add-modules java.base,java.desktop,java.compiler,java.instrument,java.naming,java.net.http,java.scripting,java.sql,jdk.jfr,jdk.jsobject,jdk.unsupported,jdk.unsupported.desktop,jdk.xml.dom,java.management,java.security.jgss,java.prefs,java.logging --jlink-options "--strip-debug --compress zip-9 --no-header-files --no-man-pages"
+jpackage --type app-image --name "%APPNAME%" --app-version %VERSION% --input jpackage_input --main-jar java-print-manager-%VERSION%.jar --main-class com.printmanager.Launcher --dest output --icon src\main\resources\icon.ico
 copy config.default.json "output\%APPNAME%\config.json"
 mkdir "output\%APPNAME%\bin\chromium"
 xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "output\%APPNAME%\bin\chromium\"
