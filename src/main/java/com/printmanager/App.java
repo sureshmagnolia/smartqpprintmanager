@@ -385,6 +385,9 @@ public class App extends Application {
             Launcher.splash = null;
         }
 
+        // Check for updates via GitHub Releases
+        AutoUpdater.checkForUpdates();
+
         // Setup auto-save listeners AFTER UI is ready and initial load is complete
         Platform.runLater(() -> {
             // Re-initialize Room Router view content to force UI refresh with loaded data
