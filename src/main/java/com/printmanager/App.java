@@ -345,13 +345,23 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.12");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V7.13");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
         HBox.setHgrow(topSpacer, Priority.ALWAYS);
         
-        topRibbon.getChildren().addAll(burgerBtn, appTitleLabel, topSpacer, healthCheckRibbon, simAlertHeader);
+        updateProgressBar = new javafx.scene.control.ProgressBar(0);
+        updateProgressBar.setPrefWidth(120);
+        updateProgressBar.setPrefHeight(15);
+        updateProgressLabel = new Label("Downloading...");
+        updateProgressLabel.setStyle("-fx-text-fill: #aaa; -fx-font-size: 11px;");
+        updateProgressContainer = new HBox(8, updateProgressLabel, updateProgressBar);
+        updateProgressContainer.setAlignment(javafx.geometry.Pos.CENTER);
+        updateProgressContainer.setVisible(false);
+        updateProgressContainer.setManaged(false);
+        
+        topRibbon.getChildren().addAll(burgerBtn, appTitleLabel, topSpacer, updateProgressContainer, healthCheckRibbon, simAlertHeader);
 
         VBox root = new VBox(topRibbon, borderPane, createStatusBarView());
         VBox.setVgrow(borderPane, Priority.ALWAYS);
@@ -361,7 +371,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.12");
+        primaryStage.setTitle("Smart QP Print Manager - V7.13");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -1114,6 +1124,11 @@ public class App extends Application {
         layout.setPadding(new Insets(10));
         return layout;
     }
+
+    public static Stage mainStage;
+    private static HBox updateProgressContainer;
+    private static javafx.scene.control.ProgressBar updateProgressBar;
+    private static Label updateProgressLabel;
 
     public static class PrinterDisplay {
         private final String name;
@@ -3322,7 +3337,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.12";
+                    String targetTitle = "Smart QP Print Manager - V7.13";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -5383,5 +5398,24 @@ public class App extends Application {
 
         bypassSSL();
         launch(args); 
+    }
+    public static void setUpdateProgress(double progress, String version) {
+        Platform.runLater(() -> {
+            if (updateProgressContainer != null) {
+                updateProgressContainer.setVisible(true);
+                updateProgressContainer.setManaged(true);
+                updateProgressLabel.setText("Downloading V" + version);
+                updateProgressBar.setProgress(progress);
+            }
+        });
+    }
+
+    public static void hideUpdateProgress() {
+        Platform.runLater(() -> {
+            if (updateProgressContainer != null) {
+                updateProgressContainer.setVisible(false);
+                updateProgressContainer.setManaged(false);
+            }
+        });
     }
 }
