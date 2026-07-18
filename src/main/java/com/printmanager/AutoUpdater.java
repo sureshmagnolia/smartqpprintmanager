@@ -144,8 +144,23 @@ public class AutoUpdater {
 
     private static void installUpdate(File installer) {
         try {
-            String[] command = {"msiexec", "/i", installer.getAbsolutePath(), "/passive"};
-            new ProcessBuilder(command).start();
+            // Determine the path to the current executable
+            String currentExe = ProcessHandle.current().info().command().orElse("C:\\Program Files\\Smart QP Print Manager\\Smart QP Print Manager.exe");
+            
+            File updateScript = new File(System.getProperty("java.io.tmpdir"), "update_app.bat");
+            try (java.io.PrintWriter writer = new java.io.PrintWriter(updateScript)) {
+                writer.println("@echo off");
+                writer.println("echo Waiting for application to exit...");
+                writer.println("timeout /t 2 /nobreak >nul");
+                writer.println("echo Installing update...");
+                writer.println("start /wait msiexec /i \"" + installer.getAbsolutePath() + "\" /passive");
+                writer.println("echo Restarting application...");
+                writer.println("start \"\" \"" + currentExe + "\"");
+                writer.println("del \"%~f0\""); // Delete the batch script itself
+            }
+            
+            // Run the batch script in the background
+            new ProcessBuilder("cmd", "/c", "start", "/min", "cmd", "/c", updateScript.getAbsolutePath()).start();
             System.exit(0);
         } catch (Exception e) {
             Platform.runLater(() -> new Alert(Alert.AlertType.ERROR, "Failed to launch installer: " + e.getMessage()).show());
