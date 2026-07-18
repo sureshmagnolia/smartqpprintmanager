@@ -20,7 +20,7 @@ import java.util.Optional;
 public class AutoUpdater {
 
     private static final String GITHUB_API_URL = "https://api.github.com/repos/sureshmagnolia/smartqpprintmanager/releases/latest";
-    private static final double CURRENT_VERSION = 7.10;
+    private static final double CURRENT_VERSION = 7.11;
 
     public static void checkForUpdates() {
         new Thread(() -> {
@@ -83,6 +83,13 @@ public class AutoUpdater {
     }
 
     private static void promptUserForUpdate(double newVersion, String downloadUrl) {
+        File targetFile = new File(System.getProperty("java.io.tmpdir"), "SmartQPPrintManager_Update_V" + newVersion + ".msi");
+        if (targetFile.exists() && targetFile.length() > 0) {
+            System.out.println("AutoUpdater: Update already downloaded.");
+            promptUserToInstall(newVersion, targetFile);
+            return;
+        }
+
         // Show a non-blocking notice that an update is downloading
         Platform.runLater(() -> {
             Alert notice = new Alert(Alert.AlertType.INFORMATION);
@@ -98,14 +105,14 @@ public class AutoUpdater {
             notice.show();
             
             System.out.println("AutoUpdater: Starting background download of update...");
-            downloadUpdateInBackground(newVersion, downloadUrl, notice, progressBar);
+            downloadUpdateInBackground(newVersion, downloadUrl, notice, progressBar, targetFile);
         });
     }
 
-    private static void downloadUpdateInBackground(double newVersion, String downloadUrl, Alert notice, javafx.scene.control.ProgressBar progressBar) {
+    private static void downloadUpdateInBackground(double newVersion, String downloadUrl, Alert notice, javafx.scene.control.ProgressBar progressBar, File targetFile) {
         new Thread(() -> {
             try {
-                File tempFile = new File(System.getProperty("java.io.tmpdir"), "SmartQPPrintManager_Update.msi");
+                File tempFile = new File(targetFile.getAbsolutePath() + ".tmp");
                 
                 HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS).build();
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(downloadUrl)).build();
@@ -128,10 +135,13 @@ public class AutoUpdater {
                         }
                     }
                     
+                    if (targetFile.exists()) targetFile.delete();
+                    tempFile.renameTo(targetFile);
+
                     System.out.println("AutoUpdater: Background download complete.");
                     Platform.runLater(() -> {
                         notice.close(); // Close the progress notice
-                        promptUserToInstall(newVersion, tempFile);
+                        promptUserToInstall(newVersion, targetFile);
                     });
                 } else {
                     System.err.println("AutoUpdater: Failed to download update. HTTP " + response.statusCode());
