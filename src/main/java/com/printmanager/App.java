@@ -345,18 +345,17 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.14");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V7.15");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
         HBox.setHgrow(topSpacer, Priority.ALWAYS);
         
-        updateProgressBar = new javafx.scene.control.ProgressBar(0);
-        updateProgressBar.setPrefWidth(120);
-        updateProgressBar.setPrefHeight(15);
+        updateProgressIndicator = new javafx.scene.control.ProgressIndicator(0);
+        updateProgressIndicator.setPrefSize(25, 25);
         updateProgressLabel = new Label("Downloading...");
         updateProgressLabel.setStyle("-fx-text-fill: #aaa; -fx-font-size: 11px;");
-        updateProgressContainer = new HBox(8, updateProgressLabel, updateProgressBar);
+        updateProgressContainer = new HBox(8, updateProgressLabel, updateProgressIndicator);
         updateProgressContainer.setAlignment(javafx.geometry.Pos.CENTER);
         updateProgressContainer.setVisible(false);
         updateProgressContainer.setManaged(false);
@@ -371,7 +370,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.14");
+        primaryStage.setTitle("Smart QP Print Manager - V7.15");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -1127,7 +1126,7 @@ public class App extends Application {
 
     public static Stage mainStage;
     private static HBox updateProgressContainer;
-    private static javafx.scene.control.ProgressBar updateProgressBar;
+    private static javafx.scene.control.ProgressIndicator updateProgressIndicator;
     private static Label updateProgressLabel;
 
     public static class PrinterDisplay {
@@ -3337,7 +3336,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.14";
+                    String targetTitle = "Smart QP Print Manager - V7.15";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3369,7 +3368,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.14 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.15 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -5405,7 +5404,7 @@ public class App extends Application {
                 updateProgressContainer.setVisible(true);
                 updateProgressContainer.setManaged(true);
                 updateProgressLabel.setText("Downloading V" + version);
-                updateProgressBar.setProgress(progress);
+                updateProgressIndicator.setProgress(progress);
             }
         });
     }
