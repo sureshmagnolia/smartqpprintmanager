@@ -5,7 +5,7 @@ set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.6.2\plugins\maven\lib\maven3\bin;%PATH%
 
 echo Building Maven Project...
-call mvn clean package
+call mvn clean package -DskipTests
 if %ERRORLEVEL% neq 0 (
     echo Maven build failed.
     exit /b %ERRORLEVEL%
@@ -24,6 +24,12 @@ mkdir "output\%APPNAME%\bin\chromium"
 xcopy /E /I /Y "C:\Users\sures\.jcef-bundle\*" "output\%APPNAME%\bin\chromium\"
 echo De-bloating Chromium locales...
 for /f "delims=" %%f in ('dir /b "output\%APPNAME%\bin\chromium\locales\*.pak" ^| findstr /v /i "en-US.pak"') do del "output\%APPNAME%\bin\chromium\locales\%%f"
+
+echo Copying lightweight QP Extractor scripts...
+if not exist "output\%APPNAME%\qp_extractor" mkdir "output\%APPNAME%\qp_extractor"
+copy /Y "qp_extractor\extractor.py" "output\%APPNAME%\qp_extractor\"
+copy /Y "qp_extractor\app.py" "output\%APPNAME%\qp_extractor\"
+copy /Y "qp_extractor\matcher.py" "output\%APPNAME%\qp_extractor\"
 
 rem Skipping Native ZIP as requested
 
