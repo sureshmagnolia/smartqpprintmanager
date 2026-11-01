@@ -82,6 +82,7 @@ public class App extends Application {
     private static final Logger logger = LoggerFactory.getLogger(App.class);
     private static SSLContext unsafeSslContext;
     public static Image appIcon = null;
+    private Stage primaryStage;
 
     private final PDFService pdfService = new PDFService();
     private final PrintService printService = new PrintService();
@@ -111,6 +112,10 @@ public class App extends Application {
     private final ObservableList<RoomGroup> roomGroupsList = FXCollections.observableArrayList(group -> new javafx.beans.Observable[] {
         group.statusProperty(), group.selectedPrinterProperty()
     });
+
+    private File lastSmartMatchJsonFile = null;
+    private JsonNode lastSmartMatchJsonRoot = null;
+    private File lastSmartMatchPdfFolder = null;
 
     private final Label statusBar = new Label("Ready");
     private volatile boolean isPrintingAll = false;
@@ -155,6 +160,7 @@ public class App extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+        this.primaryStage = primaryStage;
         // Initialize Global Pulse Timeline (0.7 to 1.0)
         javafx.animation.Timeline globalPulse = new javafx.animation.Timeline(
             new javafx.animation.KeyFrame(javafx.util.Duration.ZERO, 
@@ -240,12 +246,6 @@ public class App extends Application {
                 }
             }
         }
-
-        List<String> startupPaths = new ArrayList<>();
-        for (FileItem item : fileQueue) {
-            startupPaths.add(item.getFilePath());
-        }
-        checkPathsForOldDates(startupPaths);
 
         StackPane centerContainer = new StackPane();
         javafx.scene.Parent[] viewCache = new javafx.scene.Parent[7];
@@ -345,7 +345,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.18");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V7.19");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -370,7 +370,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.18");
+        primaryStage.setTitle("Smart QP Print Manager - V7.19");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -388,11 +388,8 @@ public class App extends Application {
         primaryStage.setMaximized(true);
         primaryStage.show();
 
-        // Hide splash screen if it exists
-        if (Launcher.splash != null) {
-            Launcher.splash.dispose();
-            Launcher.splash = null;
-        }
+        // Hide splash screen safely via Launcher helper
+        Launcher.hideSplashScreen();
 
         // Check for updates via GitHub Releases
         AutoUpdater.checkForUpdates();
@@ -1080,7 +1077,11 @@ public class App extends Application {
                     
                     fileQueue.clear();
                     roomGroupsList.clear();
-                    saveConfigs();
+                    lastSmartMatchJsonFile = null;
+                    lastSmartMatchJsonRoot = null;
+                    lastSmartMatchPdfFolder = null;
+                    com.printmanager.ui.SmartMatchModal.clearSessionCache();
+                    saveConfigsSynchronously();
                     validationService.validateAppState();
                 }
             });
@@ -1930,6 +1931,42 @@ public class App extends Application {
                 jsonFiles.add(file);
             }
         }
+
+        // Automatic 2-Way Sibling Detection:
+        // Case 1: Only JSON added -> auto-detect sibling PDFs in the same folder
+        if (pdfFiles.isEmpty() && !jsonFiles.isEmpty()) {
+            File parentDir = jsonFiles.get(0).getParentFile();
+            if (parentDir != null && parentDir.isDirectory()) {
+                File[] siblingPdfs = parentDir.listFiles((d, n) -> n.toLowerCase().endsWith(".pdf"));
+                if (siblingPdfs != null && siblingPdfs.length > 0) {
+                    activityLogger.info("Auto-detected " + siblingPdfs.length + " sibling PDF files in folder: " + parentDir.getAbsolutePath());
+                    for (File p : siblingPdfs) {
+                        pdfFiles.add(p);
+                    }
+                }
+            }
+        }
+
+        // Case 2: Only PDFs added -> auto-detect sibling Seating JSON in the same folder
+        if (!pdfFiles.isEmpty() && jsonFiles.isEmpty()) {
+            File parentDir = pdfFiles.get(0).getParentFile();
+            if (parentDir != null && parentDir.isDirectory()) {
+                File[] siblingJsons = parentDir.listFiles((d, n) -> n.toLowerCase().endsWith(".json"));
+                if (siblingJsons != null && siblingJsons.length > 0) {
+                    File chosenJson = null;
+                    for (File j : siblingJsons) {
+                        String jname = j.getName().toLowerCase();
+                        if (jname.contains("seating") || jname.contains("room") || jname.contains("summary")) {
+                            chosenJson = j;
+                            break;
+                        }
+                    }
+                    if (chosenJson == null) chosenJson = siblingJsons[0];
+                    activityLogger.info("Auto-detected sibling Seating JSON in folder: " + chosenJson.getName());
+                    jsonFiles.add(chosenJson);
+                }
+            }
+        }
         
         for (File pdf : pdfFiles) {
             processFile(pdf);
@@ -1976,6 +2013,42 @@ public class App extends Application {
                 
                 if (isRoomJson) {
                     activityLogger.info("Detected Smart Room JSON: " + file.getName());
+
+                    // Check if JSON has QP codes (Flow A) or lacks QP codes (Flow B)
+                    boolean hasQpCodes = false;
+                    for (JsonNode node : root) {
+                        if (!node.path("qpCode").asText("").trim().isEmpty()) {
+                            hasQpCodes = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasQpCodes) {
+                        activityLogger.info("Seating JSON lacks QP codes: " + file.getName() + ". Prompting user to run Smart Matcher.");
+                        Platform.runLater(() -> {
+                            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                            alert.setTitle("Smart Question Paper Matcher");
+                            alert.setHeaderText("Question Paper Codes Missing in Seating JSON");
+                            alert.setContentText("The loaded seating summary ('" + file.getName() + "') does not contain Question Paper codes.\n\n"
+                                    + "Would you like to run the Smart Question Paper Matcher now?\n"
+                                    + "It will automatically match Question Paper PDFs with course requirements.");
+                            ButtonType btnYes = new ButtonType("Yes, Run Matcher", ButtonBar.ButtonData.OK_DONE);
+                            ButtonType btnNo = new ButtonType("No, Later", ButtonBar.ButtonData.CANCEL_CLOSE);
+                            alert.getButtonTypes().setAll(btnYes, btnNo);
+                            alert.initOwner(primaryStage);
+
+                            Optional<ButtonType> result = alert.showAndWait();
+                            if (result.isPresent() && result.get() == btnYes) {
+                                openSmartMatchModal(file, root);
+                            } else {
+                                processRoomWiseJson(root, file.getName());
+                                validationService.validateAppState();
+                            }
+                        });
+                        return;
+                    }
+
+                    // Flow A: Existing Flow with QP codes
                     // Pass 1: Aggregate copies and update Print Queue
                     java.util.Map<String, Integer> qpCounts = new java.util.HashMap<>();
                     for (JsonNode node : root) {
@@ -2008,6 +2081,140 @@ public class App extends Application {
                 updateStatus("Error processing JSON.");
                 Platform.runLater(() -> com.printmanager.ui.Toast.show(null, "Error parsing JSON.", 3000));
             }
+        });
+    }
+
+    public void openSmartMatchModal(File jsonFile, JsonNode jsonRoot) {
+        Platform.runLater(() -> {
+            if (jsonFile != null) {
+                if (this.lastSmartMatchJsonFile == null || !this.lastSmartMatchJsonFile.getAbsolutePath().equalsIgnoreCase(jsonFile.getAbsolutePath())) {
+                    this.lastSmartMatchPdfFolder = null;
+                    com.printmanager.ui.SmartMatchModal.clearSessionCache();
+                }
+                this.lastSmartMatchJsonFile = jsonFile;
+            }
+            if (jsonRoot != null) this.lastSmartMatchJsonRoot = jsonRoot;
+
+            File targetJsonFile = (jsonFile != null) ? jsonFile : this.lastSmartMatchJsonFile;
+            JsonNode targetJsonRoot = (jsonRoot != null) ? jsonRoot : this.lastSmartMatchJsonRoot;
+
+            File pdfDir = null;
+            if (targetJsonFile != null && targetJsonFile.getParentFile() != null && targetJsonFile.getParentFile().exists()) {
+                pdfDir = targetJsonFile.getParentFile();
+            } else if (this.lastSmartMatchPdfFolder != null && this.lastSmartMatchPdfFolder.exists()) {
+                pdfDir = this.lastSmartMatchPdfFolder;
+            } else if (!fileQueue.isEmpty()) {
+                File last = fileQueue.get(fileQueue.size() - 1).getFile();
+                if (last != null && last.getParentFile() != null && last.getParentFile().exists()) {
+                    pdfDir = last.getParentFile();
+                }
+            }
+            this.lastSmartMatchPdfFolder = pdfDir;
+
+            final File finalPdfDir = pdfDir;
+            List<File> queuePdfs = new ArrayList<>();
+            for (FileItem fi : fileQueue) {
+                if (fi.getFile() != null && fi.getFile().exists()) {
+                    if (finalPdfDir == null || fi.getFile().getParentFile() == null ||
+                        fi.getFile().getParentFile().getAbsolutePath().equalsIgnoreCase(finalPdfDir.getAbsolutePath())) {
+                        queuePdfs.add(fi.getFile());
+                    }
+                }
+            }
+
+            com.printmanager.ui.SmartMatchModal.show(primaryStage, targetJsonFile, targetJsonRoot, finalPdfDir, queuePdfs, (populatedJson) -> {
+                activityLogger.info("Applied matched seating JSON with resolved QP codes.");
+
+                // Purge any stale files from other folders from fileQueue so only current folder's PDFs remain
+                if (finalPdfDir != null && finalPdfDir.exists()) {
+                    fileQueue.removeIf(fi -> fi.getFile() != null && fi.getFile().getParentFile() != null &&
+                        !fi.getFile().getParentFile().getAbsolutePath().equalsIgnoreCase(finalPdfDir.getAbsolutePath()));
+                }
+
+                // Pass 1: Aggregate copies per unique PDF file from populatedJson
+                Map<String, Integer> fileCopies = new LinkedHashMap<>();
+                Map<String, File> filesToLoad = new LinkedHashMap<>();
+
+                for (JsonNode node : populatedJson) {
+                    String pdfPath = node.path("pdfFilePath").asText("");
+                    String pdfName = node.path("pdfFileName").asText("");
+                    int count = node.path("count").asInt(0);
+
+                    File targetFile = null;
+                    if (!pdfPath.isEmpty()) {
+                        File f = new File(pdfPath);
+                        if (f.exists()) targetFile = f;
+                    }
+                    if (targetFile == null && !pdfName.isEmpty() && finalPdfDir != null) {
+                        File f = new File(finalPdfDir, pdfName);
+                        if (f.exists()) targetFile = f;
+                    }
+
+                    if (targetFile != null) {
+                        String absPath = targetFile.getAbsolutePath();
+                        filesToLoad.put(absPath, targetFile);
+                        fileCopies.put(absPath, fileCopies.getOrDefault(absPath, 0) + count);
+                    }
+                }
+
+                // Pass 2: Synchronously add or update files in fileQueue (Print Queue)
+                for (File file : filesToLoad.values()) {
+                    int copiesNeeded = fileCopies.getOrDefault(file.getAbsolutePath(), 1);
+                    FileItem existing = null;
+                    for (FileItem fi : fileQueue) {
+                        if (fi.getFile() != null && fi.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
+                            existing = fi;
+                            break;
+                        }
+                    }
+
+                    if (existing != null) {
+                        existing.setCopies(copiesNeeded);
+                    } else {
+                        try {
+                            int p = pdfService.getPageCount(file);
+                            String c = pdfService.getText(file);
+                            PrintRule rule = findMatchingRule(p, c);
+                            String pr = (rule != null) ? rule.getPrinterName() : "None";
+                            List<String> available = printService.getAvailablePrinters();
+                            if ("None".equals(pr) || "Default Printer".equalsIgnoreCase(pr) || !available.contains(pr)) {
+                                pr = printService.getDefaultPrinterName();
+                            }
+                            String ps = (rule != null) ? rule.getPaperSize() : "A4";
+                            boolean dx = (rule != null) && rule.isDuplex();
+                            boolean bk = (rule != null) && rule.isBooklet();
+                            String bt = (rule != null) ? rule.getBindingType() : "Left";
+
+                            FileItem newItem = new FileItem(file, p, c, pr, dx, bk, bt, copiesNeeded, ps, "");
+                            fileQueue.add(newItem);
+                            activityLogger.info("Loaded matched PDF into Print Queue: " + file.getName() + " (Copies: " + copiesNeeded + ")");
+                        } catch (Exception ex) {
+                            logger.error("Failed to load PDF into queue: " + file.getName(), ex);
+                        }
+                    }
+                }
+
+                // Pass 3: Also load ALL discovered PDFs (unassigned ones) from CURRENT folder into fileQueue
+                if (finalPdfDir != null && finalPdfDir.exists()) {
+                    File[] pdfs = finalPdfDir.listFiles((d, name) -> name.toLowerCase().endsWith(".pdf"));
+                    if (pdfs != null) {
+                        for (File pdf : pdfs) {
+                            boolean alreadyInQueue = fileQueue.stream().anyMatch(fi -> 
+                                fi.getFile() != null && fi.getFile().getAbsolutePath().equalsIgnoreCase(pdf.getAbsolutePath()));
+                            if (!alreadyInQueue) {
+                                processFile(pdf);
+                            }
+                        }
+                    }
+                }
+
+                // Pass 4: Populate Room Router
+                String sourceName = (targetJsonFile != null) ? targetJsonFile.getName() : "Smart Matcher";
+                processRoomWiseJson(populatedJson, sourceName);
+                refreshGlobalAlerts();
+                validationService.validateAppState();
+                com.printmanager.ui.Toast.show(primaryStage, "✓ Successfully applied matches to Room Router & Print Queue!", 3500);
+            });
         });
     }
 
@@ -2266,27 +2473,53 @@ public class App extends Application {
         }
     }
 
+    public static String normalizeQP(String qp) {
+        if (qp == null) return "";
+        String norm = qp.replaceAll("[\\s_\\-]", "").toUpperCase();
+        if (norm.matches("^D\\d+.*")) {
+            norm = norm.substring(1);
+        }
+        return norm;
+    }
+
     public String extractQPFromFileName(String fileName) {
         if (fileName == null || fileName.isEmpty()) return "";
         
+        String nameWithoutExt = fileName.replaceFirst("(?i)\\.pdf$", "");
+
+        // Priority 1: 5-6 digit QP code optionally preceded by single letter (D, C, B, A)
+        // and optionally followed by A/B suffix.
+        // E.g. "152493_1793255582227", "153275_1793255612306", "D152493_...", "D 152493", "Split_152493_..."
+        // Excludes 10-14 digit timestamps by boundary checks
+        java.util.regex.Pattern pLeading = java.util.regex.Pattern.compile("(?:^|[\\s_\\-])([A-Za-z])?[\\s_\\-]?(\\d{5,6})([ABab])?(?:[\\s_\\-]|$)");
+        java.util.regex.Matcher mLeading = pLeading.matcher(nameWithoutExt);
+        if (mLeading.find()) {
+            String letter = mLeading.group(1) != null ? mLeading.group(1).toUpperCase() : "";
+            String digits = mLeading.group(2);
+            String suffix = mLeading.group(3) != null ? mLeading.group(3).toUpperCase() : "";
+            if (suffix.isEmpty() && (nameWithoutExt.toUpperCase().contains("SDE") || nameWithoutExt.contains(digits + "A"))) {
+                suffix = "A";
+            }
+            return (letter + digits + suffix).trim();
+        }
+
+        // Priority 2: Check for 5-8 char blocks between underscores, strictly filtering out timestamps
         List<String> candidates = new ArrayList<>();
-        // Match potential blocks: _143812_ or _140754A_ or _BCM4C04_
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("_([A-Z0-9\\.]+)[_\\.]", java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher m = p.matcher(fileName);
         while (m.find()) {
             String c = m.group(1);
-            // Filter out obvious dates (e.g. 19.05.26 or 2026-06-02)
             long dots = c.chars().filter(ch -> ch == '.').count();
             long dashes = c.chars().filter(ch -> ch == '-').count();
-            if (dots < 2 && dashes < 2 && c.length() >= 5) {
+            if (dots < 2 && dashes < 2 && c.length() >= 5 && c.length() <= 8) {
                 candidates.add(c.toUpperCase());
             }
         }
 
         // Fallback: search for any 5-8 digit block if no candidates found
         if (candidates.isEmpty()) {
-            java.util.regex.Pattern pDigit = java.util.regex.Pattern.compile("(\\d{5,8})");
-            java.util.regex.Matcher mDigit = pDigit.matcher(fileName);
+            java.util.regex.Pattern pDigit = java.util.regex.Pattern.compile("\\b(\\d{5,8})\\b");
+            java.util.regex.Matcher mDigit = pDigit.matcher(nameWithoutExt);
             while (mDigit.find()) candidates.add(mDigit.group(1));
         }
 
@@ -2571,6 +2804,10 @@ public class App extends Application {
     private VBox createRoomRouterView(Stage stage) {
 
 
+        Button smartMatchBtn = new Button("🧩 Match Seating JSON");
+        smartMatchBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #0284c7; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 4;");
+        smartMatchBtn.setOnAction(e -> openSmartMatchModal(null, null));
+
         Button addRoomBtn = new Button("Manually Add Room");
         addRoomBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 15; -fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
         addRoomBtn.setPrefWidth(180);
@@ -2586,8 +2823,14 @@ public class App extends Application {
             alert.setContentText("This action cannot be undone.");
             alert.showAndWait().ifPresent(response -> {
                 if (response == ButtonType.OK) {
+                    fileQueue.forEach(this::deleteIfTempFile);
+                    fileQueue.clear();
                     roomGroupsList.clear();
-                    saveConfigs();
+                    lastSmartMatchJsonFile = null;
+                    lastSmartMatchJsonRoot = null;
+                    lastSmartMatchPdfFolder = null;
+                    com.printmanager.ui.SmartMatchModal.clearSessionCache();
+                    saveConfigsSynchronously();
                     validationService.validateAppState();
                 }
             });
@@ -2690,7 +2933,7 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox toolsRow = new HBox(12, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
+        HBox toolsRow = new HBox(12, smartMatchBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
         toolsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
         VBox header = new VBox(15, toolsRow, statsRow);
@@ -2708,15 +2951,43 @@ public class App extends Application {
         
         String defaultStyle = "-fx-background-color: #ffffff; -fx-border-color: #e3e8ee; -fx-border-width: 1; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 10 15 10 15; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.06), 10, 0, 0, 5); -fx-cursor: hand;";
         String finishedStyle = "-fx-background-color: #f2fcf5; -fx-border-color: #4caf50; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 10 15 10 15; -fx-effect: dropshadow(three-pass-box, rgba(76,175,80,0.2), 10, 0, 0, 5); -fx-cursor: hand;";
+        String warningMissingStyle = "-fx-background-color: #fffdf5; -fx-border-color: #f59e0b; -fx-border-width: 2; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 10 15 10 15; -fx-effect: dropshadow(three-pass-box, rgba(245,158,11,0.25), 10, 0, 0, 5); -fx-cursor: hand;";
         
         card.setStyle(group.getStatus() != null && group.getStatus().contains("Finished") ? finishedStyle : defaultStyle);
         card.setPrefWidth(480);
         card.setMaxWidth(480);
 
-        group.statusProperty().addListener((obs, old, val) -> {
-            if (val != null && val.contains("Finished")) card.setStyle(finishedStyle);
-            else card.setStyle(defaultStyle);
-        });
+        Label warningSign = new Label("QP Missing");
+        warningSign.setGraphic(com.printmanager.ui.SmartMatchModal.createWarningIcon(11, "#b45309"));
+        warningSign.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #b45309; -fx-background-color: #fef3c7; -fx-border-color: #fcd34d; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 2 7 2 7;");
+        warningSign.setTooltip(new Tooltip("One or more question papers in this room are not mapped to any QP PDF file"));
+        warningSign.setVisible(false);
+        warningSign.setManaged(false);
+
+        Runnable updateCardAppearance = () -> {
+            Platform.runLater(() -> {
+                boolean isFinished = group.getStatus() != null && group.getStatus().contains("Finished");
+                boolean hasMissing = group.getItems().isEmpty() || group.getItems().stream().anyMatch(i -> 
+                    i.getMatchedFile() == null || "Pending".equalsIgnoreCase(i.getStatus())
+                );
+
+                if (isFinished) {
+                    card.setStyle(finishedStyle);
+                    warningSign.setVisible(false);
+                    warningSign.setManaged(false);
+                } else if (hasMissing) {
+                    card.setStyle(warningMissingStyle);
+                    warningSign.setVisible(true);
+                    warningSign.setManaged(true);
+                } else {
+                    card.setStyle(defaultStyle);
+                    warningSign.setVisible(false);
+                    warningSign.setManaged(false);
+                }
+            });
+        };
+
+        group.statusProperty().addListener((obs, old, val) -> updateCardAppearance.run());
 
         
         
@@ -2786,14 +3057,19 @@ public class App extends Application {
                      .forEach(other -> other.setCount(val.intValue()));
                 recalculateRoomTotal.run();
             });
+            ri.matchedFileProperty().addListener((obs, old, val) -> updateCardAppearance.run());
+            ri.statusProperty().addListener((obs, old, val) -> updateCardAppearance.run());
         };
         group.getItems().forEach(attachListener);
         group.getItems().addListener((javafx.collections.ListChangeListener<RoomItem>) c -> {
             while (c.next()) {
                 if (c.wasAdded()) c.getAddedSubList().forEach(attachListener);
             }
+            recalculateRoomTotal.run();
+            updateCardAppearance.run();
         });
         recalculateRoomTotal.run();
+        updateCardAppearance.run();
 
         Button delRoomBtn = new Button("\uD83D\uDDD1");
         delRoomBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #f44336; -fx-font-size: 16px; -fx-cursor: hand; -fx-padding: 0;");
@@ -2812,7 +3088,7 @@ public class App extends Application {
             });
         });
 
-        HBox titleBox = new HBox(10, title, subtitle);
+        HBox titleBox = new HBox(8, title, subtitle, warningSign);
         titleBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         Region headerSpacer = new Region();
         HBox.setHgrow(headerSpacer, Priority.ALWAYS);
@@ -3336,7 +3612,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.18";
+                    String targetTitle = "Smart QP Print Manager - V7.19";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3368,7 +3644,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.18 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.19 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3660,7 +3936,7 @@ public class App extends Application {
                 alert.setTitle("Old Date Detected");
                 alert.setHeaderText("Warning: You might be loading old files!");
                 alert.setContentText("The system detected a date string in the file path that is NOT today's date.\n\nPlease double-check that you are loading the correct files for today.");
-                alert.showAndWait();
+                alert.show();
             });
         }
     }
@@ -3750,7 +4026,31 @@ public class App extends Application {
                 int count = roomItem.getCount();
 
                 boolean matched = false;
-                if (config.isAiRoutingEnabled()) {
+
+                // Priority 1: Check direct match by pdfFileName from SmartMatchModal
+                FileItem directMatch = null;
+                if (roomItem.getPdfFileName() != null && !roomItem.getPdfFileName().isEmpty()) {
+                    for (FileItem fi : fileQueue) {
+                        if (fi.getFileName().equalsIgnoreCase(roomItem.getPdfFileName()) ||
+                            (fi.getFile() != null && fi.getFile().getName().equalsIgnoreCase(roomItem.getPdfFileName()))) {
+                            directMatch = fi;
+                            break;
+                        }
+                    }
+                }
+
+                if (directMatch != null) {
+                    roomItem.setMatchedFile(directMatch);
+                    roomItem.setStatus("Ready");
+                    if (roomItem.getQpCode() == null || roomItem.getQpCode().isEmpty()) {
+                        String fqp = extractQPFromFileName(directMatch.getFileName());
+                        if (fqp != null && !fqp.isEmpty()) roomItem.setQpCode(fqp);
+                    }
+                    group.getItems().add(roomItem);
+                    matched = true;
+                    matchedItems++;
+                    activityLogger.info("Room " + roomSerial + ": Directly Matched [" + directMatch.getFileName() + "] for " + count + " students");
+                } else if (config.isAiRoutingEnabled()) {
                     List<MatchResult> aiResults = aiRoutingAgent.findAllMatchesForRoom(roomItem, fileQueue);
                     
                     // Filter splits
@@ -3835,7 +4135,9 @@ public class App extends Application {
                         String fn = fi.getFileName();
                         String eqp = extractQPFromFileName(fn);
                         String qpCode = roomItem.getQpCode();
-                        if (!qpCode.isEmpty() && (qpCode.equalsIgnoreCase(eqp) || fn.contains("_" + qpCode + "_") || fn.contains("_" + qpCode + "."))) {
+                        String normQp = normalizeQP(qpCode);
+                        String normEqp = normalizeQP(eqp);
+                        if (!normQp.isEmpty() && (normQp.equals(normEqp) || fn.contains("_" + qpCode + "_") || fn.contains("_" + qpCode + ".") || fn.contains("_" + normQp + "_"))) {
                             String pathKey = fi.getFile().getAbsolutePath().toLowerCase();
                             if (!seenLegacy.contains(pathKey)) { legacyMatches.add(fi); seenLegacy.add(pathKey); }
                         }

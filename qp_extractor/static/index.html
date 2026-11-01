@@ -1,0 +1,2062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Question Paper Extractor &amp; Room Seating Matcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Offline-first PDF.js & Matcher scripts with CDN fallback -->
+  <script src="pdf.worker.min.js"></script>
+  <script src="pdf.min.js"></script>
+  <script src="qp_db.js"></script>
+  <script src="matcher.js"></script>
+  <script>
+    if (typeof pdfjsLib === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>');
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"><\/script>');
+    }
+  </script>
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --primary-light: #eef2ff;
+      --success: #059669;
+      --success-light: #ecfdf5;
+      --warning: #d97706;
+      --warning-light: #fffbeb;
+      --danger: #dc2626;
+      --danger-light: #fef2f2;
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-300: #cbd5e1;
+      --slate-600: #475569;
+      --slate-700: #334155;
+      --slate-800: #1e293b;
+      --slate-900: #0f172a;
+      --border-radius: 12px;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f8fafc;
+      color: var(--slate-800);
+      min-height: 100vh;
+      padding: 32px 24px;
+    }
+
+    .container { max-width: 1380px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .header-titles h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--slate-900);
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .header-titles p {
+      font-size: 14px;
+      color: var(--slate-600);
+      margin-top: 4px;
+    }
+
+    .badge-calicut {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      background: #e0e7ff;
+      color: #3730a3;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 9999px;
+    }
+
+    .mode-indicator {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      background: #ecfdf5;
+      color: #047857;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 9999px;
+      border: 1px solid #a7f3d0;
+    }
+
+    /* Cards */
+    .upload-card {
+      background: white;
+      border-radius: var(--border-radius);
+      padding: 24px;
+      border: 1px solid var(--slate-200);
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 24px;
+    }
+
+    .dropzone {
+      border: 2px dashed var(--slate-300);
+      border-radius: var(--border-radius);
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: var(--slate-50);
+      position: relative;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .dropzone-icon {
+      width: 44px;
+      height: 44px;
+      color: var(--primary);
+      margin-bottom: 10px;
+    }
+
+    .dropzone h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--slate-800);
+      margin-bottom: 4px;
+    }
+
+    .dropzone p {
+      font-size: 13px;
+      color: var(--slate-600);
+    }
+
+    .upload-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 14px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { background: var(--slate-300); cursor: not-allowed; }
+
+    .btn-success { background: var(--success); color: white; }
+    .btn-success:hover { background: #047857; }
+
+    .btn-outline {
+      background: white;
+      border: 1px solid var(--slate-300);
+      color: var(--slate-700);
+    }
+    .btn-outline:hover { background: var(--slate-100); border-color: var(--slate-400); }
+
+    .file-queue {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .file-tag {
+      background: var(--slate-100);
+      border: 1px solid var(--slate-200);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--slate-700);
+    }
+
+    .file-tag.json-tag {
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+      color: #065f46;
+      font-weight: 600;
+    }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: white;
+      border-radius: var(--border-radius);
+      padding: 16px 20px;
+      border: 1px solid var(--slate-200);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--slate-600);
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--slate-900);
+      margin-top: 4px;
+    }
+
+    /* Results Card */
+    .results-card {
+      background: white;
+      border-radius: var(--border-radius);
+      border: 1px solid var(--slate-200);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .table-toolbar {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--slate-200);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .search-box {
+      position: relative;
+      min-width: 280px;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 8px 14px 8px 36px;
+      font-size: 13px;
+      border: 1px solid var(--slate-300);
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .search-box input:focus { border-color: var(--primary); }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      color: var(--slate-600);
+    }
+
+    .filter-select {
+      padding: 8px 12px;
+      font-size: 13px;
+      border: 1px solid var(--slate-300);
+      border-radius: 8px;
+      background: white;
+      color: var(--slate-700);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .export-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* Tabs */
+    .tab-btn {
+      background: transparent;
+      border: none;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--slate-600);
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-btn:hover { background: var(--slate-100); color: var(--slate-800); }
+    .tab-btn.active { background: var(--primary-light); color: var(--primary); }
+
+    .tab-badge {
+      background: var(--primary);
+      color: white;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      font-weight: 700;
+    }
+
+    /* Tables */
+    .table-responsive { overflow-x: auto; max-height: 600px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      background: var(--slate-50);
+      padding: 12px 16px;
+      font-weight: 600;
+      color: var(--slate-700);
+      border-bottom: 1px solid var(--slate-200);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: #e2e8f0; }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--slate-100);
+      vertical-align: middle;
+    }
+
+    tr:hover { background: var(--slate-50); }
+
+    /* Pills & Badges */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pill-qp { background: #ede9fe; color: #5b21b6; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .pill-code { background: #e0f2fe; color: #0369a1; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .pill-year { background: #fef3c7; color: #92400e; }
+    .pill-reg { background: #e0e7ff; color: #3730a3; }
+    .pill-sde { background: #fae8ff; color: #86198f; }
+
+    .badge-exact { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; padding: 3px 8px; border-radius: 9999px; font-weight: 700; font-size: 11px; }
+    .badge-partial { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; padding: 3px 8px; border-radius: 9999px; font-weight: 700; font-size: 11px; }
+    .badge-unmatched { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 3px 8px; border-radius: 9999px; font-weight: 700; font-size: 11px; }
+    .badge-room { background: #f1f5f9; color: #1e293b; font-weight: 700; border: 1px solid #cbd5e1; padding: 2px 8px; border-radius: 6px; }
+
+    .segment-tag {
+      display: inline-block;
+      background: #f1f5f9;
+      color: #334155;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin: 1px;
+      border: 1px solid #e2e8f0;
+    }
+
+    /* QP Packing Cards */
+    .packing-card {
+      background: white;
+      border: 1px solid var(--slate-200);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .packing-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .packing-rooms-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .room-chip {
+      background: var(--slate-100);
+      border: 1px solid var(--slate-200);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 12px;
+    }
+
+    /* Progress & Loaders */
+    .progress-bar-container { height: 4px; background: var(--slate-200); overflow: hidden; display: none; }
+    .progress-bar { height: 100%; background: var(--primary); width: 0%; transition: width 0.15s ease; }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--slate-900);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      padding: 16px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-content {
+      background: white;
+      width: 100%;
+      max-width: 640px;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: var(--shadow-lg);
+      animation: modalIn 0.2s ease-out;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--slate-200);
+    }
+    .modal-header h3 { font-size: 18px; font-weight: 700; color: var(--slate-900); }
+    .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--slate-600); }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 12px 16px;
+      font-size: 14px;
+    }
+    .detail-label { color: var(--slate-600); font-weight: 600; }
+    .detail-value { color: var(--slate-900); word-break: break-word; }
+
+    .empty-state {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--slate-600);
+    }
+    .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; color: var(--slate-400); }
+
+    @media print {
+      body { background: white; padding: 0; }
+      .header, .upload-card, .table-toolbar, .table-tabs, .export-group, #btnScanFolder, #btnLoadFolder { display: none !important; }
+      .results-card { border: none; box-shadow: none; }
+      .table-responsive { max-height: none; overflow: visible; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-titles">
+        <h1>
+          <span>Question Paper Extractor &amp; Room Seating Matcher</span>
+          <span class="badge-calicut">Universal Calicut Exam Engine</span>
+          <span id="modeBadge" class="mode-indicator">⚡ In-Browser + Local API</span>
+        </h1>
+        <p>Extract QP Codes &amp; Course Metadata from Question Paper PDFs and dynamically match with ExamFlow Room Seating Summaries.</p>
+      </div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button id="btnDeepScan" class="btn btn-primary" style="background: #2563eb;" title="Multi-wave deep scan of all Download QP folders to find missing Question Papers">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="m4.93 4.93 4.24 4.24"></path><path d="m14.83 9.17 4.24-4.24"></path><path d="m14.83 14.83 4.24 4.24"></path><path d="m9.17 14.83-4.24 4.24"></path></svg>
+          🌊 Deep Scan All Repositories
+        </button>
+        <button id="btnScanFolder" class="btn btn-outline" title="Scan specific folder containing PDFs and Seating JSON">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          📁 Scan Folder...
+        </button>
+        <button id="btnLoadFolder" class="btn btn-outline" title="Select a local folder in browser">
+          📂 Browse Folder
+        </button>
+        <button id="btnLoadSeatingJson" class="btn btn-outline" title="Upload an ExamFlow Room_Wise_Seating_Summary.json">
+          🏫 Attach Seating JSON
+        </button>
+        <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none;">
+        <input type="file" id="seatingJsonInput" accept=".json" style="display:none;">
+      </div>
+    </header>
+
+    <!-- Upload Box -->
+    <div class="upload-card">
+      <div id="dropzone" class="dropzone">
+        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <h3>Drag &amp; Drop Question Paper PDFs and/or Seating Summary JSON here</h3>
+        <p>or click anywhere in this box to select files (.pdf, .json)</p>
+        <input type="file" id="fileInput" multiple accept=".pdf,.json">
+      </div>
+
+      <div id="fileQueue" class="file-queue" style="display:none;"></div>
+
+      <!-- Date Misalignment Banner -->
+      <div id="dateMismatchAlert" style="display:none; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:12px 16px; margin-top:14px; color:#92400e; font-size:13px; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:20px;">⚠️</span>
+          <span id="dateMismatchText">Exam Date mismatch detected...</span>
+        </div>
+        <button id="btnSwitchSeatingDate" class="btn btn-outline" style="padding:4px 10px; font-size:12px; border-color:#d97706; color:#b45309; background:white;">
+          Switch to Matching Schedule
+        </button>
+      </div>
+
+      <div class="upload-actions">
+        <div>
+          <span id="selectedCountText" style="font-size: 13px; color: var(--slate-600);">No files selected</span>
+          <span id="attachedSeatingBadge" class="pill pill-reg" style="display:none; margin-left: 8px;"></span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button id="btnClear" class="btn btn-outline" style="display: none;">Clear</button>
+          <button id="btnExtract" class="btn btn-primary" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Extract &amp; Match
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div id="progressBarContainer" class="progress-bar-container">
+      <div id="progressBar" class="progress-bar"></div>
+    </div>
+
+    <!-- Stats row for QP Extraction -->
+    <div id="statsRow" class="stats-row" style="display: none;">
+      <div class="stat-card">
+        <div class="stat-label">Total QPs Analyzed</div>
+        <div id="statTotal" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Successful Extraction</div>
+        <div id="statSuccess" class="stat-value" style="color: var(--success);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Unique Courses</div>
+        <div id="statCourses" class="stat-value" style="color: var(--primary);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Syllabus Years</div>
+        <div id="statYears" class="stat-value" style="font-size: 18px; line-height: 1.6;">-</div>
+      </div>
+    </div>
+
+    <!-- Stats row for Room Matching -->
+    <div id="roomStatsRow" class="stats-row" style="display: none;">
+      <div class="stat-card">
+        <div class="stat-label">🏢 Total Rooms</div>
+        <div id="statRoomTotal" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">👥 Total Candidates</div>
+        <div id="statRoomCandidates" class="stat-value" style="color: var(--primary);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">📑 QPs Required</div>
+        <div id="statRoomQps" class="stat-value" style="color: #6366f1;">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">✅ 100% Matches</div>
+        <div id="statRoomExact" class="stat-value" style="color: var(--success);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">⚠️ Partial Matches</div>
+        <div id="statRoomPartial" class="stat-value" style="color: var(--warning);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">❌ Unmatched</div>
+        <div id="statRoomUnmatched" class="stat-value" style="color: var(--danger);">0</div>
+      </div>
+    </div>
+
+    <!-- Results Card -->
+    <div id="resultsCard" class="results-card" style="display: none;">
+      <div class="table-toolbar">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" placeholder="Search QP code, course, room, year...">
+          </div>
+          <select id="yearFilter" class="filter-select">
+            <option value="">All Syllabus Years</option>
+          </select>
+          <select id="streamFilter" class="filter-select" style="display:none;">
+            <option value="">All Streams</option>
+            <option value="Regular">Regular</option>
+            <option value="SDE">SDE / EDE</option>
+          </select>
+          <select id="matchStatusFilter" class="filter-select" style="display:none;">
+            <option value="">All Match Statuses</option>
+            <option value="EXACT">✅ 100% Match Only</option>
+            <option value="PARTIAL">⚠️ Partial Match Only</option>
+            <option value="MATCHED">Matched (Exact + Partial)</option>
+            <option value="UNMATCHED">❌ Unmatched Only</option>
+          </select>
+        </div>
+
+        <div class="export-group" id="qpExportGroup">
+          <button id="btnCopyTable" class="btn btn-outline" title="Copy table to clipboard for Excel">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            Copy
+          </button>
+          <button id="btnExportCSV" class="btn btn-outline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Export CSV
+          </button>
+          <button id="btnExportJSON" class="btn btn-outline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            JSON
+          </button>
+        </div>
+
+        <!-- Room Matching Action Buttons -->
+        <div class="export-group" id="roomExportGroup" style="display:none;">
+          <button id="btnDownloadPopulatedJson" class="btn btn-success" title="Download populated JSON ready to re-import into ExamFlow">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            📥 Download Populated Seating JSON
+          </button>
+          <button id="btnPrintRoomSlips" class="btn btn-outline" title="Printable Room Allotment Slips">
+            🖨️ Print Slips
+          </button>
+          <button id="btnExportRoomCsv" class="btn btn-outline" title="Export Room Allotment CSV">
+            📊 Room CSV
+          </button>
+          <button id="btnExportQpDispatchCsv" class="btn btn-outline" title="Export Question Paper Dispatch CSV">
+            📦 QP Packing CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Top Table View Switcher -->
+      <div class="table-tabs" style="display: flex; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--slate-200); flex-wrap: wrap; align-items: center; background: #fafafa;">
+        <span style="font-size: 12px; font-weight: 700; color: var(--slate-600); text-transform: uppercase; margin-right: 4px;">View Mode:</span>
+        <button id="viewBtnCombined" class="tab-btn active" onclick="switchTableView('combined')">
+          📋 Combined All Data
+        </button>
+        <button id="viewBtnFilename" class="tab-btn" onclick="switchTableView('filename')">
+          🏷️ Filename Metadata Table
+        </button>
+        <button id="viewBtnPdf" class="tab-btn" onclick="switchTableView('pdf')">
+          📄 PDF Content Table
+        </button>
+        <button id="viewBtnRooms" class="tab-btn" onclick="switchTableView('rooms')">
+          🏫 Room-Wise Seating &amp; QP Matcher <span id="tabRoomBadge" class="tab-badge" style="display:none;">0</span>
+        </button>
+
+        <!-- Room Sub-View Switcher -->
+        <div id="roomSubViewSwitcher" style="display:none; margin-left:auto; display:flex; gap:6px; align-items:center;">
+          <div id="matchingModeContainer" style="display:flex; align-items:center; gap:6px; margin-right:12px;">
+            <span style="font-size:11px; font-weight:700; color:#475569;">MODE:</span>
+            <select id="selectMatchingMode" onchange="changeMatchingMode(this.value)" style="font-size:11px; font-weight:600; padding:4px 8px; border-radius:6px; border:1px solid #cbd5e1; background:white; color:#0f172a; cursor:pointer;" title="Switch matching mode">
+              <option value="strict" selected>🎯 Strict 3-Key Verification (Code + Title + Year)</option>
+              <option value="department">🎓 Department Elective Mapping (Experimental)</option>
+            </select>
+          </div>
+          <button id="subViewBtnList" class="btn btn-outline" style="padding: 4px 10px; font-size:12px;" onclick="switchRoomSubView('list')">
+            📋 Room Allotment List
+          </button>
+          <button id="subViewBtnPacking" class="btn btn-outline" style="padding: 4px 10px; font-size:12px;" onclick="switchRoomSubView('packing')">
+            📦 QP Dispatch &amp; Packing Slip
+          </button>
+        </div>
+      </div>
+
+      <!-- Tables Container -->
+      <div class="table-responsive" id="standardTableContainer">
+        <table>
+          <thead id="resultsTableHead"></thead>
+          <tbody id="resultsTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Room Seating Table Container -->
+      <div class="table-responsive" id="roomTableContainer" style="display:none;">
+        <table id="roomAllotmentTable">
+          <thead>
+            <tr>
+              <th style="width: 44px;">#</th>
+              <th>Room #</th>
+              <th>Stream</th>
+              <th>Matched QP Code</th>
+              <th>Course Name &amp; Code</th>
+              <th>Exam Date</th>
+              <th>Candidates</th>
+              <th>Matched PDF File</th>
+              <th>Match Status</th>
+              <th style="text-align: center;">Details</th>
+            </tr>
+          </thead>
+          <tbody id="roomTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- QP Packing View Container -->
+      <div id="qpPackingContainer" style="display:none; padding: 20px;">
+        <div id="qpPackingCards"></div>
+      </div>
+    </div>
+
+    <!-- Empty state when no results -->
+    <div id="initialEmptyState" class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <polyline points="10 9 9 9 8 9"></polyline>
+      </svg>
+      <h3>No question papers or seating summaries analyzed yet</h3>
+      <p>Select question paper PDFs and ExamFlow seating JSON above, or click <strong>"📁 Scan Folder..."</strong>.</p>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="detailModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">Details</h3>
+        <button id="modalCloseBtn" class="modal-close">&times;</button>
+      </div>
+      <div class="detail-grid" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+    <span id="toastMsg">Notification message</span>
+  </div>
+
+  <!-- Main Application Script -->
+  <script>
+    // Constants & Regexes
+    const QP_CODE_REGEX = /(?:^|[^A-Z0-9])([A-Z])\s*(\d{5,6})(?:\s*([ABab]))?(?![a-zA-Z0-9])/;
+
+    // State
+    let selectedPdfFiles = [];
+    let attachedSeatingJson = null;
+    let currentQpData = [];
+    let currentRoomMatching = null; // { summary, matched_entries, qp_distribution }
+    let currentMatchingMode = 'strict'; // 'department' (100% session match) or 'strict'
+    let currentView = 'combined'; // 'combined', 'filename', 'pdf', 'rooms'
+    let currentRoomSubView = 'list'; // 'list', 'packing'
+    let currentSort = { col: 'qp_code', asc: true };
+
+    // DOM Elements
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const seatingJsonInput = document.getElementById('seatingJsonInput');
+    const fileQueue = document.getElementById('fileQueue');
+    const selectedCountText = document.getElementById('selectedCountText');
+    const attachedSeatingBadge = document.getElementById('attachedSeatingBadge');
+    const btnClear = document.getElementById('btnClear');
+    const btnExtract = document.getElementById('btnExtract');
+    const btnScanFolder = document.getElementById('btnScanFolder');
+    const btnLoadFolder = document.getElementById('btnLoadFolder');
+    const btnLoadSeatingJson = document.getElementById('btnLoadSeatingJson');
+    const progressBarContainer = document.getElementById('progressBarContainer');
+    const progressBar = document.getElementById('progressBar');
+    const statsRow = document.getElementById('statsRow');
+    const roomStatsRow = document.getElementById('roomStatsRow');
+    const resultsCard = document.getElementById('resultsCard');
+    const initialEmptyState = document.getElementById('initialEmptyState');
+    const searchInput = document.getElementById('searchInput');
+    const yearFilter = document.getElementById('yearFilter');
+    const streamFilter = document.getElementById('streamFilter');
+    const matchStatusFilter = document.getElementById('matchStatusFilter');
+    const qpExportGroup = document.getElementById('qpExportGroup');
+    const roomExportGroup = document.getElementById('roomExportGroup');
+    const tabRoomBadge = document.getElementById('tabRoomBadge');
+    const roomSubViewSwitcher = document.getElementById('roomSubViewSwitcher');
+    const standardTableContainer = document.getElementById('standardTableContainer');
+    const roomTableContainer = document.getElementById('roomTableContainer');
+    const qpPackingContainer = document.getElementById('qpPackingContainer');
+    const detailModal = document.getElementById('detailModal');
+    const modalBody = document.getElementById('modalBody');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toastMsg');
+
+    // Drag and Drop
+    ['dragenter', 'dragover'].forEach(ev => {
+      dropzone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(ev => {
+      dropzone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+      });
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      if (e.dataTransfer && e.dataTransfer.files) {
+        handleIncomingFiles(Array.from(e.dataTransfer.files));
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files) {
+        handleIncomingFiles(Array.from(e.target.files));
+      }
+    });
+
+    btnLoadFolder.addEventListener('click', () => folderInput.click());
+    folderInput.addEventListener('change', (e) => {
+      if (e.target.files) {
+        handleIncomingFiles(Array.from(e.target.files));
+      }
+    });
+
+    btnLoadSeatingJson.addEventListener('click', () => seatingJsonInput.click());
+    seatingJsonInput.addEventListener('change', async (e) => {
+      if (e.target.files && e.target.files[0]) {
+        await loadSeatingJsonFile(e.target.files[0]);
+      }
+    });
+
+    // Scan Folder Button (Uses Local Backend if connected, or prompt)
+    btnScanFolder.addEventListener('click', async () => {
+      const defaultFolder = "C:\\Users\\sures\\Downloads\\30-10-26";
+      const folderPath = prompt("Enter folder path to scan for Question Papers & Seating JSON:", defaultFolder);
+      if (!folderPath) return;
+
+      btnScanFolder.disabled = true;
+      btnScanFolder.innerText = "⏳ Scanning...";
+      showToast(`Scanning folder: ${folderPath}...`);
+
+      try {
+        const resp = await fetch(`http://localhost:5050/api/scan-folder?folder=${encodeURIComponent(folderPath)}`);
+        if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
+        const data = await resp.json();
+
+        currentQpData = data.qp_records || [];
+        if (data.matching) {
+          currentRoomMatching = data.matching;
+          showToast(`Loaded ${currentQpData.length} QPs & matched ${data.matching.summary.totalRooms} rooms!`);
+          renderResults(currentQpData);
+          switchTableView('rooms');
+        } else {
+          showToast(`Loaded ${currentQpData.length} QPs! (No seating JSON found in folder)`);
+          renderResults(currentQpData);
+        }
+      } catch (err) {
+        showToast(`Backend scan unavailable (${err.message}). Use 'Browse Folder' above.`);
+      } finally {
+        btnScanFolder.disabled = false;
+        btnScanFolder.innerText = "📁 Scan Folder...";
+      }
+    });
+
+    // Deep Scan Across All Repositories
+    const btnDeepScan = document.getElementById('btnDeepScan');
+    if (btnDeepScan) {
+      btnDeepScan.addEventListener('click', async () => {
+        btnDeepScan.disabled = true;
+        btnDeepScan.innerText = "⏳ Deep Scanning...";
+        showToast("Scanning all Downloads repositories for question papers...");
+
+        try {
+          const bodyPayload = attachedSeatingJson && attachedSeatingJson.entries ? { seating_entries: attachedSeatingJson.entries } : {};
+          const resp = await fetch('http://localhost:5050/api/deep-scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyPayload)
+          });
+          if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
+          const data = await resp.json();
+
+          currentQpData = data.qp_records || [];
+          if (data.matching) {
+            currentRoomMatching = data.matching;
+            showToast(`Deep Scan: Found ${data.total_qps_found} QPs & matched ${data.matching.summary.totalRooms} rooms!`);
+            renderResults(currentQpData);
+            switchTableView('rooms');
+          } else {
+            showToast(`Deep Scan: Found ${data.total_qps_found} Question Papers!`);
+            renderResults(currentQpData);
+          }
+        } catch (err) {
+          showToast(`Deep Scan error: ${err.message}. Ensure backend is running.`);
+        } finally {
+          btnDeepScan.disabled = false;
+          btnDeepScan.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="m4.93 4.93 4.24 4.24"></path><path d="m14.83 9.17 4.24-4.24"></path><path d="m14.83 14.83 4.24 4.24"></path><path d="m9.17 14.83-4.24 4.24"></path></svg>
+            🌊 Deep Scan All Repositories
+          `;
+        }
+      });
+    }
+
+    const btnSwitchSeatingDate = document.getElementById('btnSwitchSeatingDate');
+    if (btnSwitchSeatingDate) {
+      btnSwitchSeatingDate.addEventListener('click', async () => {
+        try {
+          const resp = await fetch('http://localhost:5050/api/scan-folder?folder=' + encodeURIComponent('C:\\Users\\sures\\Downloads\\30-10-26'));
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.matching) {
+              currentQpData = data.qp_records;
+              currentRoomMatching = data.matching;
+              attachedSeatingJson = { filename: data.matching.seating_filename, entries: data.matching.matched_entries };
+              renderFileQueue();
+              renderResults(currentQpData);
+              switchTableView('rooms');
+              showToast(`Switched to matching seating schedule: ${data.matching.seating_filename}`);
+            }
+          }
+        } catch (e) {
+          showToast('Could not auto-switch schedule.');
+        }
+      });
+    }
+
+    // Handle Incoming Files (PDFs + JSONs)
+    async function handleIncomingFiles(files) {
+      for (const f of files) {
+        if (f.name.toLowerCase().endsWith('.json')) {
+          await loadSeatingJsonFile(f);
+        } else if (f.name.toLowerCase().endsWith('.pdf')) {
+          if (!selectedPdfFiles.some(existing => existing.name === f.name && existing.size === f.size)) {
+            selectedPdfFiles.push(f);
+          }
+        }
+      }
+      renderFileQueue();
+    }
+
+    async function loadSeatingJsonFile(file) {
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length > 0 && ('courseName' in parsed[0] || 'roomSerial' in parsed[0])) {
+          attachedSeatingJson = {
+            filename: file.name,
+            entries: parsed
+          };
+          showToast(`Attached Seating JSON: ${file.name} (${parsed.length} entries)`);
+        } else {
+          showToast(`Warning: ${file.name} does not match ExamFlow Seating Summary schema.`);
+        }
+      } catch (err) {
+        showToast(`Error reading JSON file: ${err.message}`);
+      }
+    }
+
+    function renderFileQueue() {
+      const totalPdfs = selectedPdfFiles.length;
+      if (totalPdfs === 0 && !attachedSeatingJson) {
+        fileQueue.style.display = 'none';
+        fileQueue.innerHTML = '';
+        selectedCountText.innerText = 'No files selected';
+        attachedSeatingBadge.style.display = 'none';
+        btnExtract.disabled = true;
+        btnClear.style.display = 'none';
+        return;
+      }
+
+      fileQueue.style.display = 'flex';
+      let html = '';
+      if (attachedSeatingJson) {
+        html += `
+          <span class="file-tag json-tag">
+            🏫 ${escapeHtml(attachedSeatingJson.filename)} (${attachedSeatingJson.entries.length} entries)
+            <span style="cursor:pointer; color:#059669; font-weight:bold;" onclick="removeSeatingJson()">&times;</span>
+          </span>
+        `;
+        attachedSeatingBadge.style.display = 'inline-flex';
+        attachedSeatingBadge.innerText = `Seating JSON: ${attachedSeatingJson.filename}`;
+      } else {
+        attachedSeatingBadge.style.display = 'none';
+      }
+
+      html += selectedPdfFiles.map((f, i) => `
+        <span class="file-tag">
+          📄 ${escapeHtml(f.name)}
+          <span style="cursor:pointer; color:#94a3b8; font-weight:bold;" onclick="removePdfFile(${i})">&times;</span>
+        </span>
+      `).join('');
+
+      fileQueue.innerHTML = html;
+      selectedCountText.innerText = `${totalPdfs} PDF(s) queued`;
+      btnExtract.disabled = totalPdfs === 0 && !attachedSeatingJson;
+      btnClear.style.display = 'inline-flex';
+    }
+
+    window.removePdfFile = function(i) {
+      selectedPdfFiles.splice(i, 1);
+      renderFileQueue();
+    };
+
+    window.removeSeatingJson = function() {
+      attachedSeatingJson = null;
+      renderFileQueue();
+    };
+
+    btnClear.addEventListener('click', () => {
+      selectedPdfFiles = [];
+      attachedSeatingJson = null;
+      fileInput.value = '';
+      folderInput.value = '';
+      seatingJsonInput.value = '';
+      renderFileQueue();
+    });
+
+    // Extract Metadata from Filename (Underscore delimited & standard forms)
+    function parseFilenameMetadata(filename) {
+      if (!filename) return {};
+      const cleanName = filename.replace(/\.pdf$/i, '').trim();
+      const parts = cleanName.split('_');
+
+      let exam_type = null;
+      let exam_date = null;
+      let exam_time = null;
+      let qp_code = null;
+      let course_name = null;
+      let course_code = null;
+
+      for (const p of parts) {
+        const pt = p.trim();
+        if (!pt) continue;
+
+        // Skip numeric IDs / epoch timestamps e.g. 1793342140511
+        if (/^\d{6,}$/.test(pt)) continue;
+
+        if (/^(REG|REGULAR)$/i.test(pt)) {
+          exam_type = 'Regular';
+        } else if (/^(SDE|EDE|PRIVATE)$/i.test(pt)) {
+          exam_type = 'SDE';
+        } else if (/^\d{2}\.\d{2}\.\d{2,4}$/.test(pt)) {
+          exam_date = pt;
+        } else if (/^\d{1,2}[\:\_\-]\d{2}\s*(AM|PM)?$/i.test(pt) || /^(FN|AN)$/i.test(pt)) {
+          exam_time = pt.replace('_', ':');
+        } else {
+          const mQp = pt.match(/^([A-Za-z])?(\d{5,6})([ABab])?$/);
+          if (mQp) {
+            const letter = mQp[1] ? mQp[1].toUpperCase() : 'D';
+            const digits = mQp[2];
+            let suffix = mQp[3] ? mQp[3].toUpperCase() : '';
+            if (!suffix && (/SDE/i.test(cleanName) || new RegExp(digits + 'A', 'i').test(cleanName))) {
+              suffix = 'A';
+            }
+            qp_code = `${letter} ${digits}${suffix}`;
+          } else {
+            // Course title and code segment
+            let segment = pt;
+            const parMatches = Array.from(segment.matchAll(/\((.*?)\)/g));
+            if (parMatches.length > 0) {
+              course_code = parMatches[parMatches.length - 1][1].trim();
+              course_name = segment.replace(/\(.*?\)/g, '').replace(/[\-\u2010-\u2015\u2212\xad]+$/, '').trim();
+            } else if (!/^\d+$/.test(segment) && segment.length > 2) {
+              course_name = segment;
+            }
+          }
+        }
+      }
+
+      return {
+        exam_type,
+        exam_date,
+        exam_time,
+        qp_code,
+        course_name,
+        course_code,
+        raw_parts: parts
+      };
+    }
+
+    
+    // Change Matching Mode (Department / Strict)
+    window.changeMatchingMode = function(newMode) {
+      currentMatchingMode = newMode;
+      const sel = document.getElementById('selectMatchingMode');
+      if (sel) sel.value = newMode;
+      if (attachedSeatingJson && attachedSeatingJson.entries && currentQpData && currentQpData.length) {
+        const engine = (typeof Matcher !== 'undefined') ? Matcher : (typeof QPMatcher !== 'undefined' ? QPMatcher : null);
+        if (engine && engine.matchAllRooms) {
+          currentRoomMatching = engine.matchAllRooms(attachedSeatingJson.entries, currentQpData, currentMatchingMode);
+          renderRoomWiseSeatingSummary();
+          showToast(`Switched to ${newMode === 'department' ? 'Department & Session Allocation (100% Match)' : 'Strict Exact Mode'}`);
+        }
+      }
+    };
+
+    // Pure Client-Side PDF Parser with Local OCR Fallback
+    async function extractFromPdfFile(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let doc;
+      try {
+        doc = await pdfjsLib.getDocument({ data: uint8, isEvalSupported: false }).promise;
+      } catch (err) {
+        return {
+          filename: file.name,
+          error: err.message,
+          qp_code: null,
+          course_name: null,
+          course_code: null,
+          syllabus_year: null
+        };
+      }
+
+      const page = await doc.getPage(1);
+      const tc = await page.getTextContent();
+
+      const lineMap = new Map();
+      for (const it of tc.items) {
+        if (!it.str) continue;
+        const y = Math.round(it.transform[5]);
+        let foundKey = null;
+        for (const k of lineMap.keys()) {
+          if (Math.abs(k - y) <= 4) {
+            foundKey = k;
+            break;
+          }
+        }
+        if (foundKey == null) {
+          foundKey = y;
+          lineMap.set(foundKey, []);
+        }
+        lineMap.get(foundKey).push(it);
+      }
+
+      const sortedY = Array.from(lineMap.keys()).sort((a, b) => b - a);
+      const lines = sortedY.map(y => {
+        const items = lineMap.get(y).sort((a, b) => a.transform[4] - b.transform[4]);
+        return items.map(it => it.str).join('').trim();
+      }).filter(l => l.length > 0);
+
+      // 1. QP Code
+      let qp_code = null;
+      for (const l of lines.slice(0, 15)) {
+        const m = l.match(QP_CODE_REGEX);
+        if (m) {
+          const letter = m[1].toUpperCase();
+          const digits = m[2];
+          let suffix = m[3] ? m[3].toUpperCase() : '';
+          if (!suffix && file.name && (/SDE/i.test(file.name) || new RegExp(digits + 'A', 'i').test(file.name))) {
+            suffix = 'A';
+          }
+          qp_code = `${letter} ${digits}${suffix}`;
+          break;
+        }
+      }
+      if (!qp_code && file.name) {
+        const m = file.name.match(/(?:^|[_\-\s])([A-Za-z])?(\d{5,6})([ABab])?(?:[_\-\s]|$)/);
+        if (m) {
+          const letter = m[1] ? m[1].toUpperCase() : 'D';
+          const digits = m[2];
+          let suffix = m[3] ? m[3].toUpperCase() : '';
+          if (!suffix && (/SDE/i.test(file.name) || new RegExp(digits + 'A', 'i').test(file.name))) {
+            suffix = 'A';
+          }
+          qp_code = `${letter} ${digits}${suffix}`;
+        }
+      }
+
+      // 2. Syllabus Year
+      let syllabus_year = null;
+      let syllabus_text = null;
+      for (const l of lines) {
+        const mSyl = l.match(/(?:(20\d\d)\s*[\-\u2010-\u2015\u2212\xad]\s*(20\d\d)\s*(?:Admissions?|Syllabus)?|\((20\d\d)\s*Admission\s*Onwards?\)|(?:Syllabus\s*Year\s*[:\-]?\s*|(?:^|[^\d])\(?)(20\d\d)(?:\s*Syllabus|\s*Admissions?\)?))/i);
+        if (mSyl) {
+          syllabus_year = mSyl[1] ? `${mSyl[1]}-${mSyl[2]}` : (mSyl[3] || mSyl[4]);
+          syllabus_text = l;
+          break;
+        }
+      }
+      if (!syllabus_year) {
+        for (const l of lines) {
+          const m = l.match(/\b(201\d|202\d)\b/);
+          if (m && !l.includes('EXAMINATION')) {
+            syllabus_year = m[1];
+            syllabus_text = l;
+            break;
+          }
+        }
+      }
+
+      // 3. Course Code & Title
+      let course_code = null;
+      let course_name = null;
+      let full_title = null;
+
+      for (let i = 0; i < Math.min(lines.length, 25); i++) {
+        const l = lines[i];
+        if (/DEGREE EXAMINATION|NOVEMBER|PAGES|REGISTER|TURN OVER|TIME\s*:|MAXIMUM|NAME\b/i.test(l)) continue;
+
+        // Pattern A: Code + Delimiter + Title (Delimiter = dash, 2+ spaces, or space before uppercase / Indic characters)
+        const mCompound = l.match(/^((?:[A-Za-z]{2,4}\s*\d[A-Za-z0-9\(\)\.\s\-\u2010-\u2015\u2212]*?(?:\s*[\/]\s*[A-Za-z]{2,4}\s*\d[A-Za-z0-9\(\)\.\s\-\u2010-\u2015\u2212]*?)*))(?:\s*[\-\u2010-\u2015\u2212\xad]+\s*|\s{2,}|\s+(?=[A-Z\u0D00-\u0D7F\u0B80-\u0BFF]))(.+)$/);
+        if (mCompound && /[A-Za-z]{2,4}\s*\d/i.test(mCompound[1])) {
+          const cCand = mCompound[1].trim();
+          const tCand = mCompound[2].trim();
+          if (cCand.length <= 40 && tCand.length >= 3 && !/^(Section|Part|Time|Marks)/i.test(tCand)) {
+            course_code = cCand;
+            course_name = tCand;
+            full_title = l;
+            break;
+          }
+        }
+
+        // Pattern B: Code on line i, Title on line i+1 (e.g. MAT5EJ301(1) \n Mathematical Foundations...)
+        const mCodeOnly = l.match(/^([A-Za-z]{2,4}\s*\d[A-Za-z0-9\(\)\/\.\s\-\u2010-\u2015\u2212]+)$/);
+        if (mCodeOnly && i + 1 < lines.length) {
+          const nextL = lines[i + 1].trim();
+          if (nextL.length >= 4 && !/ADMISSION|SEMESTER|EXAMINATION|MAXIMUM|TIME|SECTION|PART\b/i.test(nextL)) {
+            course_code = mCodeOnly[1].trim();
+            course_name = nextL;
+            full_title = `${course_code} - ${course_name}`;
+            break;
+          }
+        }
+      }
+
+      // 4. Scanned PDF fallback to Local OCR Backend (for vector/image-based PDFs like 153668)
+      if ((!course_name || lines.length < 5) && typeof fetch !== 'undefined') {
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const backendUrl = (window.location.protocol.startsWith('http')) ? '/api/extract' : 'http://localhost:5050/api/extract';
+          const ocrResp = await fetch(backendUrl, { method: 'POST', body: formData });
+          if (ocrResp.ok) {
+            const ocrList = await ocrResp.json();
+            if (Array.isArray(ocrList) && ocrList.length > 0 && ocrList[0].course_name) {
+              const ocr = ocrList[0];
+              if (ocr.qp_code) qp_code = ocr.qp_code;
+              if (ocr.course_code) course_code = ocr.course_code;
+              if (ocr.course_name) course_name = ocr.course_name;
+              if (ocr.syllabus_year) syllabus_year = ocr.syllabus_year;
+              if (ocr.full_course_title) full_title = ocr.full_course_title;
+            }
+          }
+        } catch (e) {
+          // Local backend offline, gracefully proceed
+        }
+      }
+
+      const fn_meta = parseFilenameMetadata(file.name);
+      if (!course_code && fn_meta.course_code) course_code = fn_meta.course_code;
+      if (!course_name && fn_meta.course_name && !/^\d+$/.test(fn_meta.course_name)) course_name = fn_meta.course_name;
+      if (!qp_code && fn_meta.qp_code) qp_code = fn_meta.qp_code;
+
+      return {
+        filename: file.name,
+        qp_code,
+        course_name,
+        course_code,
+        full_course_title: full_title || `${course_code || ''} - ${course_name || ''}`,
+        syllabus_year,
+        syllabus_text,
+        exam_type: fn_meta.exam_type,
+        exam_date: fn_meta.exam_date,
+        exam_time: fn_meta.exam_time,
+        filename_qp_code: fn_meta.qp_code,
+        filename_course_name: fn_meta.course_name,
+        filename_course_code: fn_meta.course_code,
+        filename_raw_parts: fn_meta.raw_parts,
+        filename_data: fn_meta
+      };
+    }
+
+    // Extract & Match Handler
+    btnExtract.addEventListener('click', async () => {
+      btnExtract.disabled = true;
+      btnExtract.innerHTML = `⏳ Extracting...`;
+      progressBarContainer.style.display = 'block';
+
+      const results = [];
+      const total = selectedPdfFiles.length;
+
+      for (let i = 0; i < total; i++) {
+        const file = selectedPdfFiles[i];
+        progressBar.style.width = `${Math.round(((i + 1) / total) * 100)}%`;
+        try {
+          const res = await extractFromPdfFile(file);
+          results.push(res);
+        } catch (err) {
+          results.push({ filename: file.name, error: err.message });
+        }
+      }
+
+      setTimeout(() => {
+        progressBarContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+      }, 400);
+
+      currentQpData = results.length > 0 ? results : currentQpData;
+
+      // Run Room Matcher if Seating JSON is attached
+      if (attachedSeatingJson && attachedSeatingJson.entries) {
+        const engine = (typeof Matcher !== 'undefined') ? Matcher : (typeof QPMatcher !== 'undefined' ? QPMatcher : null);
+        if (engine && engine.matchAllRooms) {
+          currentRoomMatching = engine.matchAllRooms(attachedSeatingJson.entries, currentQpData, currentMatchingMode);
+          showToast(`Extracted ${results.length} QPs & matched ${currentRoomMatching.summary.exactMatches} rooms with 100% confidence!`);
+          renderResults(currentQpData);
+          switchTableView('rooms');
+        }
+      } else {
+        showToast(`Successfully extracted ${results.length} question papers!`);
+        renderResults(currentQpData);
+      }
+
+      btnExtract.disabled = false;
+      btnExtract.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        Extract &amp; Match
+      `;
+    });
+
+    function renderResults(data) {
+      if (!data || data.length === 0) {
+        if (!currentRoomMatching) {
+          resultsCard.style.display = 'none';
+          statsRow.style.display = 'none';
+          initialEmptyState.style.display = 'block';
+          return;
+        }
+      }
+
+      initialEmptyState.style.display = 'none';
+      resultsCard.style.display = 'block';
+
+      // Update QP stats
+      document.getElementById('statTotal').innerText = data.length;
+      const successCount = data.filter(d => d.qp_code && d.course_name).length;
+      document.getElementById('statSuccess').innerText = `${successCount} (${Math.round(successCount / (data.length || 1) * 100)}%)`;
+      const uniqueCourses = new Set(data.map(d => d.course_name).filter(Boolean));
+      document.getElementById('statCourses').innerText = uniqueCourses.size;
+      const years = Array.from(new Set(data.map(d => d.syllabus_year).filter(Boolean))).sort();
+      document.getElementById('statYears').innerText = years.join(', ') || '-';
+
+      yearFilter.innerHTML = `<option value="">All Syllabus Years</option>` +
+        years.map(y => `<option value="${y}">${y}</option>`).join('');
+
+      // Date Alignment Check
+      const dateMismatchAlert = document.getElementById('dateMismatchAlert');
+      const dateMismatchText = document.getElementById('dateMismatchText');
+      if (attachedSeatingJson && attachedSeatingJson.entries && attachedSeatingJson.entries.length > 0 && data.length > 0 && dateMismatchAlert) {
+        const seatDate = attachedSeatingJson.entries[0].date;
+        const pdfDates = data.map(d => d.exam_date).filter(Boolean);
+        if (seatDate && pdfDates.length > 0) {
+          const matching = pdfDates.filter(d => {
+            const sd = String(seatDate).replace(/20(\d\d)/, '$1');
+            const pd = String(d).replace(/20(\d\d)/, '$1');
+            return sd === pd;
+          });
+          if (matching.length === 0) {
+            const mostCommon = pdfDates.slice().sort((a,b) =>
+              pdfDates.filter(v => v===a).length - pdfDates.filter(v => v===b).length
+            ).pop();
+            dateMismatchAlert.style.display = 'flex';
+            dateMismatchText.innerHTML = `<strong>Exam Date Mismatch:</strong> Loaded Seating JSON is for <strong>${escapeHtml(seatDate)}</strong>, but Question Papers are for <strong>${escapeHtml(mostCommon)}</strong>.`;
+          } else {
+            dateMismatchAlert.style.display = 'none';
+          }
+        } else {
+          dateMismatchAlert.style.display = 'none';
+        }
+      } else if (dateMismatchAlert) {
+        dateMismatchAlert.style.display = 'none';
+      }
+
+      // Update Room Match stats if available
+      if (currentRoomMatching && currentRoomMatching.summary) {
+        // Tag original index if missing
+        if (currentRoomMatching.matched_entries) {
+          currentRoomMatching.matched_entries.forEach((m, i) => {
+            if (m._origIndex === undefined) m._origIndex = i;
+          });
+        }
+        const sum = currentRoomMatching.summary;
+        document.getElementById('statRoomTotal').innerText = sum.totalRooms;
+        document.getElementById('statRoomCandidates').innerText = `${sum.totalCandidates} (+${sum.totalScribes} scribes)`;
+        document.getElementById('statRoomQps').innerText = sum.uniqueQpsMatched;
+        document.getElementById('statRoomExact').innerText = sum.exactMatches;
+        document.getElementById('statRoomPartial').innerText = sum.partialMatches;
+        document.getElementById('statRoomUnmatched').innerText = sum.unmatchedEntries;
+        tabRoomBadge.style.display = 'inline-block';
+        tabRoomBadge.innerText = sum.totalRooms;
+      }
+
+      renderCurrentView();
+    }
+
+    window.switchTableView = function(view) {
+      currentView = view;
+      document.getElementById('viewBtnCombined').classList.toggle('active', view === 'combined');
+      document.getElementById('viewBtnFilename').classList.toggle('active', view === 'filename');
+      document.getElementById('viewBtnPdf').classList.toggle('active', view === 'pdf');
+      document.getElementById('viewBtnRooms').classList.toggle('active', view === 'rooms');
+
+      const isRoomView = view === 'rooms';
+      qpExportGroup.style.display = isRoomView ? 'none' : 'flex';
+      roomExportGroup.style.display = isRoomView ? 'flex' : 'none';
+      statsRow.style.display = isRoomView ? 'none' : 'grid';
+      roomStatsRow.style.display = isRoomView ? 'grid' : 'none';
+      yearFilter.style.display = isRoomView ? 'none' : 'inline-block';
+      streamFilter.style.display = isRoomView ? 'inline-block' : 'none';
+      matchStatusFilter.style.display = isRoomView ? 'inline-block' : 'none';
+      roomSubViewSwitcher.style.display = isRoomView ? 'flex' : 'none';
+
+      renderCurrentView();
+    };
+
+    window.switchRoomSubView = function(sub) {
+      currentRoomSubView = sub;
+      document.getElementById('subViewBtnList').classList.toggle('btn-primary', sub === 'list');
+      document.getElementById('subViewBtnPacking').classList.toggle('btn-primary', sub === 'packing');
+      renderCurrentView();
+    };
+
+    function renderCurrentView() {
+      if (currentView === 'rooms') {
+        standardTableContainer.style.display = 'none';
+        if (currentRoomSubView === 'packing') {
+          roomTableContainer.style.display = 'none';
+          qpPackingContainer.style.display = 'block';
+          renderQpPackingView();
+        } else {
+          qpPackingContainer.style.display = 'none';
+          roomTableContainer.style.display = 'block';
+          renderRoomAllotmentTable();
+        }
+      } else {
+        standardTableContainer.style.display = 'block';
+        roomTableContainer.style.display = 'none';
+        qpPackingContainer.style.display = 'none';
+        renderStandardTableHeaders();
+        renderStandardTableRows();
+      }
+    }
+
+    // Standard QP Table Header Render
+    function renderStandardTableHeaders() {
+      const thead = document.getElementById('resultsTableHead');
+      if (currentView === 'filename') {
+        thead.innerHTML = `
+          <tr>
+            <th style="width: 44px;">#</th>
+            <th class="sortable" data-sort="exam_type">Type ↕</th>
+            <th class="sortable" data-sort="exam_date">Exam Date ↕</th>
+            <th class="sortable" data-sort="exam_time">Time ↕</th>
+            <th class="sortable" data-sort="qp_code">QP Code ↕</th>
+            <th class="sortable" data-sort="filename_course_code">Course Code ↕</th>
+            <th class="sortable" data-sort="filename_course_name">Course Name ↕</th>
+            <th>Filename Segments (_)</th>
+            <th>Original Filename</th>
+            <th style="text-align: center;">Details</th>
+          </tr>
+        `;
+      } else if (currentView === 'pdf') {
+        thead.innerHTML = `
+          <tr>
+            <th style="width: 44px;">#</th>
+            <th class="sortable" data-sort="qp_code">QP Code ↕</th>
+            <th class="sortable" data-sort="course_name">Course Name (PDF) ↕</th>
+            <th class="sortable" data-sort="course_code">Course Code (PDF) ↕</th>
+            <th class="sortable" data-sort="syllabus_year">Syllabus Year ↕</th>
+            <th>Filename</th>
+            <th style="text-align: center;">Details</th>
+          </tr>
+        `;
+      } else { // combined
+        thead.innerHTML = `
+          <tr>
+            <th style="width: 44px;">#</th>
+            <th class="sortable" data-sort="qp_code">QP Code ↕</th>
+            <th class="sortable" data-sort="course_name">Course Name ↕</th>
+            <th class="sortable" data-sort="course_code">Course Code ↕</th>
+            <th class="sortable" data-sort="syllabus_year">Syllabus Year ↕</th>
+            <th class="sortable" data-sort="exam_type">Type ↕</th>
+            <th class="sortable" data-sort="exam_date">Exam Date ↕</th>
+            <th class="sortable" data-sort="exam_time">Time ↕</th>
+            <th>Filename</th>
+            <th style="text-align: center;">Details</th>
+          </tr>
+        `;
+      }
+      attachSortHandlers();
+    }
+
+    function attachSortHandlers() {
+      document.querySelectorAll('#resultsTableHead th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = th.dataset.sort;
+          if (currentSort.col === col) {
+            currentSort.asc = !currentSort.asc;
+          } else {
+            currentSort.col = col;
+            currentSort.asc = true;
+          }
+          renderStandardTableRows();
+        });
+      });
+    }
+
+    function renderStandardTableRows() {
+      const tbody = document.getElementById('resultsTableBody');
+      const query = searchInput.value.toLowerCase().trim();
+      const year = yearFilter.value;
+
+      let filtered = currentQpData.filter(item => {
+        const matchesQuery = !query ||
+          (item.qp_code && item.qp_code.toLowerCase().includes(query)) ||
+          (item.course_name && item.course_name.toLowerCase().includes(query)) ||
+          (item.course_code && item.course_code.toLowerCase().includes(query)) ||
+          (item.filename && item.filename.toLowerCase().includes(query));
+        const matchesYear = !year || item.syllabus_year === year;
+        return matchesQuery && matchesYear;
+      });
+
+      filtered.sort((a, b) => {
+        let vA = a[currentSort.col] || '';
+        let vB = b[currentSort.col] || '';
+        return currentSort.asc ? String(vA).localeCompare(String(vB)) : String(vB).localeCompare(String(vA));
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:30px; color:#94a3b8;">No records match your filter</td></tr>`;
+        return;
+      }
+
+      if (currentView === 'pdf') {
+        tbody.innerHTML = filtered.map((row, idx) => `
+          <tr>
+            <td style="color:#94a3b8; font-weight:500;">${idx + 1}</td>
+            <td>
+              ${row.qp_code ? `<span class="pill pill-qp" style="cursor:pointer;" onclick="copyText('${row.qp_code}')">${escapeHtml(row.qp_code)}</span>` : '<span style="color:#ef4444; font-weight:600;">Not found</span>'}
+            </td>
+            <td style="font-weight:600; color:#0f172a;">${escapeHtml(row.course_name || '—')}</td>
+            <td><span class="pill pill-code">${escapeHtml(row.course_code || 'N/A')}</span></td>
+            <td><span class="pill pill-year">${escapeHtml(row.syllabus_year || 'N/A')}</span></td>
+            <td style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#64748b;" title="${escapeHtml(row.filename)}">
+              ${escapeHtml(row.filename && row.filename.length > 25 ? row.filename.slice(0, 22) + '...' : (row.filename || '—'))}
+            </td>
+            <td style="text-align:center;">
+              <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="viewDetails(${escapeHtml(JSON.stringify(row))})">
+                Details
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } else if (currentView === 'filename') {
+        tbody.innerHTML = filtered.map((row, idx) => `
+          <tr>
+            <td style="color:#94a3b8; font-weight:500;">${idx + 1}</td>
+            <td>${row.exam_type ? `<span class="pill ${row.exam_type === 'SDE' ? 'pill-sde' : 'pill-reg'}">${escapeHtml(row.exam_type)}</span>` : '—'}</td>
+            <td><strong>${escapeHtml(row.exam_date || '—')}</strong></td>
+            <td>${escapeHtml(row.exam_time || '—')}</td>
+            <td>${row.qp_code ? `<span class="pill pill-qp">${escapeHtml(row.qp_code)}</span>` : '—'}</td>
+            <td><span class="pill pill-code">${escapeHtml(row.course_code || 'N/A')}</span></td>
+            <td style="font-weight:600; color:#0f172a;">${escapeHtml(row.course_name || '—')}</td>
+            <td style="font-size:11px; color:#64748b;">${escapeHtml((row.filename_raw_parts || []).join(' | '))}</td>
+            <td style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#64748b;">${escapeHtml(row.filename || '—')}</td>
+            <td style="text-align:center;">
+              <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="viewDetails(${escapeHtml(JSON.stringify(row))})">
+                Details
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } else { // combined
+        tbody.innerHTML = filtered.map((row, idx) => `
+          <tr>
+            <td style="color:#94a3b8; font-weight:500;">${idx + 1}</td>
+            <td>
+              ${row.qp_code ? `<span class="pill pill-qp" style="cursor:pointer;" onclick="copyText('${row.qp_code}')">${escapeHtml(row.qp_code)}</span>` : '<span style="color:#ef4444; font-weight:600;">Not found</span>'}
+            </td>
+            <td style="font-weight:600; color:#0f172a;">${escapeHtml(row.course_name || '—')}</td>
+            <td><span class="pill pill-code">${escapeHtml(row.course_code || 'N/A')}</span></td>
+            <td><span class="pill pill-year">${escapeHtml(row.syllabus_year || 'N/A')}</span></td>
+            <td>${row.exam_type ? `<span class="pill ${row.exam_type === 'SDE' ? 'pill-sde' : 'pill-reg'}">${escapeHtml(row.exam_type)}</span>` : '—'}</td>
+            <td><strong>${escapeHtml(row.exam_date || '—')}</strong></td>
+            <td>${escapeHtml(row.exam_time || '—')}</td>
+            <td style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#64748b;" title="${escapeHtml(row.filename)}">
+              ${escapeHtml(row.filename && row.filename.length > 20 ? row.filename.slice(0, 18) + '...' : (row.filename || '—'))}
+            </td>
+            <td style="text-align:center;">
+              <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="viewDetails(${escapeHtml(JSON.stringify(row))})">
+                Details
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      }
+    }
+
+    // Render Room Allotment Table
+    function renderRoomAllotmentTable() {
+      const tbody = document.getElementById('roomTableBody');
+      if (!currentRoomMatching || !currentRoomMatching.matched_entries) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:40px; color:#64748b;">No Seating Summary attached. Drag &amp; drop a Room_Wise_Seating_Summary.json or click "Attach Seating JSON".</td></tr>`;
+        return;
+      }
+
+      const query = searchInput.value.toLowerCase().trim();
+      const streamVal = streamFilter.value;
+      const statusVal = matchStatusFilter.value;
+
+      let filtered = currentRoomMatching.matched_entries.filter(r => {
+        const matchesQuery = !query ||
+          String(r.roomSerial).includes(query) ||
+          (r.courseName && r.courseName.toLowerCase().includes(query)) ||
+          (r.matchedQpCode && r.matchedQpCode.toLowerCase().includes(query)) ||
+          (r.matchedPdfFilename && r.matchedPdfFilename.toLowerCase().includes(query));
+
+        const matchesStream = !streamVal ||
+          (streamVal === 'SDE' ? (r.stream === 'SDE' || r.stream === 'EDE') : r.stream === streamVal);
+
+        const isExact = (r.matchStatus === 'FULL_MATCH' || r.matchStatus === 'EXACT');
+        const matchesStatus = !statusVal ||
+          (statusVal === 'MATCHED' ? isExact : (statusVal === 'PARTIAL' ? r.matchStatus === 'PARTIAL' : (statusVal === 'UNMATCHED' ? !isExact : true)));
+
+        return matchesQuery && matchesStream && matchesStatus;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:30px; color:#94a3b8;">No room allotments match the filter</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((row, idx) => {
+        const isExact = (row.matchStatus === 'FULL_MATCH' || row.matchStatus === 'EXACT');
+        const isMatched = (row.matchStatus && row.matchStatus !== 'UNMATCHED');
+        let statusBadge = '<span class="badge-unmatched">❌ UNMATCHED</span>';
+        if (isExact) {
+          statusBadge = `<span class="badge-exact" title="${escapeHtml((row.matchReasons || []).join(', '))}">✅ EXACT (${row.matchScore} pts)</span>`;
+        } else if (row.matchStatus === 'DEPT_ELECTIVE') {
+          statusBadge = `<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; background:#e0e7ff; color:#4338ca; border:1px solid #c7d2fe;" title="${escapeHtml((row.matchReasons || []).join(', '))}">🎓 DEPT ELECTIVE</span>`;
+        } else if (row.matchStatus === 'TRANSLATION') {
+          statusBadge = `<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;" title="${escapeHtml((row.matchReasons || []).join(', '))}">📖 TRANSLATION</span>`;
+        } else if (row.matchStatus === 'ALLIED_ELECTIVE' || row.matchStatus === 'DEPT_FACULTY') {
+          statusBadge = `<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; background:#f3e8ff; color:#7e22ce; border:1px solid #e9d5ff;" title="${escapeHtml((row.matchReasons || []).join(', '))}">🏛️ ALLIED ALLOCATION</span>`;
+        } else if (row.matchStatus === 'PARTIAL') {
+          statusBadge = `<span class="badge-partial" title="${escapeHtml((row.matchReasons || []).join(', '))}">⚠️ PARTIAL (${row.matchScore} pts)</span>`;
+        }
+
+        const origIdx = row._origIndex !== undefined ? row._origIndex : idx;
+        const qpOptions = (currentQpData || []).map(q => `
+          <option value="${escapeHtml(q.qp_code)}" ${q.qp_code === row.matchedQpCode ? 'selected' : ''}>
+            ${escapeHtml(q.qp_code)}: ${escapeHtml((q.course_code || q.course_name || '').slice(0, 18))}
+          </option>
+        `).join('');
+
+        const qpDisplay = `
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            <div>
+              ${row.matchedQpCode
+                ? `<span class="pill pill-qp" style="cursor:pointer;" onclick="copyText('${row.matchedQpCode}')">${escapeHtml(row.matchedQpCode)}</span>`
+                : `<span style="color:#ef4444; font-weight:600;">—</span>`}
+            </div>
+            <select style="font-size:11px; padding:2px 4px; border:1px solid var(--slate-300); border-radius:4px; max-width:140px; background:white;" onchange="manualReassignQp(${origIdx}, this.value)" title="Change or assign QP for Room ${row.roomSerial}">
+              <option value="">${row.matchedQpCode ? 'Change QP...' : 'Assign QP...'}</option>
+              ${qpOptions}
+            </select>
+          </div>
+        `;
+
+        const reasonMsg = (row.matchReasons && row.matchReasons.length > 0) ? row.matchReasons[0] : '';
+
+        return `
+          <tr>
+            <td style="color:#94a3b8; font-weight:500;">${idx + 1}</td>
+            <td><span class="badge-room">Room ${escapeHtml(row.roomSerial)}</span></td>
+            <td><span class="pill ${row.stream === 'EDE' || row.stream === 'SDE' ? 'pill-sde' : 'pill-reg'}">${escapeHtml(row.stream || 'Regular')}</span></td>
+            <td>${qpDisplay}</td>
+            <td style="max-width:320px;">
+              <div style="font-weight:600; color:#0f172a;">${escapeHtml(row.courseName)}</div>
+              ${isMatched && row.matchedCourseName ? `<div style="font-size:11px; color:#059669; margin-top:2px; font-weight:500;">✓ Matched: ${escapeHtml(row.matchedCourseCode || '')} — ${escapeHtml(row.matchedCourseName)}</div>` : ''}
+              ${!isMatched ? `<div style="font-size:11px; color:#dc2626; margin-top:2px; font-weight:500;">⚠️ ${escapeHtml(reasonMsg || 'QP not in uploaded folder')}</div>` : ''}
+            </td>
+            <td><span class="pill pill-year">${escapeHtml(row.date || '—')}</span></td>
+            <td>
+              <strong>${row.count}</strong> QPs
+              ${row.scribeCount > 0 ? `<span style="font-size:11px; color:#059669;"> (+${row.scribeCount} scribes)</span>` : ''}
+            </td>
+            <td style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#64748b;" title="${escapeHtml(row.matchedPdfFilename || 'None')}">
+              ${escapeHtml(row.matchedPdfFilename ? (row.matchedPdfFilename.length > 20 ? row.matchedPdfFilename.slice(0, 18) + '...' : row.matchedPdfFilename) : '—')}
+            </td>
+            <td>${statusBadge}</td>
+            <td style="text-align:center;">
+              <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="viewRoomDetails(${escapeHtml(JSON.stringify(row))})">
+                Details
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Manual Reassignment Handler
+    window.manualReassignQp = function(origIdx, newQpCode) {
+      if (!currentRoomMatching || !currentRoomMatching.matched_entries) return;
+      const row = currentRoomMatching.matched_entries[origIdx];
+      if (!row) return;
+
+      if (!newQpCode) {
+        row.matchedQpCode = null;
+        row.qpCode = '';
+        row.matchStatus = 'UNMATCHED';
+        row.matchScore = 0;
+        row.matchReasons = ['Manually unassigned'];
+        row.matchedPdfFilename = null;
+        row.matchedCourseCode = null;
+        row.matchedCourseName = null;
+      } else {
+        const found = currentQpData.find(q => q.qp_code === newQpCode);
+        row.matchedQpCode = newQpCode;
+        row.qpCode = newQpCode;
+        row.matchStatus = 'EXACT';
+        row.matchScore = 100;
+        row.matchReasons = ['Manual assignment by Superintendent'];
+        row.matchedPdfFilename = found ? found.filename : '';
+        row.matchedCourseCode = found ? found.course_code : '';
+        row.matchedCourseName = found ? found.course_name : '';
+      }
+
+      recalculateQpDistribution();
+      renderResults(currentQpData);
+      showToast(`Updated Room ${row.roomSerial} to QP: ${newQpCode || 'None'}`);
+    };
+
+    function recalculateQpDistribution() {
+      if (!currentRoomMatching || !currentRoomMatching.matched_entries) return;
+      const qpDist = {};
+      let exact = 0, partial = 0, unmatched = 0;
+
+      for (const r of currentRoomMatching.matched_entries) {
+        if (r.matchStatus === 'FULL_MATCH' || r.matchStatus === 'EXACT') exact++;
+        else if (r.matchStatus === 'PARTIAL') partial++;
+        else unmatched++;
+
+        if (r.matchedQpCode) {
+          const qCode = r.matchedQpCode;
+          if (!qpDist[qCode]) {
+            qpDist[qCode] = {
+              qpCode: qCode,
+              courseCode: r.matchedCourseCode || '',
+              courseName: r.matchedCourseName || '',
+              pdfFilename: r.matchedPdfFilename || '',
+              totalRequired: 0,
+              totalScribes: 0,
+              rooms: []
+            };
+          }
+          qpDist[qCode].totalRequired += parseInt(r.count || 0, 10);
+          qpDist[qCode].totalScribes += parseInt(r.scribeCount || 0, 10);
+          qpDist[qCode].rooms.push({
+            roomSerial: r.roomSerial,
+            stream: r.stream,
+            count: parseInt(r.count || 0, 10),
+            scribeCount: parseInt(r.scribeCount || 0, 10)
+          });
+        }
+      }
+
+      currentRoomMatching.qp_distribution = Object.values(qpDist);
+      currentRoomMatching.summary.exactMatches = exact;
+      currentRoomMatching.summary.partialMatches = partial;
+      currentRoomMatching.summary.unmatchedEntries = unmatched;
+      currentRoomMatching.summary.uniqueQpsMatched = Object.keys(qpDist).length;
+    }
+
+    // Render QP Packing View
+    function renderQpPackingView() {
+      const container = document.getElementById('qpPackingCards');
+      if (!currentRoomMatching || !currentRoomMatching.qp_distribution || currentRoomMatching.qp_distribution.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:40px; color:#64748b;">No matched Question Papers to pack yet.</div>`;
+        return;
+      }
+
+      container.innerHTML = currentRoomMatching.qp_distribution.map(dist => `
+        <div class="packing-card">
+          <div class="packing-header">
+            <div>
+              <span class="pill pill-qp" style="font-size:14px; font-weight:700;">QP: ${escapeHtml(dist.qpCode)}</span>
+              <strong style="margin-left:8px; font-size:15px; color:#0f172a;">${escapeHtml(dist.courseCode)} - ${escapeHtml(dist.courseName)}</strong>
+            </div>
+            <div style="font-size:14px;">
+              Total Copies Needed: <span class="badge-exact" style="font-size:13px;">${dist.totalRequired} Copies</span>
+              ${dist.totalScribes > 0 ? `<span class="badge-partial" style="font-size:12px;">+${dist.totalScribes} Scribes</span>` : ''}
+            </div>
+          </div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:6px;">
+            📄 Source File: <code>${escapeHtml(dist.pdfFilename)}</code>
+          </div>
+          <div class="packing-rooms-list">
+            ${dist.rooms.map(rm => `
+              <span class="room-chip">
+                <strong>Room ${escapeHtml(rm.roomSerial)}</strong> (${escapeHtml(rm.stream)}): <strong>${rm.count}</strong> QPs
+                ${rm.scribeCount > 0 ? `<span style="color:#059669;"> (+${rm.scribeCount} scr)</span>` : ''}
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Filter event listeners
+    searchInput.addEventListener('input', () => {
+      if (currentView === 'rooms') renderCurrentView();
+      else renderStandardTableRows();
+    });
+    yearFilter.addEventListener('change', renderStandardTableRows);
+    streamFilter.addEventListener('change', renderCurrentView);
+    matchStatusFilter.addEventListener('change', renderCurrentView);
+
+    // Copy helper
+    window.copyText = function(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      showToast(`Copied "${text}" to clipboard`);
+    };
+
+    // Download Populated Seating JSON
+    document.getElementById('btnDownloadPopulatedJson').addEventListener('click', () => {
+      if (!currentRoomMatching || !currentRoomMatching.matched_entries) return;
+      let jsonStr;
+      if (typeof QPMatcher !== 'undefined') {
+        jsonStr = QPMatcher.exportPopulatedSeatingJson(currentRoomMatching.matched_entries);
+      } else {
+        jsonStr = JSON.stringify(currentRoomMatching.matched_entries, null, 2);
+      }
+
+      const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Room_Wise_Seating_Summary_Populated_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Populated Seating JSON downloaded successfully!');
+    });
+
+    // Print Slips
+    document.getElementById('btnPrintRoomSlips').addEventListener('click', () => {
+      window.print();
+    });
+
+    // Export Room Match CSV
+    document.getElementById('btnExportRoomCsv').addEventListener('click', () => {
+      if (!currentRoomMatching || !currentRoomMatching.matched_entries) return;
+      const headers = ['RoomSerial', 'Stream', 'MatchedQPCode', 'CourseName', 'Count', 'ScribeCount', 'Date', 'Time', 'MatchedPDF', 'MatchStatus', 'Score'];
+      const rows = [headers.join(',')];
+
+      currentRoomMatching.matched_entries.forEach(r => {
+        const vals = [
+          r.roomSerial,
+          `"${r.stream || ''}"`,
+          `"${r.matchedQpCode || ''}"`,
+          `"${(r.courseName || '').replace(/"/g, '""')}"`,
+          r.count || 0,
+          r.scribeCount || 0,
+          `"${r.date || ''}"`,
+          `"${r.time || ''}"`,
+          `"${r.matchedPdfFilename || ''}"`,
+          `"${r.matchStatus || ''}"`,
+          r.matchScore || 0
+        ];
+        rows.push(vals.join(','));
+      });
+
+      const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Room_Wise_QP_Allotment.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Room Allotment CSV exported!');
+    });
+
+    // Export QP Packing Slip CSV
+    document.getElementById('btnExportQpDispatchCsv').addEventListener('click', () => {
+      if (!currentRoomMatching || !currentRoomMatching.qp_distribution) return;
+      const headers = ['QPCode', 'CourseCode', 'CourseName', 'TotalRequired', 'TotalScribes', 'RoomsBreakdown', 'SourcePDF'];
+      const rows = [headers.join(',')];
+
+      currentRoomMatching.qp_distribution.forEach(d => {
+        const breakdown = d.rooms.map(rm => `Room ${rm.roomSerial}(${rm.count})`).join('; ');
+        const vals = [
+          `"${d.qpCode}"`,
+          `"${d.courseCode}"`,
+          `"${(d.courseName || '').replace(/"/g, '""')}"`,
+          d.totalRequired,
+          d.totalScribes,
+          `"${breakdown}"`,
+          `"${d.pdfFilename}"`
+        ];
+        rows.push(vals.join(','));
+      });
+
+      const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'QP_Packing_Dispatch_List.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('QP Packing Slip CSV exported!');
+    });
+
+    // Detail Modals
+    window.viewDetails = function(item) {
+      document.getElementById('modalTitle').innerText = 'Question Paper Details';
+      modalBody.innerHTML = `
+        <div class="detail-label">QP Code:</div>
+        <div class="detail-value"><span class="pill pill-qp">${escapeHtml(item.qp_code || 'N/A')}</span></div>
+        <div class="detail-label">Course Name:</div>
+        <div class="detail-value" style="font-weight:600;">${escapeHtml(item.course_name || 'N/A')}</div>
+        <div class="detail-label">Course Code:</div>
+        <div class="detail-value"><span class="pill pill-code">${escapeHtml(item.course_code || 'N/A')}</span></div>
+        <div class="detail-label">Full Title:</div>
+        <div class="detail-value">${escapeHtml(item.full_course_title || 'N/A')}</div>
+        <div class="detail-label">Syllabus Year:</div>
+        <div class="detail-value"><span class="pill pill-year">${escapeHtml(item.syllabus_year || 'N/A')}</span></div>
+        <div class="detail-label">Filename:</div>
+        <div class="detail-value" style="font-family:'JetBrains Mono',monospace; font-size:12px;">${escapeHtml(item.filename || 'N/A')}</div>
+        <div class="detail-label">Exam Type:</div>
+        <div class="detail-value">${escapeHtml(item.exam_type || '—')}</div>
+        <div class="detail-label">Exam Date / Time:</div>
+        <div class="detail-value">${escapeHtml(item.exam_date || '—')} ${escapeHtml(item.exam_time || '')}</div>
+      `;
+      detailModal.classList.add('active');
+    };
+
+    window.viewRoomDetails = function(item) {
+      document.getElementById('modalTitle').innerText = `Room ${item.roomSerial} Allotment Details`;
+      modalBody.innerHTML = `
+        <div class="detail-label">Room Number:</div>
+        <div class="detail-value"><span class="badge-room">Room ${escapeHtml(item.roomSerial)}</span></div>
+        <div class="detail-label">Stream:</div>
+        <div class="detail-value"><span class="pill pill-reg">${escapeHtml(item.stream || 'Regular')}</span></div>
+        <div class="detail-label">Course Name:</div>
+        <div class="detail-value" style="font-weight:600;">${escapeHtml(item.courseName || 'N/A')}</div>
+        <div class="detail-label">Required Copies:</div>
+        <div class="detail-value"><strong>${item.count}</strong> QPs (+${item.scribeCount} scribes)</div>
+        <div class="detail-label">Matched QP Code:</div>
+        <div class="detail-value"><span class="pill pill-qp">${escapeHtml(item.matchedQpCode || 'None')}</span></div>
+        <div class="detail-label">Matched Source PDF:</div>
+        <div class="detail-value" style="font-family:'JetBrains Mono',monospace; font-size:12px;">${escapeHtml(item.matchedPdfFilename || 'None')}</div>
+        <div class="detail-label">Match Score &amp; Status:</div>
+        <div class="detail-value"><strong>${escapeHtml(item.matchStatus)}</strong> (${item.matchScore} points)</div>
+        <div class="detail-label">Match Criteria:</div>
+        <div class="detail-value">
+          ${(item.matchReasons || []).map(r => `<span class="segment-tag">${escapeHtml(r)}</span>`).join('') || 'None'}
+        </div>
+      `;
+      detailModal.classList.add('active');
+    };
+
+    modalCloseBtn.addEventListener('click', () => detailModal.classList.remove('active'));
+    detailModal.addEventListener('click', (e) => {
+      if (e.target === detailModal) detailModal.classList.remove('active');
+    });
+
+    function showToast(msg) {
+      toastMsg.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3500);
+    }
+
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return String(str || '');
+      return str.replace(/[&<>"']/g, m => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[m]);
+    }
+  </script>
+</body>
+</html>

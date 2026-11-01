@@ -27,18 +27,36 @@ import org.slf4j.LoggerFactory;
 public class PrintService {
     private static final Logger logger = LoggerFactory.getLogger(PrintService.class);
 
-    public List<String> getAvailablePrinters() {
+    private List<String> cachedPrinters = null;
+    private long lastPrinterScanTime = 0;
+    private String cachedDefaultPrinter = null;
+    private long lastDefaultPrinterScanTime = 0;
+    private static final long PRINTER_CACHE_TTL_MS = 15000; // 15 seconds
+
+    public synchronized List<String> getAvailablePrinters() {
+        long now = System.currentTimeMillis();
+        if (cachedPrinters != null && (now - lastPrinterScanTime < PRINTER_CACHE_TTL_MS)) {
+            return new ArrayList<>(cachedPrinters);
+        }
         List<String> printerNames = new ArrayList<>();
         javax.print.PrintService[] services = PrintServiceLookup.lookupPrintServices(null, null);
         for (javax.print.PrintService service : services) {
             printerNames.add(service.getName());
         }
-        return printerNames;
+        cachedPrinters = printerNames;
+        lastPrinterScanTime = now;
+        return new ArrayList<>(cachedPrinters);
     }
 
-    public String getDefaultPrinterName() {
+    public synchronized String getDefaultPrinterName() {
+        long now = System.currentTimeMillis();
+        if (cachedDefaultPrinter != null && (now - lastDefaultPrinterScanTime < PRINTER_CACHE_TTL_MS)) {
+            return cachedDefaultPrinter;
+        }
         javax.print.PrintService defaultService = PrintServiceLookup.lookupDefaultPrintService();
-        return (defaultService != null) ? defaultService.getName() : "None";
+        cachedDefaultPrinter = (defaultService != null) ? defaultService.getName() : "None";
+        lastDefaultPrinterScanTime = now;
+        return cachedDefaultPrinter;
     }
 
     private static final int PRINTER_STATUS_OFFLINE = 0x00000080;

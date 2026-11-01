@@ -11,3 +11,8 @@
 *.class
 *.log
 .DS_Store
+
+__pycache__/
+*.pyc
+qp_extractor/chat_history/
+

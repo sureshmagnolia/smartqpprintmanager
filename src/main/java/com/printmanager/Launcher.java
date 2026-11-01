@@ -7,6 +7,33 @@ import java.awt.geom.RoundRectangle2D;
 
 public class Launcher {
     public static JWindow splash;
+    private static Timer timer;
+    private static Timer loaderTimer;
+    private static Timer safetyTimer;
+
+    public static void hideSplashScreen() {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                if (safetyTimer != null) {
+                    safetyTimer.stop();
+                    safetyTimer = null;
+                }
+                if (timer != null) {
+                    timer.stop();
+                    timer = null;
+                }
+                if (loaderTimer != null) {
+                    loaderTimer.stop();
+                    loaderTimer = null;
+                }
+                if (splash != null) {
+                    splash.setVisible(false);
+                    splash.dispose();
+                    splash = null;
+                }
+            } catch (Exception ignored) {}
+        });
+    }
 
     public static void main(String[] args) {
         boolean showSplash = true;
@@ -151,12 +178,12 @@ public class Launcher {
         splash.setContentPane(panel);
         splash.setVisible(true);
 
-        Timer timer = new Timer(40, e -> {
+        timer = new Timer(40, e -> {
             panel.repaint();
         });
         timer.start();
 
-        Timer loaderTimer = new Timer(20, e -> {
+        loaderTimer = new Timer(20, e -> {
             int v = loaderBar.getValue();
             if (v < 90) {
                 loaderBar.setValue(v + 1);
@@ -168,5 +195,10 @@ public class Launcher {
             else if (v >= 85) status.setText("Starting UI Interface...");
         });
         loaderTimer.start();
+
+        // Safety fallback: guaranteed auto-dismissal after 7 seconds max
+        safetyTimer = new Timer(7000, e -> hideSplashScreen());
+        safetyTimer.setRepeats(false);
+        safetyTimer.start();
     }
 }

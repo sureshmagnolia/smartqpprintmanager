@@ -44,6 +44,8 @@ public class ValidationService {
         List<String> unroutedWarnings = new ArrayList<>(extraWarnings); // In both, but no printer
 
         java.util.Map<String, FileItem> queueMap = new java.util.HashMap<>();
+        java.util.Map<String, FileItem> normQueueMap = new java.util.HashMap<>();
+        java.util.Map<String, FileItem> fileNameQueueMap = new java.util.HashMap<>();
         java.util.Set<FileItem> routedFiles = new java.util.HashSet<>();
         java.util.Set<String> routedQPs = new java.util.HashSet<>();
 
@@ -61,15 +63,29 @@ public class ValidationService {
             String qp = app.extractQPFromFileName(item.getFileName());
             if (!qp.isEmpty()) {
                 queueMap.put(qp.toUpperCase(), item);
+                normQueueMap.put(App.normalizeQP(qp), item);
+            }
+            if (item.getFileName() != null) {
+                fileNameQueueMap.put(item.getFileName().toLowerCase(), item);
+            }
+            if (item.getFile() != null) {
+                fileNameQueueMap.put(item.getFile().getName().toLowerCase(), item);
             }
         }
 
         java.util.Set<String> jsonQPs = new java.util.HashSet<>();
+        java.util.Set<String> normJsonQPs = new java.util.HashSet<>();
+        java.util.Set<String> jsonFileNames = new java.util.HashSet<>();
+
         for (RoomGroup group : roomGroupsList) {
             for (RoomItem item : group.getItems()) {
                 String qp = item.getQpCode();
                 if (qp != null && !qp.isEmpty()) {
                     jsonQPs.add(qp.toUpperCase());
+                    normJsonQPs.add(App.normalizeQP(qp));
+                }
+                if (item.getPdfFileName() != null && !item.getPdfFileName().isEmpty()) {
+                    jsonFileNames.add(item.getPdfFileName().toLowerCase());
                 }
             }
         }
@@ -77,6 +93,7 @@ public class ValidationService {
         for (FileItem item : fileQueue) {
             String fileName = item.getFileName();
             String qp = app.extractQPFromFileName(fileName).toUpperCase();
+            String normQp = App.normalizeQP(qp);
             
             boolean isMaster = false;
             if (!qp.isEmpty()) {
@@ -98,21 +115,45 @@ public class ValidationService {
             }
 
             boolean isRouted = routedFiles.contains(item);
-            if (qp.isEmpty() || !jsonQPs.contains(qp)) {
+            boolean inJson = (!normQp.isEmpty() && normJsonQPs.contains(normQp)) || 
+                             isRouted || 
+                             (item.getFileName() != null && jsonFileNames.contains(item.getFileName().toLowerCase())) ||
+                             (item.getFile() != null && jsonFileNames.contains(item.getFile().getName().toLowerCase()));
+
+            if (!inJson) {
                 missingFromJSON.add("❌ QP [" + (qp.isEmpty() ? "UNKNOWN" : qp) + "] Routing Data Missing: File " + item.getFileName() + " has no entry in JSON.");
                 item.setStatus("No JSON Entry");
             } else {
                 if (item.getTargetPrinter() == null || "None".equals(item.getTargetPrinter()) || item.getTargetPrinter().isEmpty()) {
                     if (!isRouted) {
-                        unroutedWarnings.add("⚠️ QP [" + qp + "] No Printer Assigned to " + item.getFileName());
+                        unroutedWarnings.add("[!] QP [" + qp + "] No Printer Assigned to " + item.getFileName());
                     }
                 }
             }
         }
 
-        for (String qp : jsonQPs) {
-            if (!queueMap.containsKey(qp)) {
-                missingFromQueue.add("❌ QP [" + qp + "] Required by JSON but PDF is NOT LOADED");
+        for (RoomGroup group : roomGroupsList) {
+            for (RoomItem item : group.getItems()) {
+                // If it already has a matchedFile that is present in the print queue, it's valid
+                if (item.getMatchedFile() != null && fileQueue.contains(item.getMatchedFile())) {
+                    continue;
+                }
+
+                String qp = item.getQpCode();
+                String fn = item.getPdfFileName();
+                String normQp = App.normalizeQP(qp);
+
+                boolean found = false;
+                if (!normQp.isEmpty() && normQueueMap.containsKey(normQp)) {
+                    found = true;
+                } else if (fn != null && !fn.isEmpty() && fileNameQueueMap.containsKey(fn.toLowerCase())) {
+                    found = true;
+                }
+
+                if (!found && ((qp != null && !qp.isEmpty()) || (fn != null && !fn.isEmpty()))) {
+                    String display = (qp != null && !qp.isEmpty()) ? qp : fn;
+                    missingFromQueue.add("❌ QP [" + display + "] Required by JSON but PDF is NOT LOADED");
+                }
             }
         }
 
@@ -123,7 +164,7 @@ public class ValidationService {
                 for (File f : files) {
                     String qp = app.extractQPFromFileName(f.getName()).toUpperCase();
                     if (!qp.isEmpty() && !queueMap.containsKey(qp)) {
-                        missingFromJSON.add("ℹ️ QP [" + qp + "] File found on disk but NOT loaded in App: " + f.getName());
+                        missingFromJSON.add("ℹ QP [" + qp + "] File found on disk but NOT loaded in App: " + f.getName());
                     }
                 }
             }
@@ -151,7 +192,7 @@ public class ValidationService {
                 Button detailBtn = new Button();
                 String btnText = "";
                 if (totalErrors > 0) btnText += "❌ " + totalErrors + " CRITICAL ERRORS ";
-                if (totalWarnings > 0) btnText += "⚠️ " + totalWarnings + " ROUTING ISSUES";
+                if (totalWarnings > 0) btnText += "[!] " + totalWarnings + " ROUTING ISSUES";
                 detailBtn.setText(btnText.trim());
                 detailBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 2 10; -fx-cursor: hand;");
                 
@@ -196,7 +237,7 @@ public class ValidationService {
             sb.append("\n");
         }
         if (!unrouted.isEmpty()) {
-            sb.append("⚠️ ROUTING ISSUES (No Printer Assigned):\n");
+            sb.append("[!] ROUTING ISSUES (No Printer Assigned):\n");
             unrouted.forEach(m -> sb.append("  ").append(m).append("\n"));
         }
 
