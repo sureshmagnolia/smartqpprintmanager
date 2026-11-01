@@ -124,7 +124,8 @@ public class App extends Application {
     private final HBox simAlertHeader = new HBox();
     private final HBox healthCheckRibbon = new HBox();
     private final Label healthErrorCountLabel = new Label();
-    private final CheckBox printCoverPageCbox = new CheckBox("Print Cover Page");
+    private final CheckBox printCoverPageCbox = new CheckBox("Facing Sheet");
+    private final CheckBox printSigningSheetCbox = new CheckBox("Signing Sheet");
     private final ToggleButton aiRoutingBtn = new ToggleButton("AI Engine");
     private final AIRoutingAgent aiRoutingAgent = new AIRoutingAgent();
 
@@ -345,7 +346,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.19");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V7.20");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -370,7 +371,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.19");
+        primaryStage.setTitle("Smart QP Print Manager - V7.20");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -2878,8 +2879,18 @@ public class App extends Application {
 
 
         printCoverPageCbox.setSelected(config.isPrintCoverPage());
+        printCoverPageCbox.setStyle("-fx-font-size: 12px; -fx-cursor: hand;");
+        printCoverPageCbox.setTooltip(new Tooltip("Print 1-page Facing Sheet (Room Cover with Room number & Question Paper summary table)"));
         printCoverPageCbox.setOnAction(e -> {
             config.setPrintCoverPage(printCoverPageCbox.isSelected());
+            saveConfigs();
+        });
+
+        printSigningSheetCbox.setSelected(config.isPrintSigningSheet());
+        printSigningSheetCbox.setStyle("-fx-font-size: 12px; -fx-cursor: hand;");
+        printSigningSheetCbox.setTooltip(new Tooltip("Print 2-part Candidate Attendance/Signing Sheet (ExamFlow format: Part 1 Seats 1-20, Part 2 Seats 21-30)"));
+        printSigningSheetCbox.setOnAction(e -> {
+            config.setPrintSigningSheet(printSigningSheetCbox.isSelected());
             saveConfigs();
         });
 
@@ -2933,7 +2944,44 @@ public class App extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox toolsRow = new HBox(12, smartMatchBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, printCoverPageCbox, aiRoutingBtn);
+        Button exportAllSigningBtn = new Button("📋 Export Signing Sheets");
+        exportAllSigningBtn.setStyle("-fx-background-color: #2e7d32; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 6 10 6 10; -fx-background-radius: 6; -fx-cursor: hand;");
+        exportAllSigningBtn.setTooltip(new Tooltip("Export merged 2-page Candidate Attendance / Signing Sheets for all rooms as a PDF"));
+        exportAllSigningBtn.setOnAction(e -> {
+            if (roomGroupsList.isEmpty()) {
+                com.printmanager.ui.Toast.show(primaryStage, "No rooms loaded in seating summary.", 3000);
+                return;
+            }
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Save All Signing Sheets PDF");
+            fc.setInitialFileName("Exam_Signing_Sheets_" + new java.text.SimpleDateFormat("yyyy-MM-dd").format(new Date()) + ".pdf");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF Documents", "*.pdf"));
+            File saveFile = fc.showSaveDialog(primaryStage);
+            if (saveFile != null) {
+                try (org.apache.pdfbox.pdmodel.PDDocument doc = new org.apache.pdfbox.pdmodel.PDDocument()) {
+                    FacingSheetGenerator gen = new FacingSheetGenerator();
+                    int added = 0;
+                    for (RoomGroup g : roomGroupsList) {
+                        if (g.getFacingData() != null) {
+                            gen.addRoomFacingPages(doc, g.getFacingData());
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        com.printmanager.ui.Toast.show(primaryStage, "None of the loaded rooms have candidate signing data.", 3000);
+                        return;
+                    }
+                    doc.save(saveFile);
+                    com.printmanager.ui.Toast.show(primaryStage, "Saved " + added + " room signing sheets (" + (added * 2) + " pages)!", 3500);
+                    activityLogger.info("Exported signing sheets to " + saveFile.getAbsolutePath());
+                } catch (Exception ex) {
+                    activityLogger.error("Error saving signing sheets: " + ex.getMessage());
+                    com.printmanager.ui.Toast.show(primaryStage, "Failed to export signing sheets: " + ex.getMessage(), 3500);
+                }
+            }
+        });
+
+        HBox toolsRow = new HBox(12, smartMatchBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, exportAllSigningBtn, printCoverPageCbox, printSigningSheetCbox, aiRoutingBtn);
         toolsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
         VBox header = new VBox(15, toolsRow, statsRow);
@@ -3093,7 +3141,37 @@ public class App extends Application {
         Region headerSpacer = new Region();
         HBox.setHgrow(headerSpacer, Priority.ALWAYS);
 
-        HBox headerArea = new HBox(titleBox, headerSpacer, delRoomBtn);
+        Button previewFacingBtn = new Button("📄");
+        previewFacingBtn.setStyle("-fx-background-color: transparent; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 0 4 0 4;");
+        previewFacingBtn.setTooltip(new Tooltip("Preview Facing Sheet (Room Cover Page)"));
+        previewFacingBtn.setOnAction(e -> {
+            try {
+                File coverPdf = generateRoomCoverPage(group);
+                pdfViewer.show(coverPdf, false, null);
+            } catch (Exception ex) {
+                activityLogger.error("Failed to preview facing sheet: " + ex.getMessage());
+                com.printmanager.ui.Toast.show(primaryStage, "Facing sheet preview error: " + ex.getMessage(), 3000);
+            }
+        });
+
+        Button previewSigningBtn = new Button("📋");
+        previewSigningBtn.setStyle("-fx-background-color: transparent; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 0 4 0 4;");
+        previewSigningBtn.setTooltip(new Tooltip("Preview Signing Sheet (Candidate Attendance Sheet)"));
+        previewSigningBtn.setOnAction(e -> {
+            try {
+                if (group.getFacingData() == null || !group.getFacingData().hasStudents()) {
+                    com.printmanager.ui.Toast.show(primaryStage, "No candidate signing data available for Room " + group.getRoomSerial(), 3000);
+                    return;
+                }
+                File signingPdf = generateRoomSigningSheet(group);
+                pdfViewer.show(signingPdf, false, null);
+            } catch (Exception ex) {
+                activityLogger.error("Failed to preview signing sheet: " + ex.getMessage());
+                com.printmanager.ui.Toast.show(primaryStage, "Signing sheet preview error: " + ex.getMessage(), 3000);
+            }
+        });
+
+        HBox headerArea = new HBox(8, titleBox, headerSpacer, previewFacingBtn, previewSigningBtn, delRoomBtn);
         headerArea.setAlignment(javafx.geometry.Pos.CENTER);
         
         ComboBox<String> printerCombo = new ComboBox<>(FXCollections.observableArrayList(printService.getAvailablePrinters()));
@@ -3612,7 +3690,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.19";
+                    String targetTitle = "Smart QP Print Manager - V7.20";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3644,7 +3722,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.19 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v7.20 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -3979,7 +4057,15 @@ public class App extends Application {
                 // CRITICAL FIX: Clear existing items on reload to prevent duplicates
                 if (!processedGroups.contains(roomSerial)) {
                     group.getItems().clear();
+                    group.setFacingData(null);
                     processedGroups.add(roomSerial);
+                }
+
+                if (group.getFacingData() == null) {
+                    RoomFacingData fd = RoomService.extractFacingData(node, roomSerial);
+                    if (fd != null) {
+                        group.setFacingData(fd);
+                    }
                 }
                 
                 if (qpCode.isEmpty() && !pdfFileName.isEmpty()) {
@@ -4349,7 +4435,8 @@ public class App extends Application {
             return;
         }
 
-        boolean printCover = printCoverPageCbox.isSelected();
+        boolean printFacing = printCoverPageCbox.isSelected();
+        boolean printSigning = printSigningSheetCbox.isSelected();
         group.setStatus("Sending...");
         saveConfigs();
 
@@ -4358,19 +4445,33 @@ public class App extends Application {
                 // Track success of all items
                 boolean allSuccess = true;
                 
-                // Optional Cover Page
-                if (printCover) {
+                // 1. Optional Facing Sheet (Room Cover Page)
+                if (printFacing) {
                     try {
                         File coverFile = generateRoomCoverPage(group);
                         FileItem coverItem = new FileItem(coverFile, 1, "", printer, false, false, "Left", 1, "A4", "");
                         printService.printPDF(coverItem, s -> {});
                         Thread.sleep(1000);
                     } catch (Exception ce) { 
-                        activityLogger.error("Cover page failed for Room " + group.getRoomSerial());
+                        activityLogger.error("Facing sheet failed for Room " + group.getRoomSerial());
                     }
                 }
 
-                // Print QP items
+                // 2. Optional Signing Sheet (ExamFlow Candidate Attendance Sheet)
+                if (printSigning && group.getFacingData() != null && group.getFacingData().hasStudents()) {
+                    try {
+                        File signingFile = generateRoomSigningSheet(group);
+                        if (signingFile != null) {
+                            FileItem signingItem = new FileItem(signingFile, 2, "", printer, false, false, "Left", 1, "A4", "");
+                            printService.printPDF(signingItem, s -> {});
+                            Thread.sleep(1000);
+                        }
+                    } catch (Exception se) {
+                        activityLogger.error("Signing sheet failed for Room " + group.getRoomSerial() + ": " + se.getMessage());
+                    }
+                }
+
+                // 3. Print QP items
                 for (RoomItem roomItem : group.getItems()) {
                     FileItem fileItem = roomItem.getMatchedFile();
                     
@@ -4537,6 +4638,13 @@ public class App extends Application {
             doc.save(temp);
         }
         return temp;
+    }
+
+    private File generateRoomSigningSheet(RoomGroup group) throws Exception {
+        if (group == null || group.getFacingData() == null || !group.getFacingData().hasStudents()) {
+            throw new IllegalStateException("No candidate attendance/signing data available for Room " + (group != null ? group.getRoomSerial() : ""));
+        }
+        return new FacingSheetGenerator().generate(group.getFacingData());
     }
 
     private void drawTableRow(org.apache.pdfbox.pdmodel.PDPageContentStream cs, float x, float y, float[] widths, String[] data, boolean isHeader) throws Exception {

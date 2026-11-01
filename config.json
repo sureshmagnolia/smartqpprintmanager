@@ -65,6 +65,8 @@
   "portalPassword" : "Csno1972#",
   "portalQpPassword" : "23AFAE",
   "portalQpPrefix" : "D",
+  "selectedExamId" : "",
+  "currentExamName" : "Exam",
   "lastSessionName" : "02-06-2026 | 10:00 AM",
   "collegeName" : "Your Institution Name",
   "currentExamDate" : "",
@@ -72,5 +74,6 @@
   "baseDownloadPath" : "C:\\",
   "lastDirectory" : "C:\\Users\\sures\\Downloads\\29-10",
   "printCoverPage" : true,
+  "printSigningSheet" : true,
   "aiRoutingEnabled" : false
 }

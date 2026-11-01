@@ -17,6 +17,7 @@ public class RoomGroup {
     private final StringProperty selectedPrinter = new SimpleStringProperty("None");
     private final StringProperty status = new SimpleStringProperty("Ready");
     private final IntegerProperty totalStudents = new SimpleIntegerProperty(0);
+    private RoomFacingData facingData;
 
     public RoomGroup() {}
 
@@ -52,4 +53,8 @@ public class RoomGroup {
     public void setStatus(String status) { this.status.set(status); }
     @JsonIgnore
     public StringProperty statusProperty() { return status; }
+
+    @JsonProperty("facingData")
+    public RoomFacingData getFacingData() { return facingData; }
+    public void setFacingData(RoomFacingData facingData) { this.facingData = facingData; }
 }

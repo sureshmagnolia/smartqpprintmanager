@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-set VERSION=7.19
+set VERSION=7.20
 set APPNAME=Smart QP Print Manager
 set PATH=C:\Users\sures\WiX;C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.6.2\plugins\maven\lib\maven3\bin;%PATH%
 

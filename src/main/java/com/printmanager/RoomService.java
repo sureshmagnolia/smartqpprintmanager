@@ -29,6 +29,62 @@ public class RoomService {
         return null;
     }
 
+    public static RoomFacingData extractFacingData(JsonNode node, String defaultHallNumber) {
+        if (node == null || !node.has("students") || !node.path("students").isArray() || node.path("students").isEmpty()) {
+            return null;
+        }
+        RoomFacingData fd = new RoomFacingData();
+        fd.setCollegeName(node.path("collegeName").asText(""));
+        fd.setExamName(node.path("examName").asText(""));
+        fd.setHallNumber(node.path("hallNumber").asText(defaultHallNumber));
+        fd.setRoomName(node.path("roomName").asText(""));
+        fd.setLocation(node.path("location").asText(""));
+        fd.setInvigilatorName(node.path("invigilatorName").asText(""));
+        fd.setStream(node.path("stream").asText(""));
+        fd.setDate(node.path("date").asText(""));
+        fd.setTime(node.path("time").asText(""));
+        fd.setTotalStudents(node.path("totalStudents").asInt(0));
+        fd.setTotalBookletsExclScribes(node.path("totalBookletsExclScribes").asInt(0));
+
+        if (node.has("uniqueQPCodes") && node.path("uniqueQPCodes").isArray()) {
+            List<String> qps = new ArrayList<>();
+            for (JsonNode qn : node.path("uniqueQPCodes")) {
+                qps.add(qn.asText());
+            }
+            fd.setUniqueQPCodes(qps);
+        }
+
+        if (node.has("courseSummary") && node.path("courseSummary").isArray()) {
+            List<RoomFacingData.CourseSummaryEntry> cList = new ArrayList<>();
+            for (JsonNode cn : node.path("courseSummary")) {
+                RoomFacingData.CourseSummaryEntry cse = new RoomFacingData.CourseSummaryEntry();
+                cse.setQpCode(cn.path("qpCode").asText(""));
+                cse.setCourseName(cn.path("courseName").asText(""));
+                cse.setSmartCourseName(cn.path("smartCourseName").asText(""));
+                cse.setCount(cn.path("count").asInt(0));
+                cse.setTotalCount(cn.path("totalCount").asInt(0));
+                cse.setScribeCount(cn.path("scribeCount").asInt(0));
+                cList.add(cse);
+            }
+            fd.setCourseSummary(cList);
+        }
+
+        List<RoomFacingData.StudentEntry> sList = new ArrayList<>();
+        for (JsonNode sn : node.path("students")) {
+            RoomFacingData.StudentEntry se = new RoomFacingData.StudentEntry();
+            se.setSeatNumber(sn.path("seatNumber").asInt(0));
+            se.setRegNo(sn.path("regNo").asText(""));
+            se.setName(sn.path("name").asText(""));
+            se.setCourseName(sn.path("courseName").asText(""));
+            se.setQpCode(sn.path("qpCode").asText(""));
+            se.setScribe(sn.path("isScribe").asBoolean(false));
+            se.setRemarks(sn.path("remarks").asText(""));
+            sList.add(se);
+        }
+        fd.setStudents(sList);
+        return fd;
+    }
+
     public List<RoomGroup> processRoomWiseJson(JsonNode root, ObservableList<FileItem> fileQueue) {
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
         int nodeIdCounter = 0;
@@ -51,6 +107,12 @@ public class RoomService {
                     g.setTotalStudents(totalField);
                 } else {
                     g.setTotalStudents(g.getTotalStudents() + count);
+                }
+
+                // Extract facing sheet data if present and not yet loaded for this room
+                if (g.getFacingData() == null) {
+                    RoomFacingData fd = extractFacingData(node, rs);
+                    if (fd != null) g.setFacingData(fd);
                 }
 
                 // Match attempt
