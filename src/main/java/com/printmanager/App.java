@@ -169,6 +169,7 @@ public class App extends Application {
     private final BooleanProperty globalProgressVisible = new SimpleBooleanProperty(false);
     private final IntegerProperty pendingAnalysisTasks = new SimpleIntegerProperty(0);
     private final IntegerProperty totalAnalysisTasks = new SimpleIntegerProperty(0);
+    private final java.util.concurrent.atomic.AtomicInteger completedPdfCount = new java.util.concurrent.atomic.AtomicInteger(0);
     private StackPane pdfLoadingOverlay;
     private Label pdfLoadingLabel;
     private ProgressBar pdfLoadingProgressBar;
@@ -1173,6 +1174,13 @@ public class App extends Application {
         loadingCard.getChildren().addAll(pi, titleLbl, pdfLoadingLabel, pdfLoadingProgressBar);
         pdfLoadingOverlay.getChildren().add(loadingCard);
 
+        // Click on overlay dismisses if completed or pending <= 0
+        pdfLoadingOverlay.setOnMouseClicked(e -> {
+            if (pendingAnalysisTasks.get() <= 0 || (completedPdfCount.get() >= totalAnalysisTasks.get() && totalAnalysisTasks.get() > 0)) {
+                pdfLoadingOverlay.setVisible(false);
+            }
+        });
+
         StackPane tableContainer = new StackPane(table, pdfLoadingOverlay);
         VBox.setVgrow(tableContainer, Priority.ALWAYS);
 
@@ -1528,6 +1536,15 @@ public class App extends Application {
             item.setFileName(finalName);
             item.setStyle(fs);
             fileQueue.add(item);
+            int done = completedPdfCount.incrementAndGet();
+            int total = Math.max(1, totalAnalysisTasks.get());
+            if (pdfLoadingProgressBar != null) {
+                pdfLoadingProgressBar.setProgress((double) done / total);
+                pdfLoadingLabel.setText(String.format("Analyzed %d of %d files...", Math.min(done, total), total));
+            }
+            if (done >= total && pendingAnalysisTasks.get() <= 1 && pdfLoadingOverlay != null) {
+                pdfLoadingOverlay.setVisible(false);
+            }
         });
     }
 
@@ -1562,14 +1579,27 @@ public class App extends Application {
                     if (manualStyle != null) item.setStyle(manualStyle);
                     if (customName != null) item.setFileName(customName);
                     fileQueue.add(item);
+                    int done = completedPdfCount.incrementAndGet();
+                    int total = Math.max(1, totalAnalysisTasks.get());
+                    if (pdfLoadingProgressBar != null) {
+                        pdfLoadingProgressBar.setProgress((double) done / total);
+                        pdfLoadingLabel.setText(String.format("Analyzed %d of %d files...", Math.min(done, total), total));
+                    }
+                    if (done >= total && pendingAnalysisTasks.get() <= 1 && pdfLoadingOverlay != null) {
+                        pdfLoadingOverlay.setVisible(false);
+                    }
                 });
             } catch (Exception e) { logger.error("Add error", e); }
             finally {
                 Platform.runLater(() -> {
-                    pendingAnalysisTasks.set(pendingAnalysisTasks.get() - 1);
-                    if (pendingAnalysisTasks.get() == 0) {
+                    int rem = pendingAnalysisTasks.get() - 1;
+                    pendingAnalysisTasks.set(Math.max(0, rem));
+                    if (rem <= 0 || (completedPdfCount.get() >= totalAnalysisTasks.get() && totalAnalysisTasks.get() > 0)) {
                         globalProgressVisible.set(false);
                         updateStatus("Ready. " + fileQueue.size() + " files loaded.");
+                        if (pdfLoadingOverlay != null) {
+                            pdfLoadingOverlay.setVisible(false);
+                        }
                     }
                 });
             }
@@ -2044,6 +2074,7 @@ public class App extends Application {
         }
         
         if (!pdfFiles.isEmpty()) {
+            completedPdfCount.set(0);
             totalAnalysisTasks.set(pdfFiles.size());
             Platform.runLater(() -> {
                 if (pdfLoadingOverlay != null) {
@@ -2074,6 +2105,11 @@ public class App extends Application {
                     
                     // Allow extra time for final Platform.runLater blocks to add items to fileQueue
                     Thread.sleep(300);
+                    Platform.runLater(() -> {
+                        if (pdfLoadingOverlay != null) {
+                            pdfLoadingOverlay.setVisible(false);
+                        }
+                    });
                     
                     for (File json : jsonFiles) {
                         processJsonFile(json);
