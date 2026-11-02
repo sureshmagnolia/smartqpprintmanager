@@ -168,6 +168,10 @@ public class App extends Application {
     private final DoubleProperty globalProgress = new SimpleDoubleProperty(0.0);
     private final BooleanProperty globalProgressVisible = new SimpleBooleanProperty(false);
     private final IntegerProperty pendingAnalysisTasks = new SimpleIntegerProperty(0);
+    private final IntegerProperty totalAnalysisTasks = new SimpleIntegerProperty(0);
+    private StackPane pdfLoadingOverlay;
+    private Label pdfLoadingLabel;
+    private ProgressBar pdfLoadingProgressBar;
 
     // Global Synchronization Engine
     private final DoubleProperty globalPulseOpacity = new SimpleDoubleProperty(1.0);
@@ -1138,8 +1142,41 @@ public class App extends Application {
         btns.setPadding(new Insets(10));
         btns.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
-        VBox layout = new VBox(10, statsDash, searchBox, table, btns);
-        VBox.setVgrow(table, Priority.ALWAYS);
+        // PDF Loading & Analysis Overlay
+        pdfLoadingOverlay = new StackPane();
+        pdfLoadingOverlay.setStyle("-fx-background-color: rgba(255, 255, 255, 0.85);");
+        pdfLoadingOverlay.setVisible(false);
+
+        VBox loadingCard = new VBox(12);
+        loadingCard.setAlignment(javafx.geometry.Pos.CENTER);
+        loadingCard.setPadding(new Insets(24, 32, 24, 32));
+        loadingCard.setMaxSize(420, 180);
+        loadingCard.setStyle("-fx-background-color: white; -fx-background-radius: 12px; " +
+                             "-fx-border-color: #cbd5e1; -fx-border-radius: 12px; -fx-border-width: 1px; " +
+                             "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.14), 18, 0, 0, 4);");
+
+        javafx.scene.control.ProgressIndicator pi = new javafx.scene.control.ProgressIndicator();
+        pi.setPrefSize(42, 42);
+        pi.setStyle("-fx-progress-color: #2563eb;");
+
+        Label titleLbl = new Label("Loading & Analyzing Question Papers");
+        titleLbl.setStyle("-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: #0f172a;");
+
+        pdfLoadingLabel = new Label("Reading pages and verifying print rules...");
+        pdfLoadingLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #475569;");
+
+        pdfLoadingProgressBar = new ProgressBar(0.0);
+        pdfLoadingProgressBar.setPrefWidth(300);
+        pdfLoadingProgressBar.setPrefHeight(8);
+        pdfLoadingProgressBar.setStyle("-fx-accent: #2563eb;");
+
+        loadingCard.getChildren().addAll(pi, titleLbl, pdfLoadingLabel, pdfLoadingProgressBar);
+        pdfLoadingOverlay.getChildren().add(loadingCard);
+
+        StackPane tableContainer = new StackPane(table, pdfLoadingOverlay);
+        VBox.setVgrow(tableContainer, Priority.ALWAYS);
+
+        VBox layout = new VBox(10, statsDash, searchBox, tableContainer, btns);
         layout.setPadding(new Insets(10));
         return layout;
     }
@@ -1306,6 +1343,14 @@ public class App extends Application {
             });
             pendingAnalysisTasks.set(pendingAnalysisTasks.get() + 1);
             globalProgressVisible.set(true);
+            if (pdfLoadingOverlay != null) {
+                int total = Math.max(1, totalAnalysisTasks.get());
+                int currentPending = pendingAnalysisTasks.get();
+                int completed = Math.max(0, total - currentPending);
+                pdfLoadingProgressBar.setProgress((double) completed / total);
+                pdfLoadingLabel.setText(String.format("Analyzing: %s (%d of %d)", file.getName(), completed + 1, total));
+                pdfLoadingOverlay.setVisible(true);
+            }
         });
 
         analysisExecutor.submit(() -> {
@@ -1354,10 +1399,20 @@ public class App extends Application {
                 activityLogger.error("Failed to analyze: " + file.getName());
             } finally {
                 Platform.runLater(() -> {
-                    pendingAnalysisTasks.set(pendingAnalysisTasks.get() - 1);
-                    if (pendingAnalysisTasks.get() == 0) {
+                    int rem = pendingAnalysisTasks.get() - 1;
+                    pendingAnalysisTasks.set(rem);
+                    int total = Math.max(1, totalAnalysisTasks.get());
+                    int completed = Math.max(0, total - rem);
+                    if (pdfLoadingProgressBar != null) {
+                        pdfLoadingProgressBar.setProgress((double) completed / total);
+                        pdfLoadingLabel.setText(String.format("Analyzed %d of %d files...", completed, total));
+                    }
+                    if (rem <= 0) {
                         globalProgressVisible.set(false);
                         updateStatus("Ready. " + fileQueue.size() + " files loaded.");
+                        if (pdfLoadingOverlay != null) {
+                            pdfLoadingOverlay.setVisible(false);
+                        }
                     }
                 });
             }
@@ -1986,6 +2041,17 @@ public class App extends Application {
                     jsonFiles.add(chosenJson);
                 }
             }
+        }
+        
+        if (!pdfFiles.isEmpty()) {
+            totalAnalysisTasks.set(pdfFiles.size());
+            Platform.runLater(() -> {
+                if (pdfLoadingOverlay != null) {
+                    pdfLoadingProgressBar.setProgress(0.0);
+                    pdfLoadingLabel.setText("Queued " + pdfFiles.size() + " PDF files for analysis...");
+                    pdfLoadingOverlay.setVisible(true);
+                }
+            });
         }
         
         for (File pdf : pdfFiles) {

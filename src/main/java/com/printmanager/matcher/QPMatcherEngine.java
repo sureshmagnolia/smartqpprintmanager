@@ -311,7 +311,13 @@ public class QPMatcherEngine {
                     sb.append(line);
                 }
             }
-            int exitCode = proc.waitFor();
+            boolean finished = proc.waitFor(6, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                proc.destroyForcibly();
+                logger.warn("OCR fallback timed out after 6 seconds for {}", file.getName());
+                return;
+            }
+            int exitCode = proc.exitValue();
             if (exitCode == 0 && sb.length() > 0) {
                 String out = sb.toString();
                 int jsonStart = out.indexOf('{');

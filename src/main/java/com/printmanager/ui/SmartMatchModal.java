@@ -161,7 +161,15 @@ public class SmartMatchModal {
     private Label lblHeightDisplay;
     private ImageView previewImageView;
     private Label lblPreviewPlaceholder;
+    private ProgressIndicator previewSpinner;
     private GridPane gridDetails;
+
+    // Full Matching Loading Overlay
+    private StackPane matchingOverlayPane;
+    private Label matchingProgressTitle;
+    private Label matchingProgressSubtitle;
+    private ProgressBar matchingProgressBar;
+    private ProgressIndicator matchingSpinner;
     private VBox actionCard;
     private TextArea txtReasons;
 
@@ -326,9 +334,50 @@ public class SmartMatchModal {
         // Bottom Action Bar
         root.setBottom(createBottomBar());
 
-        Scene scene = new Scene(root);
+        Node matchingOverlay = createMatchingOverlay();
+        StackPane masterRoot = new StackPane(root, matchingOverlay);
+        Scene scene = new Scene(masterRoot);
         stage.setScene(scene);
         stage.centerOnScreen();
+    }
+
+    private Node createMatchingOverlay() {
+        matchingOverlayPane = new StackPane();
+        matchingOverlayPane.setStyle("-fx-background-color: rgba(248, 250, 252, 0.88);");
+        matchingOverlayPane.setVisible(false);
+
+        VBox card = new VBox(14);
+        card.setAlignment(Pos.CENTER);
+        card.setMaxSize(480, 220);
+        card.setPadding(new Insets(28, 40, 28, 40));
+        card.setStyle("-fx-background-color: white; -fx-background-radius: 16px; " +
+                      "-fx-border-color: #cbd5e1; -fx-border-radius: 16px; -fx-border-width: 1px; " +
+                      "-fx-effect: dropshadow(three-pass-box, rgba(0, 0, 0, 0.14), 22, 0, 0, 6);");
+
+        matchingSpinner = new ProgressIndicator();
+        matchingSpinner.setPrefSize(48, 48);
+        matchingSpinner.setStyle("-fx-progress-color: #2563eb;");
+
+        matchingProgressTitle = new Label("Matching Question Papers to Courses");
+        matchingProgressTitle.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #0f172a;");
+
+        matchingProgressSubtitle = new Label("Initializing intelligent alignment engine...");
+        matchingProgressSubtitle.setStyle("-fx-font-size: 13px; -fx-text-fill: #475569; -fx-alignment: center;");
+        matchingProgressSubtitle.setMaxWidth(420);
+        matchingProgressSubtitle.setWrapText(true);
+
+        matchingProgressBar = new ProgressBar(0.0);
+        matchingProgressBar.setPrefWidth(360);
+        matchingProgressBar.setPrefHeight(9);
+        matchingProgressBar.setStyle("-fx-accent: #2563eb;");
+
+        Label badge = new Label("Intelligent 3-Key Alignment • Course Code, Stream & Syllabus Matching");
+        badge.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b; -fx-font-style: italic;");
+
+        card.getChildren().addAll(matchingSpinner, matchingProgressTitle, matchingProgressSubtitle, matchingProgressBar, badge);
+        matchingOverlayPane.getChildren().add(card);
+
+        return matchingOverlayPane;
     }
 
     private VBox createTopHeader() {
@@ -796,9 +845,18 @@ public class SmartMatchModal {
         previewImageView.fitWidthProperty().bind(previewScroll.widthProperty().subtract(16));
 
         lblPreviewPlaceholder = new Label("No preview available");
-        lblPreviewPlaceholder.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 13px; -fx-padding: 30;");
+        lblPreviewPlaceholder.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 13px;");
 
-        previewStack.getChildren().addAll(lblPreviewPlaceholder, previewImageView);
+        previewSpinner = new ProgressIndicator();
+        previewSpinner.setPrefSize(28, 28);
+        previewSpinner.setVisible(false);
+        previewSpinner.setManaged(false);
+
+        VBox previewLoadingBox = new VBox(10, previewSpinner, lblPreviewPlaceholder);
+        previewLoadingBox.setAlignment(Pos.CENTER);
+        previewLoadingBox.setPadding(new Insets(20));
+
+        previewStack.getChildren().addAll(previewLoadingBox, previewImageView);
         previewScroll.setContent(previewStack);
 
         // Interactive Bottom Draggable Resize Handle
@@ -1271,17 +1329,29 @@ public class SmartMatchModal {
     private void renderPdfPreview(File file) {
         if (file == null || !file.exists()) {
             previewImageView.setImage(null);
+            if (previewSpinner != null) {
+                previewSpinner.setVisible(false);
+                previewSpinner.setManaged(false);
+            }
             lblPreviewPlaceholder.setText("File not found on disk");
             lblPreviewPlaceholder.setVisible(true);
             return;
         }
 
+        if (previewSpinner != null) {
+            previewSpinner.setVisible(true);
+            previewSpinner.setManaged(true);
+        }
         lblPreviewPlaceholder.setText("Rendering page header preview...");
         lblPreviewPlaceholder.setVisible(true);
         previewImageView.setImage(null);
 
         PDFHeaderRenderer.renderHeaderAsync(file).thenAccept(img -> {
             Platform.runLater(() -> {
+                if (previewSpinner != null) {
+                    previewSpinner.setVisible(false);
+                    previewSpinner.setManaged(false);
+                }
                 if (img != null) {
                     previewImageView.setImage(img);
                     lblPreviewPlaceholder.setVisible(false);
@@ -1489,6 +1559,12 @@ public class SmartMatchModal {
         statusSummaryLabel.setText("Scanning " + extraPdfFiles.size() + " PDFs from Print Queue...");
         statusSummaryLabel.setStyle("-fx-background-color: #e0f2fe; -fx-text-fill: #0369a1;");
 
+        if (matchingOverlayPane != null) {
+            matchingProgressBar.setProgress(0.0);
+            matchingProgressSubtitle.setText("Scanning Question Paper PDFs (0 of " + extraPdfFiles.size() + ")...");
+            matchingOverlayPane.setVisible(true);
+        }
+
         new Thread(() -> {
             try {
                 // 1. Scan PDFs ONLY from files loaded in the Print Queue
@@ -1501,13 +1577,23 @@ public class SmartMatchModal {
 
                 List<File> pdfFilesList = new ArrayList<>(uniqueFilesByName.values());
                 pdfFilesList.sort(Comparator.comparing(File::getName));
+                final int totalFiles = pdfFilesList.size();
 
                 List<QPRecord> records = new ArrayList<>();
                 Map<String, QPRecord> seenSigs = new HashMap<>();
                 Map<String, QPRecord> seenQpKeys = new HashMap<>();
                 Map<String, QPRecord> seenQpCodes = new HashMap<>();
 
-                for (File pdf : pdfFilesList) {
+                for (int fileIdx = 0; fileIdx < totalFiles; fileIdx++) {
+                    File pdf = pdfFilesList.get(fileIdx);
+                    final int currentIdx = fileIdx + 1;
+                    final String pdfName = pdf.getName();
+                    Platform.runLater(() -> {
+                        if (matchingOverlayPane != null) {
+                            matchingProgressBar.setProgress((double) currentIdx / (totalFiles + 1));
+                            matchingProgressSubtitle.setText(String.format("Scanning PDF %d of %d: %s", currentIdx, totalFiles, pdfName));
+                        }
+                    });
                     String sig = computeFileSignature(pdf);
                     if (seenSigs.containsKey(sig)) {
                         QPRecord primary = seenSigs.get(sig);
@@ -1560,6 +1646,13 @@ public class SmartMatchModal {
                 }
                 availableQpRecords = records;
 
+                Platform.runLater(() -> {
+                    if (matchingOverlayPane != null) {
+                        matchingProgressBar.setProgress(0.92);
+                        matchingProgressSubtitle.setText("Evaluating Course Codes, Titles, Streams & Syllabus Years...");
+                    }
+                });
+
                 // 2. Parse Seating Requirements
                 List<SeatingRequirement> reqs = engine.parseRequirementsFromJson(currentJsonRoot);
 
@@ -1580,10 +1673,18 @@ public class SmartMatchModal {
                         mainTabPane.getSelectionModel().select(tabCourses);
                         reqTable.getSelectionModel().select(0);
                     }
+
+                    if (matchingOverlayPane != null) {
+                        matchingProgressBar.setProgress(1.0);
+                        matchingOverlayPane.setVisible(false);
+                    }
                 });
             } catch (Exception ex) {
                 logger.error("Scan & Match failed", ex);
                 Platform.runLater(() -> {
+                    if (matchingOverlayPane != null) {
+                        matchingOverlayPane.setVisible(false);
+                    }
                     statusSummaryLabel.setText("Scan Error: " + ex.getMessage());
                     statusSummaryLabel.setStyle("-fx-background-color: #fee2e2; -fx-text-fill: #991b1b;");
                 });
