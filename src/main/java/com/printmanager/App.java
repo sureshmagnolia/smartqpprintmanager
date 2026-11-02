@@ -4622,7 +4622,8 @@ public class App extends Application {
                     try {
                         File signingFile = generateRoomSigningSheet(group);
                         if (signingFile != null) {
-                            FileItem signingItem = new FileItem(signingFile, 2, "", printer, false, false, "Left", 1, "A4", "");
+                            // Duplex = true -> Prints back-to-back on a single sheet with Flip on Long Edge (Sides.TWO_SIDED_LONG_EDGE)
+                            FileItem signingItem = new FileItem(signingFile, 2, "", printer, true, false, "Left", 1, "A4", "");
                             printService.printPDF(signingItem, s -> {});
                             Thread.sleep(1000);
                         }

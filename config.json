@@ -72,8 +72,8 @@
   "currentExamDate" : "",
   "currentExamSession" : "",
   "baseDownloadPath" : "C:\\",
-  "lastDirectory" : "C:\\Users\\sures\\Downloads\\29-10",
-  "printCoverPage" : true,
+  "lastDirectory" : "C:\\Users\\sures\\Downloads\\MatchTraining\\30.10.26AN-20261102T043052Z-1-001\\30.10.26AN",
+  "printCoverPage" : false,
   "printSigningSheet" : true,
   "aiRoutingEnabled" : false
 }
