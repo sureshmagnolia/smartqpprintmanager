@@ -76,8 +76,25 @@ public class RoomService {
             se.setRegNo(sn.path("regNo").asText(""));
             se.setName(sn.path("name").asText(""));
             se.setCourseName(sn.path("courseName").asText(""));
-            se.setQpCode(sn.path("qpCode").asText(""));
-            se.setScribe(sn.path("isScribe").asBoolean(false));
+            
+            String sQp = sn.path("qpCode").asText("").trim();
+            if (sQp.isEmpty() && fd.getCourseSummary() != null) {
+                String sc = se.getCourseName().trim().toUpperCase();
+                for (RoomFacingData.CourseSummaryEntry cse : fd.getCourseSummary()) {
+                    if (!cse.getQpCode().isEmpty() && !cse.getCourseName().isEmpty() &&
+                        (sc.contains(cse.getCourseName().trim().toUpperCase()) || cse.getCourseName().trim().toUpperCase().contains(sc))) {
+                        sQp = cse.getQpCode();
+                        break;
+                    }
+                }
+            }
+            if (sQp.isEmpty()) {
+                sQp = node.path("qpCode").asText("").trim();
+            }
+            se.setQpCode(sQp);
+
+            boolean isScribe = sn.path("isScribe").asBoolean(false) || sn.path("scribe").asBoolean(false) || "SCRIBE".equalsIgnoreCase(sn.path("remarks").asText("").trim());
+            se.setScribe(isScribe);
             se.setRemarks(sn.path("remarks").asText(""));
             sList.add(se);
         }

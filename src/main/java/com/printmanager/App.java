@@ -73,6 +73,8 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.slf4j.Logger;
@@ -114,6 +116,21 @@ public class App extends Application {
     });
 
     private File lastSmartMatchJsonFile = null;
+    private final java.util.Set<File> userAddedInputPdfFiles = new java.util.LinkedHashSet<>();
+
+    private boolean isGeneratedTempFile(File f) {
+        if (f == null) return true;
+        String name = f.getName().toLowerCase();
+        if (name.startsWith("split_") || name.startsWith("overlay_") || 
+            name.startsWith("room_cover_") || name.startsWith("facing_sheet_")) {
+            return true;
+        }
+        String path = f.getAbsolutePath().toLowerCase();
+        if (path.contains("appdata\\local\\temp") && (name.contains("overlay") || name.contains("split") || name.contains("cover") || name.contains("facing"))) {
+            return true;
+        }
+        return false;
+    }
     private JsonNode lastSmartMatchJsonRoot = null;
     private File lastSmartMatchPdfFolder = null;
 
@@ -1077,6 +1094,7 @@ public class App extends Application {
                     fileQueue.forEach(this::deleteIfTempFile);
                     
                     fileQueue.clear();
+                    userAddedInputPdfFiles.clear();
                     roomGroupsList.clear();
                     lastSmartMatchJsonFile = null;
                     lastSmartMatchJsonRoot = null;
@@ -1305,7 +1323,7 @@ public class App extends Application {
                 if (matched != null) {
                     if (pageIdx > 1) {
                         File b = pdfService.splitPages(file, 1, pageIdx - 1);
-                        routeSmartPart(b, file.getName(), matched, false);
+                        routeSmartPart(b, file, file.getName(), matched, false);
                     }
                     int total = pdfService.getPageCount(file);
                     int afterCountWithKeyword = total - pageIdx + 1;
@@ -1326,7 +1344,7 @@ public class App extends Application {
                     int startPage = shouldSkip ? pageIdx + 1 : pageIdx;
                     if (startPage <= total) {
                         File a = pdfService.splitPages(file, startPage, total);
-                        routeSmartPart(a, file.getName(), matched, true);
+                        routeSmartPart(a, file, file.getName(), matched, true);
                     }
                 } else {
                     addFileToQueue(file, null, null, null);
@@ -1346,7 +1364,7 @@ public class App extends Application {
         });
     }
 
-    private void routeSmartPart(File file, String originalName, SmartSplitRule rule, boolean isAfter) throws Exception {
+    private void routeSmartPart(File file, File originalInputFile, String originalName, SmartSplitRule rule, boolean isAfter) throws Exception {
         int pages = pdfService.getPageCount(file);
         String style = "Simplex"; String overlay = ""; File f = file;
         String prefix = isAfter ? rule.getAfterPrefix() : rule.getBeforePrefix();
@@ -1436,6 +1454,7 @@ public class App extends Application {
         final String finalPrefix = prefix;
         Platform.runLater(() -> {
             FileItem item = new FileItem(ff, fp, "", "None", false, false, "Left", 1, "A4", fo);
+            item.setOriginalFile(originalInputFile);
             String finalName = finalPrefix + originalName;
             
             // If this is an SDE rule and we are applying an 'A' suffix (default for SDE),
@@ -1970,6 +1989,9 @@ public class App extends Application {
         }
         
         for (File pdf : pdfFiles) {
+            if (!isGeneratedTempFile(pdf)) {
+                userAddedInputPdfFiles.add(pdf);
+            }
             processFile(pdf);
         }
         
@@ -2014,6 +2036,8 @@ public class App extends Application {
                 
                 if (isRoomJson) {
                     activityLogger.info("Detected Smart Room JSON: " + file.getName());
+                    this.lastSmartMatchJsonFile = file;
+                    this.lastSmartMatchJsonRoot = root;
 
                     // Check if JSON has QP codes (Flow A) or lacks QP codes (Flow B)
                     boolean hasQpCodes = false;
@@ -2085,57 +2109,128 @@ public class App extends Application {
         });
     }
 
+    private JsonNode buildJsonRootFromRoomGroups() {
+        if (roomGroupsList.isEmpty()) return null;
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode arr = mapper.createArrayNode();
+        for (RoomGroup g : roomGroupsList) {
+            String roomSerialStr = g.getRoomSerial();
+            int rSerial = 0;
+            try {
+                rSerial = Integer.parseInt(roomSerialStr.replaceAll("\\D+", ""));
+            } catch (Exception ignored) {}
+
+            RoomFacingData fd = g.getFacingData();
+            String date = (fd != null && fd.getDate() != null) ? fd.getDate() : "";
+            String time = (fd != null && fd.getTime() != null) ? fd.getTime() : "";
+
+            if (!g.getItems().isEmpty()) {
+                for (RoomItem item : g.getItems()) {
+                    ObjectNode on = mapper.createObjectNode();
+                    on.put("roomSerial", rSerial > 0 ? rSerial : 1);
+                    on.put("roomName", roomSerialStr);
+                    on.put("stream", item.getStream() != null ? item.getStream() : "Regular");
+                    on.put("courseName", item.getCourseName() != null ? item.getCourseName() : "");
+                    on.put("qpCode", item.getQpCode() != null ? item.getQpCode() : "");
+                    on.put("count", item.getCount());
+                    on.put("pdfFileName", item.getPdfFileName() != null ? item.getPdfFileName() : "");
+                    on.put("date", date);
+                    on.put("time", time);
+                    arr.add(on);
+                }
+            } else if (fd != null && fd.getCourseSummary() != null && !fd.getCourseSummary().isEmpty()) {
+                String roomStream = (fd.getStream() != null && !fd.getStream().isEmpty()) ? fd.getStream() : "Regular";
+                for (RoomFacingData.CourseSummaryEntry cse : fd.getCourseSummary()) {
+                    ObjectNode on = mapper.createObjectNode();
+                    on.put("roomSerial", rSerial > 0 ? rSerial : 1);
+                    on.put("roomName", fd.getRoomName() != null ? fd.getRoomName() : roomSerialStr);
+                    on.put("stream", roomStream);
+                    on.put("courseName", cse.getCourseName() != null ? cse.getCourseName() : "");
+                    on.put("qpCode", cse.getQpCode() != null ? cse.getQpCode() : "");
+                    on.put("count", cse.getCount());
+                    on.put("scribeCount", cse.getScribeCount());
+                    on.put("date", date);
+                    on.put("time", time);
+                    arr.add(on);
+                }
+            }
+        }
+        return (arr.size() > 0) ? arr : null;
+    }
+
     public void openSmartMatchModal(File jsonFile, JsonNode jsonRoot) {
         Platform.runLater(() -> {
-            if (jsonFile != null) {
-                if (this.lastSmartMatchJsonFile == null || !this.lastSmartMatchJsonFile.getAbsolutePath().equalsIgnoreCase(jsonFile.getAbsolutePath())) {
-                    this.lastSmartMatchPdfFolder = null;
-                    com.printmanager.ui.SmartMatchModal.clearSessionCache();
-                }
-                this.lastSmartMatchJsonFile = jsonFile;
-            }
+            if (jsonFile != null) this.lastSmartMatchJsonFile = jsonFile;
             if (jsonRoot != null) this.lastSmartMatchJsonRoot = jsonRoot;
 
             File targetJsonFile = (jsonFile != null) ? jsonFile : this.lastSmartMatchJsonFile;
             JsonNode targetJsonRoot = (jsonRoot != null) ? jsonRoot : this.lastSmartMatchJsonRoot;
 
-            File pdfDir = null;
-            if (targetJsonFile != null && targetJsonFile.getParentFile() != null && targetJsonFile.getParentFile().exists()) {
-                pdfDir = targetJsonFile.getParentFile();
-            } else if (this.lastSmartMatchPdfFolder != null && this.lastSmartMatchPdfFolder.exists()) {
-                pdfDir = this.lastSmartMatchPdfFolder;
-            } else if (!fileQueue.isEmpty()) {
-                File last = fileQueue.get(fileQueue.size() - 1).getFile();
-                if (last != null && last.getParentFile() != null && last.getParentFile().exists()) {
-                    pdfDir = last.getParentFile();
+            // Fallback: If targetJsonRoot is null, reconstruct from active roomGroupsList
+            if (targetJsonRoot == null && !roomGroupsList.isEmpty()) {
+                targetJsonRoot = buildJsonRootFromRoomGroups();
+                this.lastSmartMatchJsonRoot = targetJsonRoot;
+            }
+
+            if (targetJsonRoot == null) {
+                FileChooser fc = new FileChooser();
+                fc.setTitle("Select Seating Summary JSON");
+                fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
+                File chosen = fc.showOpenDialog(primaryStage);
+                if (chosen != null) {
+                    try {
+                        ObjectMapper mapper = new ObjectMapper();
+                        JsonNode parsed = mapper.readTree(chosen);
+                        this.lastSmartMatchJsonFile = chosen;
+                        this.lastSmartMatchJsonRoot = parsed;
+                        targetJsonFile = chosen;
+                        targetJsonRoot = parsed;
+                        processJsonFile(chosen);
+                    } catch (Exception ex) {
+                        logger.error("Failed to parse chosen JSON", ex);
+                        com.printmanager.ui.Toast.show(primaryStage, "Error parsing selected JSON file.", 3000);
+                        return;
+                    }
+                } else {
+                    return;
                 }
             }
-            this.lastSmartMatchPdfFolder = pdfDir;
 
-            final File finalPdfDir = pdfDir;
+            // Gather ONLY original input PDF files for Matcher (exclude overlays, split parts, and temp files)
             List<File> queuePdfs = new ArrayList<>();
-            for (FileItem fi : fileQueue) {
-                if (fi.getFile() != null && fi.getFile().exists()) {
-                    if (finalPdfDir == null || fi.getFile().getParentFile() == null ||
-                        fi.getFile().getParentFile().getAbsolutePath().equalsIgnoreCase(finalPdfDir.getAbsolutePath())) {
-                        queuePdfs.add(fi.getFile());
+            java.util.Set<String> addedPaths = new java.util.HashSet<>();
+
+            // 1. First priority: clean original files tracked when added by user
+            for (File f : userAddedInputPdfFiles) {
+                if (f != null && f.exists() && f.getName().toLowerCase().endsWith(".pdf")) {
+                    if (!isGeneratedTempFile(f) && addedPaths.add(f.getAbsolutePath().toLowerCase())) {
+                        queuePdfs.add(f);
                     }
                 }
             }
 
-            com.printmanager.ui.SmartMatchModal.show(primaryStage, targetJsonFile, targetJsonRoot, finalPdfDir, queuePdfs, (populatedJson) -> {
-                activityLogger.info("Applied matched seating JSON with resolved QP codes.");
-
-                // Purge any stale files from other folders from fileQueue so only current folder's PDFs remain
-                if (finalPdfDir != null && finalPdfDir.exists()) {
-                    fileQueue.removeIf(fi -> fi.getFile() != null && fi.getFile().getParentFile() != null &&
-                        !fi.getFile().getParentFile().getAbsolutePath().equalsIgnoreCase(finalPdfDir.getAbsolutePath()));
+            // 2. Also inspect fileQueue extracting originalFile, skipping overlays and temp files
+            for (FileItem fi : fileQueue) {
+                File target = (fi.getOriginalFile() != null) ? fi.getOriginalFile() : fi.getFile();
+                if (target != null && target.exists() && target.getName().toLowerCase().endsWith(".pdf")) {
+                    if (!isGeneratedTempFile(target) && addedPaths.add(target.getAbsolutePath().toLowerCase())) {
+                        queuePdfs.add(target);
+                    }
                 }
+            }
+
+            if (queuePdfs.isEmpty()) {
+                com.printmanager.ui.Toast.show(primaryStage, "Please add Question Paper PDF files to the Print Queue first.", 3500);
+                return;
+            }
+
+            final File finalTargetJsonFile = targetJsonFile;
+            final JsonNode finalTargetJsonRoot = targetJsonRoot;
+            com.printmanager.ui.SmartMatchModal.show(primaryStage, finalTargetJsonFile, finalTargetJsonRoot, queuePdfs, (populatedJson) -> {
+                activityLogger.info("Applied matched seating JSON with resolved QP codes.");
 
                 // Pass 1: Aggregate copies per unique PDF file from populatedJson
                 Map<String, Integer> fileCopies = new LinkedHashMap<>();
-                Map<String, File> filesToLoad = new LinkedHashMap<>();
-
                 for (JsonNode node : populatedJson) {
                     String pdfPath = node.path("pdfFilePath").asText("");
                     String pdfName = node.path("pdfFileName").asText("");
@@ -2146,71 +2241,30 @@ public class App extends Application {
                         File f = new File(pdfPath);
                         if (f.exists()) targetFile = f;
                     }
-                    if (targetFile == null && !pdfName.isEmpty() && finalPdfDir != null) {
-                        File f = new File(finalPdfDir, pdfName);
-                        if (f.exists()) targetFile = f;
+                    if (targetFile == null && !pdfName.isEmpty()) {
+                        for (FileItem fi : fileQueue) {
+                            if (fi.getFile() != null && fi.getFile().getName().equalsIgnoreCase(pdfName)) {
+                                targetFile = fi.getFile();
+                                break;
+                            }
+                        }
                     }
 
                     if (targetFile != null) {
                         String absPath = targetFile.getAbsolutePath();
-                        filesToLoad.put(absPath, targetFile);
                         fileCopies.put(absPath, fileCopies.getOrDefault(absPath, 0) + count);
                     }
                 }
 
-                // Pass 2: Synchronously add or update files in fileQueue (Print Queue)
-                for (File file : filesToLoad.values()) {
-                    int copiesNeeded = fileCopies.getOrDefault(file.getAbsolutePath(), 1);
-                    FileItem existing = null;
-                    for (FileItem fi : fileQueue) {
-                        if (fi.getFile() != null && fi.getFile().getAbsolutePath().equalsIgnoreCase(file.getAbsolutePath())) {
-                            existing = fi;
-                            break;
-                        }
-                    }
-
-                    if (existing != null) {
-                        existing.setCopies(copiesNeeded);
-                    } else {
-                        try {
-                            int p = pdfService.getPageCount(file);
-                            String c = pdfService.getText(file);
-                            PrintRule rule = findMatchingRule(p, c);
-                            String pr = (rule != null) ? rule.getPrinterName() : "None";
-                            List<String> available = printService.getAvailablePrinters();
-                            if ("None".equals(pr) || "Default Printer".equalsIgnoreCase(pr) || !available.contains(pr)) {
-                                pr = printService.getDefaultPrinterName();
-                            }
-                            String ps = (rule != null) ? rule.getPaperSize() : "A4";
-                            boolean dx = (rule != null) && rule.isDuplex();
-                            boolean bk = (rule != null) && rule.isBooklet();
-                            String bt = (rule != null) ? rule.getBindingType() : "Left";
-
-                            FileItem newItem = new FileItem(file, p, c, pr, dx, bk, bt, copiesNeeded, ps, "");
-                            fileQueue.add(newItem);
-                            activityLogger.info("Loaded matched PDF into Print Queue: " + file.getName() + " (Copies: " + copiesNeeded + ")");
-                        } catch (Exception ex) {
-                            logger.error("Failed to load PDF into queue: " + file.getName(), ex);
-                        }
+                // Pass 2: Update copies in fileQueue (Print Queue) for matched files
+                for (FileItem fi : fileQueue) {
+                    if (fi.getFile() != null && fileCopies.containsKey(fi.getFile().getAbsolutePath())) {
+                        fi.setCopies(fileCopies.get(fi.getFile().getAbsolutePath()));
                     }
                 }
 
-                // Pass 3: Also load ALL discovered PDFs (unassigned ones) from CURRENT folder into fileQueue
-                if (finalPdfDir != null && finalPdfDir.exists()) {
-                    File[] pdfs = finalPdfDir.listFiles((d, name) -> name.toLowerCase().endsWith(".pdf"));
-                    if (pdfs != null) {
-                        for (File pdf : pdfs) {
-                            boolean alreadyInQueue = fileQueue.stream().anyMatch(fi -> 
-                                fi.getFile() != null && fi.getFile().getAbsolutePath().equalsIgnoreCase(pdf.getAbsolutePath()));
-                            if (!alreadyInQueue) {
-                                processFile(pdf);
-                            }
-                        }
-                    }
-                }
-
-                // Pass 4: Populate Room Router
-                String sourceName = (targetJsonFile != null) ? targetJsonFile.getName() : "Smart Matcher";
+                // Pass 3: Populate Room Router
+                String sourceName = (finalTargetJsonFile != null) ? finalTargetJsonFile.getName() : "Smart Matcher";
                 processRoomWiseJson(populatedJson, sourceName);
                 refreshGlobalAlerts();
                 validationService.validateAppState();
@@ -2826,6 +2880,7 @@ public class App extends Application {
                 if (response == ButtonType.OK) {
                     fileQueue.forEach(this::deleteIfTempFile);
                     fileQueue.clear();
+                    userAddedInputPdfFiles.clear();
                     roomGroupsList.clear();
                     lastSmartMatchJsonFile = null;
                     lastSmartMatchJsonRoot = null;
@@ -4036,6 +4091,9 @@ public class App extends Application {
 
 
     private void processRoomWiseJson(JsonNode root, String sourceName) {
+        if (root != null && root.isArray() && root.size() > 0) {
+            this.lastSmartMatchJsonRoot = root;
+        }
         // PASS 1: CONSOLIDATION
         Map<String, RoomGroup> groups = new LinkedHashMap<>();
         for (RoomGroup g : roomGroupsList) groups.put(g.getRoomSerial(), g);

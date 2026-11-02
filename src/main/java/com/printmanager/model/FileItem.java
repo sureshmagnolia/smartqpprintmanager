@@ -76,6 +76,12 @@ public class FileItem {
         });
     }
 
+    @JsonProperty("originalFile")
+    private File originalFile;
+
+    public File getOriginalFile() { return originalFile != null ? originalFile : file; }
+    public void setOriginalFile(File originalFile) { this.originalFile = originalFile; }
+
     public File getFile() { return file; }
     public void setFile(File file) { this.file = file; if (file != null) this.fileName.set(file.getName()); }
 

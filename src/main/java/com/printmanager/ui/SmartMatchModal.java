@@ -265,24 +265,14 @@ public class SmartMatchModal {
 
         buildUI();
 
-        boolean canRestore = currentJsonFile != null && currentJsonFile.equals(sLastJsonFile)
-                          && currentPdfFolder != null && currentPdfFolder.equals(sLastPdfFolder)
-                          && sCachedDecisions != null && !sCachedDecisions.isEmpty()
-                          && sCachedQpRecords != null && !sCachedQpRecords.isEmpty();
-
-        if (canRestore) {
-            this.availableQpRecords = new ArrayList<>(sCachedQpRecords);
-            this.decisionsList.setAll(sCachedDecisions);
-            syncAllState();
-            if (lblJsonInfo != null && currentJsonFile != null) {
-                lblJsonInfo.setText("📄 " + currentJsonFile.getName());
-            }
-            if (lblFolderInfo != null && currentPdfFolder != null) {
-                lblFolderInfo.setText("📁 " + currentPdfFolder.getAbsolutePath());
-            }
-            statusSummaryLabel.setText("Restored " + decisionsList.size() + " matches from active session.");
-        } else if (currentJsonRoot != null && currentPdfFolder != null) {
+        if (currentJsonRoot != null && extraPdfFiles != null && !extraPdfFiles.isEmpty()) {
             runScanAndMatch();
+        } else if (currentJsonRoot == null) {
+            statusSummaryLabel.setText("No Seating JSON loaded.");
+            statusSummaryLabel.setStyle("-fx-background-color: #fee2e2; -fx-text-fill: #991b1b;");
+        } else {
+            statusSummaryLabel.setText("No PDF files in Print Queue to match.");
+            statusSummaryLabel.setStyle("-fx-background-color: #fee2e2; -fx-text-fill: #991b1b;");
         }
     }
 
@@ -306,23 +296,14 @@ public class SmartMatchModal {
         sCachedDecisions = null;
     }
 
-    public static void show(Stage parent, File jsonFile, JsonNode jsonRoot, File initialPdfFolder, Consumer<JsonNode> onApply) {
-        show(parent, jsonFile, jsonRoot, initialPdfFolder, null, onApply);
+    public static void show(Stage parent, File jsonFile, JsonNode jsonRoot, List<File> queuePdfFiles, Consumer<JsonNode> onApply) {
+        clearSessionCache();
+        SmartMatchModal modal = new SmartMatchModal(parent, jsonFile, jsonRoot, null, queuePdfFiles, onApply);
+        modal.stage.show();
     }
 
     public static void show(Stage parent, File jsonFile, JsonNode jsonRoot, File initialPdfFolder, List<File> extraPdfFiles, Consumer<JsonNode> onApply) {
-        if (jsonFile != null && sLastJsonFile != null && !jsonFile.getAbsolutePath().equalsIgnoreCase(sLastJsonFile.getAbsolutePath())) {
-            clearSessionCache();
-        }
-        if (jsonFile == null && sLastJsonFile != null) {
-            jsonFile = sLastJsonFile;
-            jsonRoot = sLastJsonRoot;
-        }
-        if (initialPdfFolder == null && sLastPdfFolder != null) {
-            initialPdfFolder = sLastPdfFolder;
-        }
-        SmartMatchModal modal = new SmartMatchModal(parent, jsonFile, jsonRoot, initialPdfFolder, extraPdfFiles, onApply);
-        modal.stage.show();
+        show(parent, jsonFile, jsonRoot, extraPdfFiles, onApply);
     }
 
     private void buildUI() {
@@ -391,21 +372,15 @@ public class SmartMatchModal {
         HBox row2 = new HBox(10);
         row2.setAlignment(Pos.CENTER_LEFT);
 
-        lblJsonInfo = new Label(currentJsonFile != null ? "📄 " + currentJsonFile.getName() : "📄 No JSON Loaded");
-        lblJsonInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748b;");
-
-        Button btnBrowseJson = new Button("Browse JSON...");
-        btnBrowseJson.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        btnBrowseJson.setOnAction(e -> browseJsonFile());
+        String jsonName = (currentJsonFile != null) ? currentJsonFile.getName() : (currentJsonRoot != null ? "Loaded Seating Summary" : "No JSON Loaded");
+        lblJsonInfo = new Label("📄 Seating JSON: " + jsonName);
+        lblJsonInfo.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #334155;");
 
         Separator sep1 = new Separator(javafx.geometry.Orientation.VERTICAL);
 
-        lblFolderInfo = new Label(currentPdfFolder != null ? "📁 " + currentPdfFolder.getAbsolutePath() : "📁 No PDF Folder Selected");
-        lblFolderInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748b;");
-
-        Button btnBrowseFolder = new Button("Change PDF Folder...");
-        btnBrowseFolder.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        btnBrowseFolder.setOnAction(e -> browsePdfFolder());
+        int qCount = (extraPdfFiles != null) ? extraPdfFiles.size() : 0;
+        lblFolderInfo = new Label("🖨️ Print Queue: " + qCount + " PDF files");
+        lblFolderInfo.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #334155;");
 
         Separator sep2 = new Separator(javafx.geometry.Orientation.VERTICAL);
 
@@ -419,10 +394,10 @@ public class SmartMatchModal {
         modeCombo.setOnAction(e -> runScanAndMatch());
 
         Button btnRescan = new Button("🔄 Re-Match");
-        btnRescan.setStyle("-fx-font-size: 11px; -fx-padding: 4 10; -fx-background-color: #0284c7; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnRescan.setStyle("-fx-font-size: 11px; -fx-padding: 4 10; -fx-background-color: #0284c7; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand;");
         btnRescan.setOnAction(e -> runScanAndMatch());
 
-        row2.getChildren().addAll(lblJsonInfo, btnBrowseJson, sep1, lblFolderInfo, btnBrowseFolder, sep2, lblMode, modeCombo, btnRescan);
+        row2.getChildren().addAll(lblJsonInfo, sep1, lblFolderInfo, sep2, lblMode, modeCombo, btnRescan);
 
         topBox.getChildren().addAll(row1, row2);
         return topBox;
@@ -436,7 +411,7 @@ public class SmartMatchModal {
         mainTabPane.setStyle("-fx-background-color: white;");
         VBox.setVgrow(mainTabPane, Priority.ALWAYS);
 
-        tabPdfs = new Tab("📁 PDF Files in Folder");
+        tabPdfs = new Tab("📁 PDF Files in Queue");
         tabPdfs.setClosable(false);
         tabPdfs.setContent(createPdfTabContent());
 
@@ -1504,37 +1479,23 @@ public class SmartMatchModal {
 
     public void runScanAndMatch() {
         if (currentJsonRoot == null) return;
-        if ((currentPdfFolder == null || !currentPdfFolder.exists()) && (extraPdfFiles == null || extraPdfFiles.isEmpty())) return;
+        if (extraPdfFiles == null || extraPdfFiles.isEmpty()) {
+            statusSummaryLabel.setText("No PDF files in Print Queue to match.");
+            statusSummaryLabel.setStyle("-fx-background-color: #fee2e2; -fx-text-fill: #991b1b;");
+            return;
+        }
 
         PDFHeaderRenderer.clearCache();
-        statusSummaryLabel.setText("Scanning PDFs...");
+        statusSummaryLabel.setText("Scanning " + extraPdfFiles.size() + " PDFs from Print Queue...");
         statusSummaryLabel.setStyle("-fx-background-color: #e0f2fe; -fx-text-fill: #0369a1;");
 
         new Thread(() -> {
             try {
-                // 1. Scan PDFs ONLY from current folder (or extra files belonging to this folder)
+                // 1. Scan PDFs ONLY from files loaded in the Print Queue
                 Map<String, File> uniqueFilesByName = new LinkedHashMap<>();
-
-                if (currentPdfFolder != null && currentPdfFolder.exists()) {
-                    File[] folderFiles = currentPdfFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(".pdf"));
-                    if (folderFiles != null) {
-                        for (File f : folderFiles) {
-                            uniqueFilesByName.put(f.getName().toLowerCase(), f);
-                        }
-                    }
-                }
-
-                if (extraPdfFiles != null) {
-                    for (File f : extraPdfFiles) {
-                        if (f != null && f.exists() && f.getName().toLowerCase().endsWith(".pdf")) {
-                            if (currentPdfFolder != null && f.getParentFile() != null) {
-                                if (f.getParentFile().getAbsolutePath().equalsIgnoreCase(currentPdfFolder.getAbsolutePath())) {
-                                    uniqueFilesByName.putIfAbsent(f.getName().toLowerCase(), f);
-                                }
-                            } else if (currentPdfFolder == null) {
-                                uniqueFilesByName.putIfAbsent(f.getName().toLowerCase(), f);
-                            }
-                        }
+                for (File f : extraPdfFiles) {
+                    if (f != null && f.exists() && f.getName().toLowerCase().endsWith(".pdf")) {
+                        uniqueFilesByName.putIfAbsent(f.getName().toLowerCase(), f);
                     }
                 }
 
@@ -1711,15 +1672,31 @@ public class SmartMatchModal {
 
         // Build mapping from Requirement to QP Record
         Map<SeatingRequirement, QPRecord> recordMap = new HashMap<>();
+        Map<String, String> courseToQpMap = new HashMap<>();
         for (MatchDecision d : decisionsList) {
             if (d.matchedRecord != null) {
                 recordMap.put(d.requirement, d.matchedRecord);
+                String cleanQp = d.matchedRecord.qpCode != null ? d.matchedRecord.qpCode.trim() : "";
+                if (cleanQp.isEmpty() && d.matchedRecord.courseCode != null) cleanQp = d.matchedRecord.courseCode.trim();
+                if (cleanQp.isEmpty() && d.matchedRecord.filename != null) cleanQp = d.matchedRecord.filename.replaceAll("(?i)\\.pdf$", "");
+                if (d.requirement != null && !cleanQp.isEmpty()) {
+                    if (d.requirement.originalCourseName != null && !d.requirement.originalCourseName.trim().isEmpty()) {
+                        courseToQpMap.put(d.requirement.originalCourseName.trim().toUpperCase(), cleanQp);
+                    }
+                    if (d.requirement.extractedCourseCode != null && !d.requirement.extractedCourseCode.trim().isEmpty()) {
+                        courseToQpMap.put(d.requirement.extractedCourseCode.trim().toUpperCase(), cleanQp);
+                    }
+                    if (d.requirement.extractedTitle != null && !d.requirement.extractedTitle.trim().isEmpty()) {
+                        courseToQpMap.put(d.requirement.extractedTitle.trim().toUpperCase(), cleanQp);
+                    }
+                }
             }
         }
 
         if (currentJsonRoot.isArray()) {
             for (JsonNode node : currentJsonRoot) {
                 ObjectNode on = node.deepCopy();
+                String assignedQp = "";
                 for (Map.Entry<SeatingRequirement, QPRecord> entry : recordMap.entrySet()) {
                     if (entry.getKey().matchingJsonNodes.contains(node)) {
                         QPRecord rec = entry.getValue();
@@ -1727,6 +1704,7 @@ public class SmartMatchModal {
                         if (cleanQp.isEmpty() && rec.courseCode != null) cleanQp = rec.courseCode.trim();
                         if (cleanQp.isEmpty() && rec.filename != null) cleanQp = rec.filename.replaceAll("(?i)\\.pdf$", "");
 
+                        assignedQp = cleanQp;
                         on.put("qpCode", cleanQp);
                         on.put("pdfFileName", rec.filename);
                         if (rec.file != null) {
@@ -1735,6 +1713,79 @@ public class SmartMatchModal {
                         break;
                     }
                 }
+
+                String nodeCourse = on.path("courseName").asText("").trim().toUpperCase();
+                if (assignedQp.isEmpty() && !nodeCourse.isEmpty() && courseToQpMap.containsKey(nodeCourse)) {
+                    assignedQp = courseToQpMap.get(nodeCourse);
+                    on.put("qpCode", assignedQp);
+                }
+
+                Set<String> roomQpCodes = new LinkedHashSet<>();
+                if (!assignedQp.isEmpty()) roomQpCodes.add(assignedQp);
+
+                // Populate courseSummary with matched QP codes
+                if (on.has("courseSummary") && on.path("courseSummary").isArray()) {
+                    for (JsonNode cNode : on.path("courseSummary")) {
+                        if (cNode instanceof ObjectNode) {
+                            ObjectNode cObj = (ObjectNode) cNode;
+                            String existingQp = cObj.path("qpCode").asText("").trim();
+                            String csCourse = cObj.path("courseName").asText("").trim().toUpperCase();
+                            String targetQp = existingQp;
+                            if (targetQp.isEmpty() && !csCourse.isEmpty()) {
+                                for (Map.Entry<String, String> me : courseToQpMap.entrySet()) {
+                                    if (csCourse.contains(me.getKey()) || me.getKey().contains(csCourse)) {
+                                        targetQp = me.getValue();
+                                        break;
+                                    }
+                                }
+                            }
+                            if (targetQp.isEmpty() && !assignedQp.isEmpty()) {
+                                targetQp = assignedQp;
+                            }
+                            if (!targetQp.isEmpty()) {
+                                cObj.put("qpCode", targetQp);
+                                roomQpCodes.add(targetQp);
+                            }
+                        }
+                    }
+                }
+
+                // Populate students with matched QP codes
+                if (on.has("students") && on.path("students").isArray()) {
+                    for (JsonNode sNode : on.path("students")) {
+                        if (sNode instanceof ObjectNode) {
+                            ObjectNode sObj = (ObjectNode) sNode;
+                            String existingQp = sObj.path("qpCode").asText("").trim();
+                            String sCourse = sObj.path("courseName").asText("").trim().toUpperCase();
+                            String targetQp = existingQp;
+                            if (targetQp.isEmpty() && !sCourse.isEmpty()) {
+                                for (Map.Entry<String, String> me : courseToQpMap.entrySet()) {
+                                    if (sCourse.contains(me.getKey()) || me.getKey().contains(sCourse)) {
+                                        targetQp = me.getValue();
+                                        break;
+                                    }
+                                }
+                            }
+                            if (targetQp.isEmpty() && !assignedQp.isEmpty()) {
+                                targetQp = assignedQp;
+                            }
+                            if (!targetQp.isEmpty()) {
+                                sObj.put("qpCode", targetQp);
+                                roomQpCodes.add(targetQp);
+                            }
+                        }
+                    }
+                }
+
+                // Populate uniqueQPCodes
+                if (!roomQpCodes.isEmpty()) {
+                    ArrayNode uArray = mapper.createArrayNode();
+                    for (String q : roomQpCodes) {
+                        uArray.add(q);
+                    }
+                    on.set("uniqueQPCodes", uArray);
+                }
+
                 arr.add(on);
             }
         }
@@ -1750,46 +1801,5 @@ public class SmartMatchModal {
         stage.close();
     }
 
-    private void browseJsonFile() {
-        FileChooser fc = new FileChooser();
-        fc.setTitle("Select Seating JSON");
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
-        if (currentJsonFile != null && currentJsonFile.getParentFile() != null) {
-            fc.setInitialDirectory(currentJsonFile.getParentFile());
-        }
-        File f = fc.showOpenDialog(stage);
-        if (f != null) {
-            try {
-                ObjectMapper mapper = new ObjectMapper();
-                this.currentJsonFile = f;
-                this.currentJsonRoot = mapper.readTree(f);
-                this.lblJsonInfo.setText("📄 " + f.getName());
-                if (currentPdfFolder == null && f.getParentFile() != null) {
-                    this.currentPdfFolder = f.getParentFile();
-                    this.lblFolderInfo.setText("📁 " + currentPdfFolder.getAbsolutePath());
-                }
-                sCachedDecisions = null;
-                sCachedQpRecords = null;
-                runScanAndMatch();
-            } catch (Exception ex) {
-                new Alert(Alert.AlertType.ERROR, "Error reading JSON: " + ex.getMessage()).show();
-            }
-        }
-    }
 
-    private void browsePdfFolder() {
-        DirectoryChooser dc = new DirectoryChooser();
-        dc.setTitle("Select Folder Containing Question Paper PDFs");
-        if (currentPdfFolder != null && currentPdfFolder.exists()) {
-            dc.setInitialDirectory(currentPdfFolder);
-        }
-        File d = dc.showDialog(stage);
-        if (d != null) {
-            this.currentPdfFolder = d;
-            this.lblFolderInfo.setText("📁 " + d.getAbsolutePath());
-            sCachedDecisions = null;
-            sCachedQpRecords = null;
-            runScanAndMatch();
-        }
-    }
 }
