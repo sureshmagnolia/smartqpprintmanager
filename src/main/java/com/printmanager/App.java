@@ -69,6 +69,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
+import com.printmanager.reports.model.ExamFlowDataSet;
+import com.printmanager.reports.service.ExamFlowDataBridge;
+import com.printmanager.reports.ui.ReportsModal;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
@@ -89,6 +92,7 @@ public class App extends Application {
     private static SSLContext unsafeSslContext;
     public static Image appIcon = null;
     private Stage primaryStage;
+    private ReportsModal reportsModalInstance = null;
 
     private final PDFService pdfService = new PDFService();
     private final PrintService printService = new PrintService();
@@ -5452,6 +5456,21 @@ public class App extends Application {
                             callback.success("OK"); return true;
                         } else if (request.equals("examflow_sync")) {
                             Platform.runLater(() -> fetchFromExamflow(null)); callback.success("OK"); return true;
+                        } else if (request.startsWith("examflow_report_data:")) {
+                            String jsonPayload = request.substring("examflow_report_data:".length());
+                            try {
+                                ExamFlowDataSet ds = ExamFlowDataBridge.parseExamFlowJson(jsonPayload);
+                                ExamFlowDataBridge.setCurrentDataSet(ds);
+                                Platform.runLater(() -> {
+                                    if (reportsModalInstance != null) {
+                                        reportsModalInstance.updateDataSet(ds);
+                                    }
+                                });
+                                activityLogger.info("Successfully extracted live ExamFlow dataset via browser bridge (" + ds.getAllSessions().size() + " session(s), " + ds.getRoomAllotments().size() + " room(s))");
+                            } catch (Exception ex) {
+                                logger.error("Failed to parse extracted browser dataset: {}", ex.getMessage(), ex);
+                            }
+                            callback.success("OK"); return true;
                         } else if (request.equals("check_session")) {
                             String s = sessionNameField.getText().trim();
                             callback.success(s.isEmpty() ? "MISSING" : "OK"); return true;
@@ -6163,6 +6182,18 @@ public class App extends Application {
         toolBar.add(refreshBtn);
         toolBar.addSeparator();
         toolBar.add(syncBtn);
+        if (initialUrl.contains("examflow") || initialUrl.contains("web.app")) {
+            JButton reportsBtn = new JButton("📊 1-Click Reports");
+            reportsBtn.setBackground(new java.awt.Color(37, 99, 235));
+            reportsBtn.setForeground(java.awt.Color.WHITE);
+            reportsBtn.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 12));
+            reportsBtn.setToolTipText("Open 1-Click Reports Printing for Active Session");
+            reportsBtn.addActionListener(e -> {
+                Platform.runLater(() -> openReportsModal(primaryStage));
+            });
+            toolBar.addSeparator();
+            toolBar.add(reportsBtn);
+        }
         toolBar.addSeparator();
         toolBar.add(addressBar);
         
@@ -6171,6 +6202,114 @@ public class App extends Application {
         panel.add(browser.getUIComponent(), BorderLayout.CENTER);
         return panel;
     }
+
+        private CefBrowser findExamflowBrowser() {
+        for (CefBrowser b : browserAddressBars.keySet()) {
+            try {
+                String url = b.getURL().toLowerCase();
+                if (url.contains("examflow") || url.contains("web.app")) {
+                    return b;
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private void extractDataFromExamflowBrowser(CefBrowser browser) {
+        if (browser == null) return;
+        try {
+            String js = "(function() {" +
+                "try {" +
+                "  var col = localStorage.getItem('examCollegeName') || 'University of Calicut';" +
+                "  var sessions = JSON.parse(localStorage.getItem('examAllKnownSessions') || '[]');" +
+                "  var allot = JSON.parse(localStorage.getItem('examRoomAllotment') || '{}');" +
+                "  var qp = JSON.parse(localStorage.getItem('examQPCodes') || '{}');" +
+                "  var rc = JSON.parse(localStorage.getItem('examRoomConfig') || '{}');" +
+                "  var sc = JSON.parse(localStorage.getItem('examScribeList') || '[]');" +
+                "  var sa = JSON.parse(localStorage.getItem('examScribeAllotment') || '{}');" +
+                "  var st = JSON.parse(localStorage.getItem('examStaffData') || '[]');" +
+                "  var im = JSON.parse(localStorage.getItem('examInvigilatorMapping') || '{}');" +
+                "  var ab = JSON.parse(localStorage.getItem('examAbsenteeList') || '{}');" +
+                "  var sd = (window.allStudentData && window.allStudentData.length > 0) ? window.allStudentData : JSON.parse(localStorage.getItem('examAllStudentData_Cache') || '[]');" +
+                "  var payload = {" +
+                "    examCollegeName: col," +
+                "    examAllKnownSessions: sessions," +
+                "    examRoomAllotment: allot," +
+                "    examQPCodes: qp," +
+                "    examRoomConfig: rc," +
+                "    examScribeList: sc," +
+                "    examScribeAllotment: sa," +
+                "    examStaffData: st," +
+                "    examInvigilatorMapping: im," +
+                "    examAbsenteeList: ab," +
+                "    examBaseData: sd" +
+                "  };" +
+                "  window.cefQuery({ request: 'examflow_report_data:' + JSON.stringify(payload) });" +
+                "} catch(e) {" +
+                "  console.error('Failed to extract ExamFlow data: ' + e);" +
+                "}" +
+                "})();";
+            browser.executeJavaScript(js, browser.getURL(), 0);
+            activityLogger.info("Requested live state extraction from ExamFlow browser tab.");
+        } catch (Exception e) {
+            logger.warn("Could not execute JS extraction on ExamFlow tab: {}", e.getMessage());
+        }
+    }
+
+    private void openReportsModal(Stage ownerStage) {
+        activityLogger.info("Opening ExamFlow Reports Printing Module...");
+        updateStatus("Preparing ExamFlow Reports...");
+
+        CefBrowser examflowBrowser = findExamflowBrowser();
+
+        if (examflowBrowser != null) {
+            extractDataFromExamflowBrowser(examflowBrowser);
+        } else {
+            activityLogger.info("Smart Browser not running. Triggering parallel background launch...");
+            openSmartBrowser();
+
+            String cid = config.getCollegeId();
+            if (cid != null && !cid.isEmpty()) {
+                analysisExecutor.submit(() -> {
+                    try {
+                        ExamFlowDataSet ds = ExamFlowDataBridge.fetchFromFirestore(cid);
+                        Platform.runLater(() -> {
+                            if (reportsModalInstance != null) {
+                                reportsModalInstance.updateDataSet(ds);
+                            }
+                        });
+                    } catch (Exception ex) {
+                        logger.warn("Could not fetch cloud state in parallel: {}", ex.getMessage());
+                    }
+                });
+            }
+        }
+
+        if (reportsModalInstance == null) {
+            reportsModalInstance = new ReportsModal(ownerStage, ExamFlowDataBridge.getCurrentDataSet(), activityLogger, () -> {
+                CefBrowser b = findExamflowBrowser();
+                if (b != null) {
+                    extractDataFromExamflowBrowser(b);
+                } else {
+                    String c = config.getCollegeId();
+                    if (c != null && !c.isEmpty()) {
+                        analysisExecutor.submit(() -> {
+                            try {
+                                ExamFlowDataSet ds = ExamFlowDataBridge.fetchFromFirestore(c);
+                                Platform.runLater(() -> {
+                                    if (reportsModalInstance != null) reportsModalInstance.updateDataSet(ds);
+                                });
+                            } catch (Exception ignored) {}
+                        });
+                    }
+                }
+            });
+        } else {
+            reportsModalInstance.updateDataSet(ExamFlowDataBridge.getCurrentDataSet());
+        }
+        reportsModalInstance.show();
+    }
+
 
     private void syncSessionFolder() {
         File dir = getSessionDir();
@@ -6265,7 +6404,18 @@ public class App extends Application {
             if (downloadPathField.getText().isEmpty()) { new Alert(Alert.AlertType.WARNING, "Please select a Save Folder first!").show(); return; }
             openSmartBrowser();
         });
-        layout.getChildren().addAll(info, sessionBox, pathBox, syncBtn, new Separator(), new Label("University Portal Login (Auto-fill):") {{ setStyle("-fx-font-weight: bold;"); }}, portalCredsBox, new Separator(), launchBtn);
+        Button reportsBtn = new Button("📊 ExamFlow Reports Printing (1-Click Reports)");
+        reportsBtn.setStyle("-fx-background-color: #2563eb; -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold; -fx-padding: 12 25; -fx-cursor: hand;");
+        reportsBtn.setTooltip(new Tooltip("Generate and print official ExamFlow reports (Simplex / Duplex automated)"));
+        reportsBtn.setOnAction(e -> openReportsModal(primaryStage));
+
+        Label reportsHint = new Label("1-Click automated report packs • Simplex & Duplex routing • Auto-detects active session");
+        reportsHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b;");
+
+        VBox reportsBox = new VBox(6, reportsBtn, reportsHint);
+        reportsBox.setAlignment(javafx.geometry.Pos.CENTER);
+
+        layout.getChildren().addAll(info, sessionBox, pathBox, syncBtn, new Separator(), new Label("University Portal Login (Auto-fill):") {{ setStyle("-fx-font-weight: bold;"); }}, portalCredsBox, new Separator(), launchBtn, reportsBox);
         return layout;
     }
 
