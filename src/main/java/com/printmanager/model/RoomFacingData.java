@@ -70,6 +70,20 @@ public class RoomFacingData {
         return students != null && !students.isEmpty();
     }
 
+    public int getAssignedStudentsCount() {
+        int count = getTotalBookletsExclScribes();
+        if (count > 0) return count;
+        if (students != null && !students.isEmpty()) {
+            long nonScribes = students.stream().filter(s -> !s.isScribe()).count();
+            if (nonScribes > 0) return (int) nonScribes;
+        }
+        if (courseSummary != null && !courseSummary.isEmpty()) {
+            int sum = courseSummary.stream().mapToInt(CourseSummaryEntry::getCount).sum();
+            if (sum > 0) return sum;
+        }
+        return getTotalStudents();
+    }
+
     public boolean hasScribes() {
         if (students != null) {
             for (StudentEntry s : students) {

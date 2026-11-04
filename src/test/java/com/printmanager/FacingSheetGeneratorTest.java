@@ -119,4 +119,76 @@ public class FacingSheetGeneratorTest {
         java.nio.file.Files.copy(pdf.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         System.out.println("Generated test PDF at: " + dest.getAbsolutePath());
     }
+
+    @Test
+    public void testGenerateSigningSheetFull30StudentsAndMultiCourse() throws IOException {
+        RoomFacingData data = new RoomFacingData();
+        data.setCollegeName("GOVT. VICTORIA COLLEGE, PALAKKAD");
+        data.setExamName("FIFTH SEMESTER UG DEGREE REGULAR EXAMINATION NOVEMBER 2026");
+        data.setHallNumber("2");
+        data.setRoomName("50");
+        data.setLocation("102B Malayalam Block");
+        data.setStream("Regular");
+        data.setDate("03.11.2026");
+        data.setTime("02:00 PM");
+        data.setInvigilatorName("KUMAR J");
+
+        List<CourseSummaryEntry> summaries = new ArrayList<>();
+        CourseSummaryEntry cs1 = new CourseSummaryEntry();
+        cs1.setQpCode("D154416");
+        cs1.setCourseName("CHE5FS112 - CHEMISTRY IN EVERYDAY LIFE [Chemistry 2024 syllabus]");
+        cs1.setCount(12);
+        summaries.add(cs1);
+
+        CourseSummaryEntry cs2 = new CourseSummaryEntry();
+        cs2.setQpCode("D154400");
+        cs2.setCourseName("COM5FS112 (1) - Basics of Business [Commerce 2024 syllabus]");
+        cs2.setCount(8);
+        summaries.add(cs2);
+
+        CourseSummaryEntry cs3 = new CourseSummaryEntry();
+        cs3.setQpCode("D154415");
+        cs3.setCourseName("BOT5FS112 (2) - Mushroom Gardening [Botany 2024 syllabus]");
+        cs3.setCount(10);
+        cs3.setScribeCount(1);
+        summaries.add(cs3);
+        data.setCourseSummary(summaries);
+
+        List<StudentEntry> students = new ArrayList<>();
+        for (int i = 1; i <= 30; i++) {
+            StudentEntry s = new StudentEntry();
+            s.setSeatNumber(i);
+            s.setRegNo("VPAY" + String.format("%05d", 1000 + i));
+            s.setName("Student Name " + i);
+            if (i <= 12) {
+                s.setQpCode("D154416");
+                s.setCourseName("CHEMISTRY IN EVERYDAY LIFE");
+            } else if (i <= 20) {
+                s.setQpCode("D154400");
+                s.setCourseName("Basics of Business");
+            } else {
+                s.setQpCode("D154415");
+                s.setCourseName("Mushroom Gardening");
+            }
+            if (i == 28) {
+                s.setScribe(true);
+                s.setRemarks("SCRIBE");
+            }
+            students.add(s);
+        }
+        data.setStudents(students);
+
+        FacingSheetGenerator gen = new FacingSheetGenerator();
+        File pdf = gen.generate(data);
+        assertNotNull(pdf);
+        assertTrue(pdf.exists());
+
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertEquals(2, doc.getNumberOfPages());
+        }
+
+        File dest = new File("D:/smartqpprintmanager/target/test_signing_sheet_30_students.pdf");
+        java.nio.file.Files.copy(pdf.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("Generated test PDF at: " + dest.getAbsolutePath());
+    }
 }

@@ -162,7 +162,7 @@ public class FacingSheetGenerator {
     }
 
     // =========================================================================
-    // PAGE 2: Seats 21 to 30 + Course Summary + Accounting Box + Signature
+    // PAGE 2: Seats 21 to 30 + Attendance Summary + Course Summary + Accounting + Signature
     // =========================================================================
 
     private void renderPage2(PDDocument doc, PDPage page, RoomFacingData data) throws IOException {
@@ -190,12 +190,12 @@ public class FacingSheetGenerator {
             float summaryStartY;
 
             if (hasPage2Students) {
-                float tableY = 64.0f;
-                float headerH = 28.0f;
+                float tableY = 62.0f;
+                float headerH = 24.0f;
                 drawStudentTableHeader(cs, tableY, headerH);
 
                 float rowY = tableY + headerH;
-                float rowH = 28.0f;
+                float rowH = 25.0f;
 
                 String prevCourse = null;
                 String prevRegPrefix = null;
@@ -225,23 +225,30 @@ public class FacingSheetGenerator {
                     }
                 }
 
-                summaryStartY = 384.0f;
+                float studentTableEnd = rowY + (10 * rowH);
+                float attY = studentTableEnd + 8.0f;
+                float attH = 24.0f;
+                renderAttendanceSummaryCard(cs, data, attY, attH);
+                summaryStartY = attY + attH + 10.0f;
             } else {
                 // <= 20 students: show (End of Student List)
-                drawCenteredText(cs, fontBold, 11f, "(End of Student List)", TABLE_LEFT, TABLE_RIGHT, 80.0f);
-                summaryStartY = 96.0f;
+                drawCenteredText(cs, fontBold, 11f, "(End of Student List)", TABLE_LEFT, TABLE_RIGHT, 85.0f);
+                float attY = 110.0f;
+                float attH = 26.0f;
+                renderAttendanceSummaryCard(cs, data, attY, attH);
+                summaryStartY = attY + attH + 14.0f;
             }
 
             // 4. Course Summary Section
-            drawText(cs, fontBold, 9.5f, "Course Summary:", TABLE_LEFT, summaryStartY + 10f);
+            drawText(cs, fontBold, hasPage2Students ? 9.5f : 10.0f, "Course Summary:", TABLE_LEFT, summaryStartY + 9f);
 
-            float csTableY = summaryStartY + 16f;
+            float csTableY = summaryStartY + 14f;
             float colQP = 77.2f;
             float colCourse = 327.8f;
             float colCount = 77.25f;
 
-            float csHeaderH = hasPage2Students ? 18.0f : 24.0f;
-            float csRowH = hasPage2Students ? 17.0f : 22.0f;
+            float csHeaderH = hasPage2Students ? 17.0f : 22.0f;
+            float csRowH = hasPage2Students ? 16.5f : 20.0f;
             float csFontSize = hasPage2Students ? 8.5f : 9.5f;
 
             // Header row
@@ -289,20 +296,8 @@ public class FacingSheetGenerator {
             drawCenteredText(cs, fontBold, csFontSize, String.valueOf(totalBooklets), TABLE_RIGHT - colCount, TABLE_RIGHT, csRowY + csRowH - 5.5f);
             float csTableEnd = csRowY + csRowH;
 
-            // 5. Invigilator Accounting Box
-            float accBoxBottom = 744.0f;
-            float accBoxY = Math.max(csTableEnd + 14.0f, hasPage2Students ? 482.0f : 240.0f);
-            float accBoxH = accBoxBottom - accBoxY;
-            drawRect(cs, TABLE_LEFT, accBoxY, TABLE_WIDTH, accBoxH, 0.75f);
-
-            // Section 1: Booklets Received / Used / Returned
-            drawText(cs, fontBold, 9.5f, "Booklets Received: __________", TABLE_LEFT + 6.0f, accBoxY + 18f);
-            drawText(cs, fontBold, 9.5f, "Used: __________", TABLE_LEFT + 195.0f, accBoxY + 18f);
-            drawText(cs, fontBold, 9.5f, "Balance Returned: __________", TABLE_LEFT + 325.0f, accBoxY + 18f);
-            drawLine(cs, TABLE_LEFT, accBoxY + 30f, TABLE_RIGHT, accBoxY + 30f, 0.5f);
-
-            // Section 2: Written Booklets (QP Wise)
-            drawText(cs, fontBold, 9.5f, "Written Booklets (QP Wise):", TABLE_LEFT + 6.0f, accBoxY + 46f);
+            // 5. Invigilator Accounting Box (Exact ExamFlow format)
+            float accBoxY = csTableEnd + 14.0f;
 
             List<String> qpList = data.getUniqueQPCodes();
             if (qpList == null || qpList.isEmpty()) {
@@ -312,56 +307,108 @@ public class FacingSheetGenerator {
                     if (!qpList.contains(q)) qpList.add(q);
                 }
             }
-            float qpX = TABLE_LEFT + 6.0f;
+
+            int qpRows = 1;
             float qpSpacing = 115.0f;
-            float qpRowY = accBoxY + 66f;
+            float testX = TABLE_LEFT + 6.0f;
+            for (int k = 0; k < qpList.size(); k++) {
+                if (testX + qpSpacing > TABLE_RIGHT - 10f) {
+                    testX = TABLE_LEFT + 6.0f;
+                    qpRows++;
+                }
+                testX += qpSpacing;
+            }
+
+            float qpSectionHeight = 18.0f + (qpRows * 18.0f);
+            float accBoxH = 28.0f + qpSectionHeight + 26.0f;
+            float accBoxBottom = accBoxY + accBoxH;
+
+            drawRect(cs, TABLE_LEFT, accBoxY, TABLE_WIDTH, accBoxH, 0.75f);
+
+            // Row 1: Booklets Received / Used / Returned
+            drawText(cs, fontBold, 9.5f, "Booklets Received: __________", TABLE_LEFT + 6.0f, accBoxY + 18f);
+            drawText(cs, fontBold, 9.5f, "Used: __________", TABLE_LEFT + 195.0f, accBoxY + 18f);
+            drawText(cs, fontBold, 9.5f, "Balance Returned: __________", TABLE_LEFT + 325.0f, accBoxY + 18f);
+            drawLine(cs, TABLE_LEFT, accBoxY + 28f, TABLE_RIGHT, accBoxY + 28f, 0.5f);
+
+            // Row 2: Written Booklets (QP Wise)
+            float qpLabelY = accBoxY + 44f;
+            drawText(cs, fontBold, 9.5f, "Written Booklets (QP Wise):", TABLE_LEFT + 6.0f, qpLabelY);
+
+            float qpX = TABLE_LEFT + 6.0f;
+            float qpRowY = qpLabelY + 18f;
             for (String q : qpList) {
                 if (qpX + qpSpacing > TABLE_RIGHT - 10f) {
                     qpX = TABLE_LEFT + 6.0f;
-                    qpRowY += 20f;
+                    qpRowY += 18f;
                 }
                 drawText(cs, fontRegular, 9f, formatQPCode(q) + ": ___________", qpX, qpRowY);
                 qpX += qpSpacing;
             }
 
-            if (!hasPage2Students) {
-                // Room has <= 20 students: utilize spacious lower area with Absentee Register & Verification
-                float absY = Math.max(qpRowY + 30f, accBoxY + 130f);
-                drawLine(cs, TABLE_LEFT, absY, TABLE_RIGHT, absY, 0.5f);
-                drawText(cs, fontBold, 9.5f, "Absentee Candidates (Register Numbers):", TABLE_LEFT + 6.0f, absY + 18f);
-                drawLine(cs, TABLE_LEFT + 6.0f, absY + 40f, TABLE_RIGHT - 15f, absY + 40f, 0.5f);
-                drawLine(cs, TABLE_LEFT + 6.0f, absY + 62f, TABLE_RIGHT - 15f, absY + 62f, 0.5f);
-                drawLine(cs, TABLE_LEFT + 6.0f, absY + 84f, TABLE_RIGHT - 15f, absY + 84f, 0.5f);
+            // Row 3: Written Booklets Total (Right-aligned as in ExamFlow)
+            float totalRowY = accBoxBottom - 10f;
+            drawRightAlignedText(cs, fontBold, 9.5f, "Written Booklets Total: __________", TABLE_RIGHT - 10f, totalRowY);
 
-                float certY = absY + 105.0f;
-                drawLine(cs, TABLE_LEFT, certY, TABLE_RIGHT, certY, 0.5f);
-                drawText(cs, fontOblique, 8.5f, "Certified that all candidate entries and booklet counts have been personally verified.", TABLE_LEFT + 6.0f, certY + 18f);
-                drawText(cs, fontBold, 9.0f, "Invigilator Remarks: [  ] Nil    [  ] Other: ________________________________________________", TABLE_LEFT + 6.0f, certY + 38f);
-            }
-
-            // Section 3: Bottom row of Accounting Box
-            drawLine(cs, TABLE_LEFT, accBoxBottom - 28f, TABLE_RIGHT, accBoxBottom - 28f, 0.5f);
-            drawText(cs, fontBold, 9.5f, "Written Booklets Total: __________", TABLE_LEFT + 6.0f, accBoxBottom - 10f);
-            drawRightAlignedText(cs, fontBold, 9.5f, "Unused Booklets Returned: __________", TABLE_RIGHT - 10f, accBoxBottom - 10f);
-
-            // 6. Scribe Assistance Note (Conditional)
-            float footerY = 785.0f;
+            // 6. Scribe Assistance Note (Conditional, on the left)
+            float sigLineY = accBoxBottom + 35.0f;
             if (data.hasScribes()) {
-                drawText(cs, fontOblique, 9f, "* = Scribe Assistance", TABLE_LEFT, footerY);
+                drawText(cs, fontOblique, 8.5f, "* = Scribe Assistance", TABLE_LEFT, sigLineY + 14.0f);
             }
 
-            // 7. Invigilator Signature Line & Name
-            float sigLineW = 160f;
+            // 7. Invigilator Signature Line & Name (on the right)
+            float sigLineW = 150f;
             float sigLineX1 = TABLE_RIGHT - sigLineW;
             float sigLineX2 = TABLE_RIGHT;
-            drawLine(cs, sigLineX1, 765.0f, sigLineX2, 765.0f, 0.75f);
-            drawCenteredText(cs, fontBold, 9f, "Invigilator's Signature", sigLineX1, sigLineX2, 778.0f);
+            drawLine(cs, sigLineX1, sigLineY, sigLineX2, sigLineY, 0.75f);
+            drawCenteredText(cs, fontBold, 8.5f, "Invigilator's Signature", sigLineX1, sigLineX2, sigLineY + 13.0f);
 
             String invigilator = cleanText(data.getInvigilatorName());
             if (!invigilator.isEmpty()) {
-                drawCenteredText(cs, fontRegular, 8.5f, invigilator, sigLineX1, sigLineX2, 792.0f);
+                drawCenteredText(cs, fontRegular, 8.5f, invigilator, sigLineX1, sigLineX2, sigLineY + 26.0f);
             }
         }
+    }
+
+    private float renderAttendanceSummaryCard(PDPageContentStream cs, RoomFacingData data, float cardY, float cardH) throws IOException {
+        // 1. Light background fill
+        fillRect(cs, TABLE_LEFT, cardY, TABLE_WIDTH, cardH, 0.98f, 0.98f, 0.98f);
+
+        // 2. Card border
+        drawRect(cs, TABLE_LEFT, cardY, TABLE_WIDTH, cardH, 0.75f);
+
+        // 3. Text and fill-in underlines
+        float baseline = cardY + (cardH * 0.65f);
+        float curX = TABLE_LEFT + 7.0f;
+        float fs = 8.2f;
+
+        drawText(cs, fontBold, fs, "Attendance Summary:", curX, baseline);
+        curX += getStringWidth(fontBold, fs, "Attendance Summary:") + 4.0f;
+
+        drawText(cs, fontRegular, fs, "Students Assigned: ", curX, baseline);
+        curX += getStringWidth(fontRegular, fs, "Students Assigned: ");
+
+        int assignedCount = data.getAssignedStudentsCount();
+        String assignedStr = assignedCount + ";";
+        drawText(cs, fontBold, fs, assignedStr, curX, baseline);
+        curX += getStringWidth(fontBold, fs, assignedStr) + 12.0f;
+
+        drawText(cs, fontRegular, fs, "Total Students Present: ", curX, baseline);
+        curX += getStringWidth(fontRegular, fs, "Total Students Present: ");
+
+        float lineW = 34.0f;
+        drawLine(cs, curX, baseline - 1.0f, curX + lineW, baseline - 1.0f, 0.75f);
+        curX += lineW;
+
+        drawText(cs, fontRegular, fs, ";", curX + 2.0f, baseline);
+        curX += getStringWidth(fontRegular, fs, ";") + 12.0f;
+
+        drawText(cs, fontRegular, fs, "Total Students Absent: ", curX, baseline);
+        curX += getStringWidth(fontRegular, fs, "Total Students Absent: ");
+
+        drawLine(cs, curX, baseline - 1.0f, curX + lineW, baseline - 1.0f, 0.75f);
+
+        return cardY + cardH;
     }
 
     // =========================================================================

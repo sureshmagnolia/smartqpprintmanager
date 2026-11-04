@@ -34,6 +34,7 @@ import me.friwi.jcefmaven.MavenCefAppHandlerAdapter;
 import me.friwi.jcefmaven.EnumProgress;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.stage.Modality;
 import netscape.javascript.JSObject;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextField;
@@ -70,6 +71,9 @@ import java.net.http.HttpResponse;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -91,10 +95,13 @@ public class App extends Application {
     private final ConfigManager configManager = new ConfigManager();
     private final PDFViewer pdfViewer = new PDFViewer();
     private final ActivityLogger activityLogger = ActivityLogger.getInstance();
+    private final AtomicBoolean isAutoPrinting = new AtomicBoolean(false);
+    private final AtomicBoolean cancelAutoPrint = new AtomicBoolean(false);
+    private Button autoPrintBtnRef;
 
     private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4);
     private final ExecutorService printQueueExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService roomPrintExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService roomPrintExecutor = Executors.newCachedThreadPool();
     private final java.util.concurrent.ScheduledExecutorService printerMonitorExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
 
     // Map to track and clean up listeners to prevent memory leaks
@@ -368,7 +375,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V7.20");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V8.0");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -393,7 +400,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V7.20");
+        primaryStage.setTitle("Smart QP Print Manager - V8.0");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -3138,7 +3145,29 @@ public class App extends Application {
             }
         });
 
-        HBox toolsRow = new HBox(12, smartMatchBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, exportAllSigningBtn, printCoverPageCbox, printSigningSheetCbox, aiRoutingBtn);
+                Button autoPrintBtn = new Button("🖨 Auto Print");
+        autoPrintBtnRef = autoPrintBtn;
+        autoPrintBtn.setStyle("-fx-background-color: #1565C0; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 6 12 6 12; -fx-background-radius: 6; -fx-cursor: hand;");
+        autoPrintBtn.setTooltip(new Tooltip("Auto-distribute and parallel print room batches across all active printers"));
+        autoPrintBtn.setOnAction(e -> {
+            if (isAutoPrinting.get()) {
+                Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Auto Print is currently in progress.\nDo you want to stop/cancel the remaining rooms?", ButtonType.YES, ButtonType.NO);
+                confirm.initOwner(stage);
+                confirm.setTitle("Cancel Auto Print");
+                confirm.setHeaderText("Auto Print Running");
+                confirm.showAndWait().ifPresent(ans -> {
+                    if (ans == ButtonType.YES) {
+                        cancelAutoPrint.set(true);
+                        autoPrintBtn.setText("Cancelling...");
+                        activityLogger.warn("Auto Print cancellation requested by user.");
+                    }
+                });
+            } else {
+                openAutoPrintModal(stage);
+            }
+        });
+
+        HBox toolsRow = new HBox(12, smartMatchBtn, addRoomBtn, clearBlocksBtn, roomSearchBox, spacer, autoPrintBtn, exportAllSigningBtn, printCoverPageCbox, printSigningSheetCbox, aiRoutingBtn);
         toolsRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         
         VBox header = new VBox(15, toolsRow, statsRow);
@@ -3847,7 +3876,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V7.20";
+                    String targetTitle = "Smart QP Print Manager - V8.0";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3879,7 +3908,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v7.20 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v8.0 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -4573,6 +4602,536 @@ public class App extends Application {
         i.countProperty().addListener((o, ov, nv) -> saveConfigs());
     }
 
+    // =========================================================================
+    // AUTO PRINT: Multi-Printer Swarm & Load Balancing
+    // =========================================================================
+
+    private int estimateRoomPageCount(RoomGroup g, boolean printFacing, boolean printSigning) {
+        int sheets = 0;
+        if (printFacing) sheets += 1;
+        if (printSigning && g.getFacingData() != null && g.getFacingData().hasStudents()) {
+            sheets += 1; // Duplex = 1 physical sheet
+        }
+        for (RoomItem ri : g.getItems()) {
+            int copies = ri.getCount();
+            if (copies <= 0) continue;
+            FileItem mf = ri.getMatchedFile();
+            int ppPerCopy = (mf != null) ? calculatePP(mf) : 1;
+            sheets += (ppPerCopy * copies);
+        }
+        return Math.max(1, sheets);
+    }
+
+    private Map<String, List<RoomGroup>> calculateDistribution(List<RoomGroup> rooms, List<String> printers, String strategy, boolean facing, boolean signing) {
+        Map<String, List<RoomGroup>> dist = new LinkedHashMap<>();
+        for (String p : printers) dist.put(p, new ArrayList<>());
+
+        if (printers.isEmpty() || rooms.isEmpty()) return dist;
+
+        if ("BALANCED".equalsIgnoreCase(strategy)) {
+            // Greedy bin-packing: Longest Processing Time first
+            List<RoomGroup> sorted = new ArrayList<>(rooms);
+            sorted.sort((a, b) -> Integer.compare(
+                estimateRoomPageCount(b, facing, signing), 
+                estimateRoomPageCount(a, facing, signing)
+            ));
+
+            Map<String, Integer> pageLoads = new HashMap<>();
+            for (String p : printers) pageLoads.put(p, 0);
+
+            for (RoomGroup rg : sorted) {
+                String bestPrinter = printers.get(0);
+                int minPages = pageLoads.get(bestPrinter);
+                for (String p : printers) {
+                    int pPages = pageLoads.get(p);
+                    if (pPages < minPages) {
+                        minPages = pPages;
+                        bestPrinter = p;
+                    }
+                }
+                dist.get(bestPrinter).add(rg);
+                pageLoads.put(bestPrinter, minPages + estimateRoomPageCount(rg, facing, signing));
+            }
+
+            // Re-sort each printer\'s list by original natural hall index so halls print in ascending order
+            for (List<RoomGroup> pList : dist.values()) {
+                pList.sort(Comparator.comparingInt(rooms::indexOf));
+            }
+        } else if ("SEQUENTIAL".equalsIgnoreCase(strategy)) {
+            int n = rooms.size();
+            int k = printers.size();
+            int chunkSize = (int) Math.ceil((double) n / k);
+            for (int i = 0; i < n; i++) {
+                int pIdx = Math.min(i / chunkSize, k - 1);
+                dist.get(printers.get(pIdx)).add(rooms.get(i));
+            }
+        } else { // ROUND_ROBIN
+            for (int i = 0; i < rooms.size(); i++) {
+                String p = printers.get(i % printers.size());
+                dist.get(p).add(rooms.get(i));
+            }
+        }
+        return dist;
+    }
+
+    private void openAutoPrintModal(Stage ownerStage) {
+        if (roomGroupsList.isEmpty()) {
+            com.printmanager.ui.Toast.show(ownerStage, "No rooms loaded in Room Router.", 3000);
+            return;
+        }
+
+        List<String> allPrinters = printService.getAvailablePrinters().stream()
+            .filter(p -> p != null && !"None".equalsIgnoreCase(p))
+            .distinct()
+            .collect(Collectors.toList());
+
+        if (allPrinters.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, "No printers found on this system.", ButtonType.OK);
+            alert.initOwner(ownerStage);
+            alert.setTitle("No Printers");
+            alert.show();
+            return;
+        }
+
+        Stage dialog = new Stage();
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.initOwner(ownerStage);
+        dialog.setTitle("Auto Print - Smart Room Dispatcher");
+
+        BorderPane borderPane = new BorderPane();
+        borderPane.setStyle("-fx-background-color: #f8fafc;");
+
+        // Header (Top, Fixed)
+        Label headerTitle = new Label("🖨 Auto Print - Smart Room Dispatcher");
+        headerTitle.setStyle("-fx-font-size: 17px; -fx-font-weight: bold; -fx-text-fill: #0f172a;");
+        Label headerSub = new Label("Distribute room batches across multiple printers for high-speed parallel printing.");
+        headerSub.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748b;");
+        VBox headerBox = new VBox(3, headerTitle, headerSub);
+        headerBox.setPadding(new Insets(16, 20, 12, 20));
+        headerBox.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e2e8f0; -fx-border-width: 0 0 1 0;");
+        borderPane.setTop(headerBox);
+
+        // Center Content (Scrollable)
+        VBox contentBox = new VBox(14);
+        contentBox.setPadding(new Insets(16, 20, 16, 20));
+
+        // Section 1: Active Printers (Checkboxes inside a ScrollPane)
+        Label printerSectionLabel = new Label("Select Printers to Include in Swarm:");
+        printerSectionLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #1e293b;");
+
+        VBox printerCheckList = new VBox(8);
+        printerCheckList.setStyle("-fx-background-color: white; -fx-padding: 10;");
+
+        Map<String, CheckBox> printerCheckBoxes = new LinkedHashMap<>();
+        for (String p : allPrinters) {
+            String status = printerStatusCache.getOrDefault(p, "Ready");
+            boolean isOffline = "Offline".equalsIgnoreCase(status);
+            
+            CheckBox cb = new CheckBox(p + (isOffline ? " (OFFLINE)" : "  [Ready]"));
+            cb.setStyle("-fx-font-size: 12px; -fx-font-weight: 500;");
+            cb.setSelected(!isOffline);
+            if (isOffline) {
+                cb.setStyle("-fx-text-fill: #94a3b8;");
+                cb.setDisable(true);
+            }
+            printerCheckBoxes.put(p, cb);
+            printerCheckList.getChildren().add(cb);
+        }
+
+        ScrollPane printerScroll = new ScrollPane(printerCheckList);
+        printerScroll.setFitToWidth(true);
+        printerScroll.setPrefHeight(135);
+        printerScroll.setMaxHeight(150);
+        printerScroll.setStyle("-fx-background-color: white; -fx-border-color: #cbd5e1; -fx-border-radius: 6; -fx-background-radius: 6;");
+
+        // Section 2: Options
+        Label optionsLabel = new Label("Printing Options:");
+        optionsLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #1e293b;");
+
+        CheckBox chkSkipFinished = new CheckBox("Skip rooms already marked Finished");
+        chkSkipFinished.setSelected(true);
+        chkSkipFinished.setStyle("-fx-font-size: 12px;");
+
+        CheckBox chkFacing = new CheckBox("Include Room Cover Page (Facing Sheet)");
+        chkFacing.setSelected(printCoverPageCbox.isSelected());
+        chkFacing.setStyle("-fx-font-size: 12px;");
+
+        CheckBox chkSigning = new CheckBox("Include Candidate Signing Sheet (Duplex)");
+        chkSigning.setSelected(printSigningSheetCbox.isSelected());
+        chkSigning.setStyle("-fx-font-size: 12px;");
+
+        VBox optionsBox = new VBox(7, chkSkipFinished, chkFacing, chkSigning);
+        optionsBox.setStyle("-fx-background-color: white; -fx-border-color: #cbd5e1; -fx-border-radius: 6; -fx-background-radius: 6; -fx-padding: 10;");
+
+        // Section 3: Distribution Strategy
+        Label stratLabel = new Label("Distribution Strategy:");
+        stratLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #1e293b;");
+
+        ToggleGroup stratGroup = new ToggleGroup();
+        RadioButton rbBalanced = new RadioButton("Balanced by Page Load (Recommended - printers finish together)");
+        rbBalanced.setToggleGroup(stratGroup);
+        rbBalanced.setSelected(true);
+        rbBalanced.setStyle("-fx-font-size: 12px;");
+
+        RadioButton rbSequential = new RadioButton("Sequential Split (e.g. Halls 1-5 to Printer 1, Halls 6-10 to Printer 2)");
+        rbSequential.setToggleGroup(stratGroup);
+        rbSequential.setStyle("-fx-font-size: 12px;");
+
+        RadioButton rbRoundRobin = new RadioButton("Round-Robin (Alternate halls one-by-one)");
+        rbRoundRobin.setToggleGroup(stratGroup);
+        rbRoundRobin.setStyle("-fx-font-size: 12px;");
+
+        VBox stratBox = new VBox(7, rbBalanced, rbSequential, rbRoundRobin);
+        stratBox.setStyle("-fx-background-color: white; -fx-border-color: #cbd5e1; -fx-border-radius: 6; -fx-background-radius: 6; -fx-padding: 10;");
+
+        // Section 4: Live Distribution Preview
+        Label previewLabel = new Label("Live Distribution Preview:");
+        previewLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #1e293b;");
+
+        VBox previewContainer = new VBox(6);
+        previewContainer.setStyle("-fx-background-color: #f1f5f9; -fx-padding: 10;");
+        ScrollPane previewScroll = new ScrollPane(previewContainer);
+        previewScroll.setFitToWidth(true);
+        previewScroll.setPrefHeight(120);
+        previewScroll.setMaxHeight(140);
+        previewScroll.setStyle("-fx-background-color: #f1f5f9; -fx-border-color: #cbd5e1; -fx-border-radius: 6; -fx-background-radius: 6;");
+
+        // Dynamic update function
+        Runnable updatePreview = () -> {
+            previewContainer.getChildren().clear();
+            List<String> selectedPrinters = printerCheckBoxes.entrySet().stream()
+                .filter(entry -> entry.getValue().isSelected() && !entry.getValue().isDisable())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+            if (selectedPrinters.isEmpty()) {
+                Label warn = new Label("⚠️ Please select at least one active printer.");
+                warn.setStyle("-fx-text-fill: #b45309; -fx-font-weight: bold;");
+                previewContainer.getChildren().add(warn);
+                return;
+            }
+
+            List<RoomGroup> targetRooms = roomGroupsList.stream()
+                .filter(g -> !chkSkipFinished.isSelected() || g.getStatus() == null || !g.getStatus().contains("Finished"))
+                .collect(Collectors.toList());
+
+            if (targetRooms.isEmpty()) {
+                Label info = new Label("ℹ️ All loaded rooms are already Finished! (Uncheck 'Skip rooms already marked Finished' to re-print)");
+                info.setStyle("-fx-text-fill: #475569; -fx-font-style: italic;");
+                previewContainer.getChildren().add(info);
+                return;
+            }
+
+            Map<String, List<RoomGroup>> dist = calculateDistribution(
+                targetRooms, 
+                selectedPrinters, 
+                rbBalanced.isSelected() ? "BALANCED" : (rbSequential.isSelected() ? "SEQUENTIAL" : "ROUND_ROBIN"),
+                chkFacing.isSelected(),
+                chkSigning.isSelected()
+            );
+
+            int grandTotalPages = 0;
+            int maxPrinterPages = 0;
+
+            for (String p : selectedPrinters) {
+                List<RoomGroup> rList = dist.getOrDefault(p, Collections.emptyList());
+                int pPages = 0;
+                StringBuilder hallNames = new StringBuilder();
+                for (RoomGroup rg : rList) {
+                    pPages += estimateRoomPageCount(rg, chkFacing.isSelected(), chkSigning.isSelected());
+                    if (hallNames.length() > 0) hallNames.append(", ");
+                    hallNames.append("Hall ").append(rg.getRoomSerial());
+                }
+                grandTotalPages += pPages;
+                if (pPages > maxPrinterPages) maxPrinterPages = pPages;
+
+                HBox row = new HBox(8);
+                row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+                Label pName = new Label("🖨 " + p + ":");
+                pName.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #0f172a;");
+                Label pCount = new Label(rList.size() + " rooms (" + pPages + " pp)");
+                pCount.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #2563eb;");
+                Label pHalls = new Label("— " + (hallNames.length() == 0 ? "(None)" : hallNames.toString()));
+                pHalls.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b;");
+                row.getChildren().addAll(pName, pCount, pHalls);
+                previewContainer.getChildren().add(row);
+            }
+
+            double estMins = Math.ceil((double) maxPrinterPages / 30.0);
+            Label summary = new Label("Total: " + targetRooms.size() + " rooms | ~" + grandTotalPages + " pages across " + selectedPrinters.size() + " printer(s) in parallel (Est: ~" + (int)estMins + " min)");
+            summary.setStyle("-fx-font-weight: bold; -fx-font-size: 11px; -fx-text-fill: #15803d; -fx-padding: 4 0 0 0;");
+            previewContainer.getChildren().add(summary);
+        };
+
+        // Wire listeners
+        for (CheckBox cb : printerCheckBoxes.values()) cb.setOnAction(e -> updatePreview.run());
+        chkSkipFinished.setOnAction(e -> updatePreview.run());
+        chkFacing.setOnAction(e -> updatePreview.run());
+        chkSigning.setOnAction(e -> updatePreview.run());
+        rbBalanced.setOnAction(e -> updatePreview.run());
+        rbSequential.setOnAction(e -> updatePreview.run());
+        rbRoundRobin.setOnAction(e -> updatePreview.run());
+        updatePreview.run();
+
+        contentBox.getChildren().addAll(
+            printerSectionLabel, printerScroll,
+            optionsLabel, optionsBox,
+            stratLabel, stratBox,
+            previewLabel, previewScroll
+        );
+
+        ScrollPane mainScrollPane = new ScrollPane(contentBox);
+        mainScrollPane.setFitToWidth(true);
+        mainScrollPane.setStyle("-fx-background-color: transparent; -fx-background: #f8fafc;");
+        borderPane.setCenter(mainScrollPane);
+
+        // Footer Bar (Always Visible at Bottom)
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 18; -fx-cursor: hand;");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        Button startBtn = new Button("🚀 Start Auto Print");
+        startBtn.setStyle("-fx-background-color: #2e7d32; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 13px; -fx-padding: 8 22; -fx-background-radius: 6; -fx-cursor: hand;");
+        startBtn.setOnAction(e -> {
+            List<String> selectedPrinters = printerCheckBoxes.entrySet().stream()
+                .filter(entry -> entry.getValue().isSelected() && !entry.getValue().isDisable())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+            if (selectedPrinters.isEmpty()) {
+                new Alert(Alert.AlertType.WARNING, "Please select at least one active printer.", ButtonType.OK).show();
+                return;
+            }
+
+            List<RoomGroup> targetRooms = roomGroupsList.stream()
+                .filter(g -> !chkSkipFinished.isSelected() || g.getStatus() == null || !g.getStatus().contains("Finished"))
+                .collect(Collectors.toList());
+
+            if (targetRooms.isEmpty()) {
+                new Alert(Alert.AlertType.INFORMATION, "No rooms to print based on your criteria.", ButtonType.OK).show();
+                return;
+            }
+
+            Map<String, List<RoomGroup>> dist = calculateDistribution(
+                targetRooms, 
+                selectedPrinters, 
+                rbBalanced.isSelected() ? "BALANCED" : (rbSequential.isSelected() ? "SEQUENTIAL" : "ROUND_ROBIN"),
+                chkFacing.isSelected(),
+                chkSigning.isSelected()
+            );
+
+            dialog.close();
+            startAutoPrintExecution(ownerStage, dist, chkFacing.isSelected(), chkSigning.isSelected());
+        });
+
+        Region btnSpacer = new Region();
+        HBox.setHgrow(btnSpacer, Priority.ALWAYS);
+        HBox footerBox = new HBox(12, btnSpacer, cancelBtn, startBtn);
+        footerBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+        footerBox.setPadding(new Insets(12, 20, 14, 20));
+        footerBox.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e2e8f0; -fx-border-width: 1 0 0 0;");
+        borderPane.setBottom(footerBox);
+
+        double screenH = javafx.stage.Screen.getPrimary().getVisualBounds().getHeight();
+        double dialogH = Math.min(680, screenH * 0.88);
+        Scene scene = new Scene(borderPane, 620, dialogH);
+        dialog.setScene(scene);
+        dialog.setMinHeight(480);
+        dialog.setMinWidth(550);
+        dialog.show();
+    }
+
+    private void startAutoPrintExecution(Stage ownerStage, Map<String, List<RoomGroup>> distribution, boolean printFacing, boolean printSigning) {
+        if (isAutoPrinting.get()) return;
+        isAutoPrinting.set(true);
+        cancelAutoPrint.set(false);
+
+        int totalRoomsToPrint = distribution.values().stream().mapToInt(List::size).sum();
+        if (autoPrintBtnRef != null) {
+            autoPrintBtnRef.setText("⏳ Auto Printing (0/" + totalRoomsToPrint + ")...");
+            autoPrintBtnRef.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 6 12 6 12; -fx-background-radius: 6;");
+        }
+
+        // Visually assign the printer in each room card so the UI reflects the allocation immediately
+        for (Map.Entry<String, List<RoomGroup>> entry : distribution.entrySet()) {
+            String pName = entry.getKey();
+            for (RoomGroup g : entry.getValue()) {
+                Platform.runLater(() -> g.setSelectedPrinter(pName));
+            }
+        }
+
+        activityLogger.info("Starting Auto Print: " + totalRoomsToPrint + " rooms dispatched across " + distribution.size() + " printers.");
+        com.printmanager.ui.Toast.show(ownerStage, "🚀 Auto Print started across " + distribution.size() + " printers in parallel!", 3000);
+
+        java.util.concurrent.atomic.AtomicInteger completedCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger errorCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        for (Map.Entry<String, List<RoomGroup>> entry : distribution.entrySet()) {
+            String printerName = entry.getKey();
+            List<RoomGroup> printerRooms = entry.getValue();
+
+            if (printerRooms.isEmpty()) continue;
+
+            futures.add(CompletableFuture.runAsync(() -> {
+                for (RoomGroup room : printerRooms) {
+                    if (cancelAutoPrint.get()) {
+                        Platform.runLater(() -> room.setStatus("Cancelled"));
+                        break;
+                    }
+                    boolean ok = executeRoomPrintSync(room, printerName, printFacing, printSigning);
+                    int currentDone = completedCounter.incrementAndGet();
+                    if (!ok) errorCounter.incrementAndGet();
+
+                    Platform.runLater(() -> {
+                        if (autoPrintBtnRef != null) {
+                            autoPrintBtnRef.setText("⏳ Auto Printing (" + currentDone + "/" + totalRoomsToPrint + ")...");
+                        }
+                        updateStatus("Auto Print: " + currentDone + " of " + totalRoomsToPrint + " rooms printed...");
+                    });
+                }
+            }, roomPrintExecutor));
+        }
+
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).whenComplete((v, ex) -> {
+            Platform.runLater(() -> {
+                isAutoPrinting.set(false);
+                if (autoPrintBtnRef != null) {
+                    autoPrintBtnRef.setText("🖨 Auto Print");
+                    autoPrintBtnRef.setStyle("-fx-background-color: #1565C0; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 6 12 6 12; -fx-background-radius: 6; -fx-cursor: hand;");
+                }
+
+                if (cancelAutoPrint.get()) {
+                    com.printmanager.ui.Toast.show(ownerStage, "Auto Print was stopped by user.", 3500);
+                    activityLogger.warn("Auto Print stopped. Completed: " + completedCounter.get() + "/" + totalRoomsToPrint);
+                    updateStatus("Auto Print stopped.");
+                } else {
+                    int errs = errorCounter.get();
+                    int comp = completedCounter.get();
+                    if (errs == 0) {
+                        com.printmanager.ui.Toast.show(ownerStage, "✔ Auto Print Complete! All " + comp + " rooms printed successfully.", 4500);
+                        activityLogger.success("Auto Print Complete: " + comp + " rooms successfully printed across " + distribution.size() + " printers.");
+                        updateStatus("Auto Print finished: All " + comp + " rooms printed successfully.");
+                    } else {
+                        com.printmanager.ui.Toast.show(ownerStage, "Auto Print finished with " + errs + " error(s). Please review room cards.", 5000);
+                        activityLogger.error("Auto Print finished with " + errs + " room error(s).");
+                        updateStatus("Auto Print completed with " + errs + " error(s).");
+                    }
+                }
+                synchronized (App.this) { saveConfigs(); }
+            });
+        });
+    }
+
+    private boolean executeRoomPrintSync(RoomGroup group, String printer, boolean printFacing, boolean printSigning) {
+        if (printer == null || "None".equals(printer)) return false;
+
+        Platform.runLater(() -> group.setStatus("Sending..."));
+        boolean allSuccess = true;
+        try {
+            // 1. Optional Facing Sheet (Room Cover Page)
+            if (printFacing) {
+                try {
+                    File coverFile = generateRoomCoverPage(group);
+                    FileItem coverItem = new FileItem(coverFile, 1, "", printer, false, false, "Left", 1, "A4", "");
+                    printService.printPDF(coverItem, s -> {});
+                    Thread.sleep(1000);
+                } catch (Exception ce) { 
+                    activityLogger.error("Facing sheet failed for Room " + group.getRoomSerial());
+                }
+            }
+
+            // 2. Optional Signing Sheet (ExamFlow Candidate Attendance Sheet)
+            if (printSigning && group.getFacingData() != null && group.getFacingData().hasStudents()) {
+                try {
+                    File signingFile = generateRoomSigningSheet(group);
+                    if (signingFile != null) {
+                        // Duplex = true -> Prints back-to-back on a single sheet with Flip on Long Edge (Sides.TWO_SIDED_LONG_EDGE)
+                        FileItem signingItem = new FileItem(signingFile, 2, "", printer, true, false, "Left", 1, "A4", "");
+                        printService.printPDF(signingItem, s -> {});
+                        Thread.sleep(1000);
+                    }
+                } catch (Exception se) {
+                    activityLogger.error("Signing sheet failed for Room " + group.getRoomSerial() + ": " + se.getMessage());
+                }
+            }
+
+            // 3. Print QP items
+            for (RoomItem roomItem : group.getItems()) {
+                FileItem fileItem = roomItem.getMatchedFile();
+                
+                // --- SAFETY RECOVERY: If match is missing or stale, try a last-second QP-based re-link ---
+                if (fileItem == null || !fileQueue.contains(fileItem)) {
+                    String qp = roomItem.getQpCode();
+                    if (qp != null && !qp.isEmpty()) {
+                        FileItem surrogate = fileQueue.stream()
+                            .filter(f -> {
+                                String eqp = extractQPFromFileName(f.getFileName());
+                                return qp.equalsIgnoreCase(eqp) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
+                            })
+                            .findFirst().orElse(null);
+                        
+                        if (surrogate != null) {
+                            fileItem = surrogate;
+                            final FileItem finalS = surrogate;
+                            Platform.runLater(() -> {
+                                roomItem.setMatchedFile(finalS);
+                                roomItem.setStatus("Ready (Recovered)");
+                            });
+                            activityLogger.info("Room " + group.getRoomSerial() + ": Auto-recovered match for QP " + qp + " -> " + surrogate.getFileName());
+                        }
+                    }
+                }
+                
+                if (fileItem == null || !fileQueue.contains(fileItem)) { 
+                    Platform.runLater(() -> {
+                        roomItem.setMatchedFile(null);
+                        roomItem.setStatus("Missing in Queue");
+                    });
+                    activityLogger.error("Room " + group.getRoomSerial() + ": QP " + roomItem.getQpCode() + " is MISSING in Print Queue.");
+                    allSuccess = false;
+                    continue; 
+                }
+                
+                if (fileItem.getFile() == null || !fileItem.getFile().exists()) {
+                    Platform.runLater(() -> roomItem.setStatus("File Not Found"));
+                    activityLogger.error("Room " + group.getRoomSerial() + ": PDF File missing on disk for " + fileItem.getFileName());
+                    allSuccess = false;
+                    continue;
+                }
+
+                Platform.runLater(() -> roomItem.setStatus("Printing..."));
+                FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), printer, fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
+                jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
+                
+                final java.util.concurrent.CompletableFuture<String> jobResult = new java.util.concurrent.CompletableFuture<>();
+                printService.printPDF(jobItem, s -> {
+                    Platform.runLater(() -> roomItem.setStatus(s));
+                    if (s.contains("Finished") || s.contains("Error")) jobResult.complete(s);
+                });
+                
+                String result = jobResult.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                if (result.contains("Error")) allSuccess = false;
+                Thread.sleep(500);
+            }
+
+            final boolean finalSuccess = allSuccess;
+            Platform.runLater(() -> {
+                group.setStatus(finalSuccess ? "Finished" : "Partial Error");
+                if (finalSuccess) activityLogger.success("Room " + group.getRoomSerial() + " printed successfully on " + printer + ".");
+                else activityLogger.error("Room " + group.getRoomSerial() + " completed with ERRORS on " + printer + ".");
+            });
+            synchronized (this) { saveConfigs(); }
+            return finalSuccess;
+        } catch (Exception e) { 
+            Platform.runLater(() -> { group.setStatus("Error"); });
+            synchronized (this) { saveConfigs(); }
+            logger.error("Room print error for " + group.getRoomSerial(), e);
+            return false;
+        }
+    }
+
     private void printRoom(RoomGroup group) {
         String printer = group.getSelectedPrinter();
         if (printer == null || "None".equals(printer)) { 
@@ -4601,109 +5160,7 @@ public class App extends Application {
         saveConfigs();
 
         roomPrintExecutor.submit(() -> {
-            try {
-                // Track success of all items
-                boolean allSuccess = true;
-                
-                // 1. Optional Facing Sheet (Room Cover Page)
-                if (printFacing) {
-                    try {
-                        File coverFile = generateRoomCoverPage(group);
-                        FileItem coverItem = new FileItem(coverFile, 1, "", printer, false, false, "Left", 1, "A4", "");
-                        printService.printPDF(coverItem, s -> {});
-                        Thread.sleep(1000);
-                    } catch (Exception ce) { 
-                        activityLogger.error("Facing sheet failed for Room " + group.getRoomSerial());
-                    }
-                }
-
-                // 2. Optional Signing Sheet (ExamFlow Candidate Attendance Sheet)
-                if (printSigning && group.getFacingData() != null && group.getFacingData().hasStudents()) {
-                    try {
-                        File signingFile = generateRoomSigningSheet(group);
-                        if (signingFile != null) {
-                            // Duplex = true -> Prints back-to-back on a single sheet with Flip on Long Edge (Sides.TWO_SIDED_LONG_EDGE)
-                            FileItem signingItem = new FileItem(signingFile, 2, "", printer, true, false, "Left", 1, "A4", "");
-                            printService.printPDF(signingItem, s -> {});
-                            Thread.sleep(1000);
-                        }
-                    } catch (Exception se) {
-                        activityLogger.error("Signing sheet failed for Room " + group.getRoomSerial() + ": " + se.getMessage());
-                    }
-                }
-
-                // 3. Print QP items
-                for (RoomItem roomItem : group.getItems()) {
-                    FileItem fileItem = roomItem.getMatchedFile();
-                    
-                    // --- SAFETY RECOVERY: If match is missing or stale, try a last-second QP-based re-link ---
-                    if (fileItem == null || !fileQueue.contains(fileItem)) {
-                        String qp = roomItem.getQpCode();
-                        if (qp != null && !qp.isEmpty()) {
-                            FileItem surrogate = fileQueue.stream()
-                                .filter(f -> {
-                                    String eqp = extractQPFromFileName(f.getFileName());
-                                    return qp.equalsIgnoreCase(eqp) || f.getFileName().contains("_" + qp + "_") || f.getFileName().contains("_" + qp + ".");
-                                })
-                                .findFirst().orElse(null);
-                            
-                            if (surrogate != null) {
-                                fileItem = surrogate;
-                                final FileItem finalS = surrogate;
-                                Platform.runLater(() -> {
-                                    roomItem.setMatchedFile(finalS);
-                                    roomItem.setStatus("Ready (Recovered)");
-                                });
-                                activityLogger.info("Room " + group.getRoomSerial() + ": Auto-recovered match for QP " + qp + " -> " + surrogate.getFileName());
-                            }
-                        }
-                    }
-                    
-                    if (fileItem == null || !fileQueue.contains(fileItem)) { 
-                        Platform.runLater(() -> {
-                            roomItem.setMatchedFile(null); // Explicitly clear if it's gone from queue
-                            roomItem.setStatus("Missing in Queue");
-                        });
-                        activityLogger.error("Room " + group.getRoomSerial() + ": QP " + roomItem.getQpCode() + " is MISSING in Print Queue.");
-                        allSuccess = false;
-                        continue; 
-                    }
-                    
-                    if (fileItem.getFile() == null || !fileItem.getFile().exists()) {
-                        Platform.runLater(() -> roomItem.setStatus("File Not Found"));
-                        activityLogger.error("Room " + group.getRoomSerial() + ": PDF File missing on disk for " + fileItem.getFileName());
-                        allSuccess = false;
-                        continue;
-                    }
-
-                    roomItem.setStatus("Printing...");
-                    FileItem jobItem = new FileItem(fileItem.getFile(), fileItem.getPageCount(), fileItem.getContent(), printer, fileItem.isDuplex(), fileItem.isBooklet(), fileItem.getBindingType(), roomItem.getCount(), fileItem.getPaperSize(), fileItem.getOverlayText());
-                    jobItem.setFileName(fileItem.getFileName()); jobItem.setStyle(fileItem.getStyle());
-                    
-                    // We need to wait for completion feedback for each item
-                    final java.util.concurrent.CompletableFuture<String> jobResult = new java.util.concurrent.CompletableFuture<>();
-                    printService.printPDF(jobItem, s -> {
-                        Platform.runLater(() -> roomItem.setStatus(s));
-                        if (s.contains("Finished") || s.contains("Error")) jobResult.complete(s);
-                    });
-                    
-                    String result = jobResult.get(60, java.util.concurrent.TimeUnit.SECONDS);
-                    if (result.contains("Error")) allSuccess = false;
-                    Thread.sleep(500);
-                }
-
-                final boolean finalSuccess = allSuccess;
-                Platform.runLater(() -> {
-                    group.setStatus(finalSuccess ? "Finished" : "Partial Error");
-                    if (finalSuccess) activityLogger.success("Room " + group.getRoomSerial() + " printed successfully.");
-                    else activityLogger.error("Room " + group.getRoomSerial() + " completed with ERRORS.");
-                });
-                synchronized (this) { saveConfigs(); }
-            } catch (Exception e) { 
-                Platform.runLater(() -> { group.setStatus("Error"); });
-                synchronized (this) { saveConfigs(); }
-                logger.error("Room print error", e);
-            }
+            executeRoomPrintSync(group, printer, printFacing, printSigning);
         });
     }
 

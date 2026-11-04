@@ -715,7 +715,8 @@
         "qpCode" : "D153778",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 29
     },
     "items" : [ ]
   }, {
@@ -991,7 +992,8 @@
         "qpCode" : "D153857",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 28
     },
     "items" : [ {
       "roomSerial" : "2",
@@ -1317,7 +1319,8 @@
         "qpCode" : "D153688",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 29
     },
     "items" : [ {
       "roomSerial" : "3",
@@ -1650,7 +1653,8 @@
         "qpCode" : "D153503",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "4",
@@ -2001,7 +2005,8 @@
         "qpCode" : "D153778",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "5",
@@ -2290,7 +2295,8 @@
         "qpCode" : "D152084",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 20
     },
     "items" : [ {
       "roomSerial" : "6",
@@ -2741,7 +2747,8 @@
         "qpCode" : "D153688",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "7",
@@ -3067,7 +3074,8 @@
         "qpCode" : "D153910",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "8",
@@ -3393,7 +3401,8 @@
         "qpCode" : "D153541",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "9",
@@ -3726,7 +3735,8 @@
         "qpCode" : "D153910",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 29
     },
     "items" : [ {
       "roomSerial" : "10",
@@ -4084,7 +4094,8 @@
         "qpCode" : "D153880",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "11",
@@ -4449,7 +4460,8 @@
         "qpCode" : "D153688",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "12",
@@ -4839,7 +4851,8 @@
         "qpCode" : "D153857",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 28
     },
     "items" : [ {
       "roomSerial" : "13",
@@ -5222,7 +5235,8 @@
         "qpCode" : "D153505",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "14",
@@ -5580,7 +5594,8 @@
         "qpCode" : "D153505",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "15",
@@ -5931,7 +5946,8 @@
         "qpCode" : "D153503",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "16",
@@ -6257,7 +6273,8 @@
         "qpCode" : "D153778",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 28
     },
     "items" : [ {
       "roomSerial" : "17",
@@ -6583,7 +6600,8 @@
         "qpCode" : "D153541",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "18",
@@ -6923,7 +6941,8 @@
         "qpCode" : "D153503",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "19",
@@ -7306,7 +7325,8 @@
         "qpCode" : "D153857",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 29
     },
     "items" : [ {
       "roomSerial" : "20",
@@ -7657,7 +7677,8 @@
         "qpCode" : "D153910",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "21",
@@ -7997,7 +8018,8 @@
         "qpCode" : "D153910",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "22",
@@ -8286,7 +8308,8 @@
         "qpCode" : "D152084A",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 20
     },
     "items" : [ {
       "roomSerial" : "23",
@@ -8619,7 +8642,8 @@
         "qpCode" : "D152088A",
         "remarks" : "",
         "isScribe" : false
-      } ]
+      } ],
+      "assignedStudentsCount" : 30
     },
     "items" : [ {
       "roomSerial" : "24",
