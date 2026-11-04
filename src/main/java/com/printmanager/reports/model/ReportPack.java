@@ -45,3 +45,4 @@ public class ReportPack {
         return new ReportPack(this.id, this.name, this.description, this.targetPrinter, clonedItems);
     }
 }
+

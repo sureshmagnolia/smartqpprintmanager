@@ -379,7 +379,7 @@ public class App extends Application {
             }
         });
         
-        Label appTitleLabel = new Label("Smart QP Print Manager - V8.0");
+        Label appTitleLabel = new Label("Smart QP Print Manager - V8.1");
         appTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: white;");
         
         Region topSpacer = new Region();
@@ -404,7 +404,7 @@ public class App extends Application {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception e) { logger.warn("Could not load CSS"); }
         
-        primaryStage.setTitle("Smart QP Print Manager - V8.0");
+        primaryStage.setTitle("Smart QP Print Manager - V8.1");
         
         // Ensure deep cleanup on exit
         primaryStage.setOnCloseRequest(e -> {
@@ -3880,7 +3880,7 @@ public class App extends Application {
                 try {
                     Thread.sleep(800);
                     // Kill by window title (case sensitive to match primaryStage.setTitle)
-                    String targetTitle = "Smart QP Print Manager - V8.0";
+                    String targetTitle = "Smart QP Print Manager - V8.1";
                     Runtime.getRuntime().exec("taskkill /F /FI \"WINDOWTITLE eq " + targetTitle + "*\" /T");
                     
                     // Kill the executable and generic javaw if they persist
@@ -3912,7 +3912,7 @@ public class App extends Application {
         Label title = new Label("Smart QP Print Manager");
         title.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 20, 0.5, 0, 5);");
         
-        Label version = new Label("AI-Powered Examination Logistics | v8.0 Enterprise");
+        Label version = new Label("AI-Powered Examination Logistics | v8.1 Enterprise");
         version.setStyle("-fx-font-size: 24px; -fx-text-fill: #e0e1dd; -fx-font-weight: bold; -fx-letter-spacing: 1.5px;");
         
         Label branding = new Label("A Premium Product of Magnolia Creations");
@@ -6034,15 +6034,17 @@ public class App extends Application {
         SwingUtilities.invokeLater(() -> {
             JTabbedPane tabbedPane = new JTabbedPane();
             
-            // Tab 1: University Portal
-            CefBrowser browser1 = cefClient.createBrowser("https://collegeportal.uoc.ac.in/", false, false);
-            JPanel panel1 = createBrowserTabPanel(browser1, "https://collegeportal.uoc.ac.in/");
-            tabbedPane.addTab("University Portal", panel1);
+            // Tab 1: Examflow Portal
+            CefBrowser browser1 = cefClient.createBrowser("https://examflow-india.web.app/index.html", false, false);
+            JPanel panel1 = createBrowserTabPanel(browser1, "https://examflow-india.web.app/index.html");
+            tabbedPane.addTab("Examflow Portal", panel1);
             
-            // Tab 2: Examflow
-            CefBrowser browser2 = cefClient.createBrowser("https://examflow-india.web.app/index.html", false, false);
-            JPanel panel2 = createBrowserTabPanel(browser2, "https://examflow-india.web.app/index.html");
-            tabbedPane.addTab("Examflow Portal", panel2);
+            // Tab 2: University Portal
+            CefBrowser browser2 = cefClient.createBrowser("https://collegeportal.uoc.ac.in/", false, false);
+            JPanel panel2 = createBrowserTabPanel(browser2, "https://collegeportal.uoc.ac.in/");
+            tabbedPane.addTab("University Portal", panel2);
+
+            tabbedPane.setSelectedIndex(0);
 
             JFrame frame = new JFrame("Smart QP - Browser");
             frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);

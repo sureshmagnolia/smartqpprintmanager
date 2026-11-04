@@ -106,3 +106,4 @@ public class ActiveSessionResolver {
         return resolveActiveSession(sessions, LocalDateTime.now(), DEFAULT_GRACE_MINUTES);
     }
 }
+

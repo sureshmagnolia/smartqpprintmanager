@@ -1,0 +1,163 @@
+[ {
+  "id" : "pre_exam_pack",
+  "name" : "Pre-Exam Pack (QP & Hall Prep)",
+  "description" : "Question Paper Abstract, QP Distribution Checklist, and Room Door Slips",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "room_wise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : true,
+    "reportType" : "ROOM_WISE_SEATING"
+  }, {
+    "reportId" : "candidate_daywise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "CANDIDATE_DAYWISE_SEATING"
+  }, {
+    "reportId" : "room_stickers",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ROOM_STICKERS"
+  }, {
+    "reportId" : "scribe_proforma",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "SCRIBE_PROFORMA"
+  } ]
+}, {
+  "id" : "notice_board_pack",
+  "name" : "Notice Board Pack",
+  "description" : "High-density candidate seating register grid for portico and entrances",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "candidate_daywise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "CANDIDATE_DAYWISE_SEATING"
+  } ]
+}, {
+  "id" : "superintendent_pack",
+  "name" : "Superintendent & Observer Pack",
+  "description" : "Room Allotment Abstract and Invigilator Duty Sign-in Summary",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "room_allotment_summary",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ROOM_ALLOTMENT_SUMMARY"
+  }, {
+    "reportId" : "invigilator_requirement",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "INVIGILATOR_REQUIREMENT"
+  } ]
+}, {
+  "id" : "hall_signing_pack",
+  "name" : "Hall Signing Sheets Pack",
+  "description" : "Official candidate attendance nominal rolls (Duplex) + Room Absentee slips",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "room_wise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : true,
+    "reportType" : "ROOM_WISE_SEATING"
+  }, {
+    "reportId" : "absentee_statement",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ABSENTEE_STATEMENT"
+  } ]
+}, {
+  "id" : "scribe_pack",
+  "name" : "Scribe Assistance Pack",
+  "description" : "Individual scribe declaration proformas and duty assignment summary",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "scribe_proforma",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "SCRIBE_PROFORMA"
+  }, {
+    "reportId" : "scribe_assistance",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "SCRIBE_ASSISTANCE"
+  } ]
+}, {
+  "id" : "complete_session_pack",
+  "name" : "Complete Session Master Pack",
+  "description" : "All reports for the active session dispatched to their respective duplex/simplex queues",
+  "targetPrinter" : "Default",
+  "items" : [ {
+    "reportId" : "qpaper_report",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "QP_REQUIREMENT"
+  }, {
+    "reportId" : "qp_distribution_report",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "QP_DISTRIBUTION"
+  }, {
+    "reportId" : "room_wise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : true,
+    "reportType" : "ROOM_WISE_SEATING"
+  }, {
+    "reportId" : "candidate_daywise_seating",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "CANDIDATE_DAYWISE_SEATING"
+  }, {
+    "reportId" : "room_stickers",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ROOM_STICKERS"
+  }, {
+    "reportId" : "scribe_proforma",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "SCRIBE_PROFORMA"
+  }, {
+    "reportId" : "scribe_assistance",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "SCRIBE_ASSISTANCE"
+  }, {
+    "reportId" : "invigilator_requirement",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "INVIGILATOR_REQUIREMENT"
+  }, {
+    "reportId" : "room_allotment_summary",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ROOM_ALLOTMENT_SUMMARY"
+  }, {
+    "reportId" : "absentee_statement",
+    "enabled" : true,
+    "copies" : 1,
+    "duplex" : false,
+    "reportType" : "ABSENTEE_STATEMENT"
+  } ]
+} ]

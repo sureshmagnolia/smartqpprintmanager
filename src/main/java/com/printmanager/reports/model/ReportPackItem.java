@@ -38,3 +38,4 @@ public class ReportPackItem {
         return ReportType.fromId(reportId);
     }
 }
+

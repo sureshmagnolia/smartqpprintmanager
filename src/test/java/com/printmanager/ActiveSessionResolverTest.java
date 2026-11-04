@@ -68,3 +68,4 @@ public class ActiveSessionResolverTest {
         assertEquals("05.11.2026 | 09:30 AM", ActiveSessionResolver.resolveActiveSession(sessions, wayPast, 90));
     }
 }
+

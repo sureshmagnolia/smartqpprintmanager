@@ -68,9 +68,9 @@ public class ExamFlowReportPrintService {
                                 settings.setPrintSides(PrintSides.ONE_SIDED);
                             }
 
-                            // Standard A4 Layout
+                            // Standard A4 Layout with minimal hardware margins
                             PageLayout pageLayout = targetPrinter.createPageLayout(
-                                    Paper.A4, PageOrientation.PORTRAIT, Printer.MarginType.DEFAULT
+                                    Paper.A4, PageOrientation.PORTRAIT, Printer.MarginType.HARDWARE_MINIMUM
                             );
                             settings.setPageLayout(pageLayout);
 

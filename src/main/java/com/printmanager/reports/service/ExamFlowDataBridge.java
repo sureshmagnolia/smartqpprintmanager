@@ -24,7 +24,45 @@ public class ExamFlowDataBridge {
     private static ExamFlowDataSet currentDataSet = new ExamFlowDataSet();
 
     public static synchronized ExamFlowDataSet getCurrentDataSet() {
+        if (currentDataSet == null || currentDataSet.isEmpty()) {
+            tryAutoLoadLatestBackup();
+        }
         return currentDataSet;
+    }
+
+    public static synchronized void tryAutoLoadLatestBackup() {
+        try {
+            String userHome = System.getProperty("user.home", "");
+            List<File> searchDirs = new ArrayList<>();
+            if (!userHome.isEmpty()) {
+                searchDirs.add(new File(userHome, "Downloads"));
+                searchDirs.add(new File(userHome, "OneDrive/Documents/Downloads"));
+            }
+
+            File newestBackup = null;
+            long latestTime = 0;
+
+            for (File dir : searchDirs) {
+                if (dir.exists() && dir.isDirectory()) {
+                    File[] files = dir.listFiles((d, name) -> name.startsWith("ExamFlow") && name.endsWith(".json"));
+                    if (files != null) {
+                        for (File f : files) {
+                            if (f.lastModified() > latestTime) {
+                                latestTime = f.lastModified();
+                                newestBackup = f;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (newestBackup != null && newestBackup.exists()) {
+                logger.info("Auto-loading latest ExamFlow backup: {}", newestBackup.getAbsolutePath());
+                loadFromFile(newestBackup);
+            }
+        } catch (Exception e) {
+            logger.warn("Auto-load of ExamFlow backup failed: {}", e.getMessage());
+        }
     }
 
     public static synchronized void setCurrentDataSet(ExamFlowDataSet dataSet) {
@@ -238,6 +276,17 @@ public class ExamFlowDataBridge {
         }
         dataSet.setAllStudents(students);
 
+        // 12. Exam Rules / Exam Names
+        List<JsonNode> rules = new ArrayList<>();
+        JsonNode ruleNode = findNode(root, "examRulesConfig", "rulesConfig", "rules");
+        if (ruleNode != null) {
+            JsonNode ruleArr = unwrapJson(ruleNode);
+            if (ruleArr != null && ruleArr.isArray()) {
+                for (JsonNode r : ruleArr) rules.add(r);
+            }
+        }
+        dataSet.setExamRulesConfig(rules);
+
         // Sort all discovered sessions chronologically
         sessions.sort(ActiveSessionResolver::compareSessions);
         dataSet.setAllSessions(sessions);
@@ -336,3 +385,4 @@ public class ExamFlowDataBridge {
         }
     }
 }
+

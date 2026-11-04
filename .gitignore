@@ -16,3 +16,5 @@ __pycache__/
 *.pyc
 qp_extractor/chat_history/
 
+
+*.db
